@@ -16,6 +16,7 @@ data class DetectionBounds(
 data class Detection(
     val bounds: DetectionBounds,
     val confidence: Float,
+    val motionFrequencyHz: Float? = null,
 )
 
 interface Detector {

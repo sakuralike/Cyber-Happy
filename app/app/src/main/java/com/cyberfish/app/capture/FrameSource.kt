@@ -8,6 +8,7 @@ data class FrameMetrics(
     val detection: Detection?,
     val framesPerSecond: Int,
     val latencyMillis: Long,
+    val timestampMillis: Long,
 )
 
 enum class CaptureStatus {

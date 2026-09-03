@@ -19,6 +19,7 @@ class CameraFrameSource(
     private val detector: Detector,
     private val onFrame: (FrameMetrics) -> Unit,
     private val onStatusChanged: (CaptureStatus) -> Unit,
+    private val onDetection: (detection: com.cyberfish.app.inference.Detection?, timestampMillis: Long) -> Unit = { _, _ -> },
 ) : FrameSource {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -77,13 +78,14 @@ class CameraFrameSource(
             if (expectedGeneration != generation) return
             val detection = detector.detect(CameraFrame(image.width, image.height, image.imageInfo.timestamp))
             val now = SystemClock.elapsedRealtime()
+            onDetection(detection, now)
             updateFrameRate(now)
             if (now - lastReportedAt >= REPORT_INTERVAL_MILLIS) {
                 lastReportedAt = now
                 val latencyMillis = ((SystemClock.elapsedRealtimeNanos() - startedAt) / NANOS_PER_MILLISECOND).coerceAtLeast(1)
                 mainExecutor.execute {
                     if (expectedGeneration == generation) {
-                        onFrame(FrameMetrics(detection, framesPerSecond.coerceAtLeast(1), latencyMillis))
+                        onFrame(FrameMetrics(detection, framesPerSecond.coerceAtLeast(1), latencyMillis, now))
                     }
                 }
             }

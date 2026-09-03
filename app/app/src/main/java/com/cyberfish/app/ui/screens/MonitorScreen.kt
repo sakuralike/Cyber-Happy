@@ -3,11 +3,9 @@ package com.cyberfish.app.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +42,7 @@ import androidx.core.content.ContextCompat
 import com.cyberfish.app.ui.components.MetricCard
 import com.cyberfish.app.ui.components.ScreenTitle
 import com.cyberfish.app.ui.components.SectionCard
+import com.cyberfish.app.trigger.TriggerEvent
 
 @Composable
 fun MonitorScreen(onOpenSettings: () -> Unit) {
@@ -51,6 +51,8 @@ fun MonitorScreen(onOpenSettings: () -> Unit) {
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
     var monitoring by rememberSaveable { mutableStateOf(permissionGranted) }
     var sensitivity by rememberSaveable { mutableFloatStateOf(0.62f) }
+    var triggerEvent by remember { mutableStateOf<TriggerEvent?>(null) }
+    var falsePositiveMarked by rememberSaveable { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionGranted = granted
         permissionDenied = !granted
@@ -63,7 +65,21 @@ fun MonitorScreen(onOpenSettings: () -> Unit) {
                 monitoring = monitoring,
                 permissionGranted = permissionGranted,
                 permissionDenied = permissionDenied,
+                onTrigger = {
+                    triggerEvent = it
+                    falsePositiveMarked = false
+                },
             )
+        }
+        triggerEvent?.let { event ->
+            item {
+                TriggerHeroCard(
+                    event = event,
+                    falsePositiveMarked = falsePositiveMarked,
+                    onMarkFalsePositive = { falsePositiveMarked = true },
+                    onDismiss = { triggerEvent = null },
+                )
+            }
         }
         item {
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -85,7 +101,10 @@ fun MonitorScreen(onOpenSettings: () -> Unit) {
         item {
             Button(
                 onClick = {
-                    if (permissionGranted) monitoring = !monitoring
+                    if (permissionGranted) {
+                        if (monitoring) triggerEvent = null
+                        monitoring = !monitoring
+                    }
                     else permissionLauncher.launch(Manifest.permission.CAMERA)
                 },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).height(56.dp).testTag("monitor-control"),
