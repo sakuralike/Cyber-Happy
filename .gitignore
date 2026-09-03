@@ -1,23 +1,35 @@
-### AL ###
-#Template for AL projects for Dynamics 365 Business Central
-#launch.json folder
+# User-requested local directories
+.workbuddy/
+github仓库相关/
+项目规划文档/
+
+# Node.js dependencies and build output
+**/node_modules/
+**/dist/
+**/coverage/
+
+# Local runtime data and secrets
+**/.env
+!**/.env.example
+**/uploads/
+**/*.db
+
+# Android local and generated files
+app/.gradle/
+app/**/build/
+app/local.properties
+app/.idea/
+*.iml
+
+# Existing remote rules
 .vscode/
-#Cache folder
 .alcache/
-#Symbols folder
 .alpackages/
-#Snapshots folder
 .snapshots/
-#Testing Output folder
 .output/
-#Extension App-file
 *.app
-#Rapid Application Development File
 rad.json
-#Translation Base-file
 *.g.xlf
-#License-files
 *.bclicense
 *.flf
-#Test results file
 TestResults.xml

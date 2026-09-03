@@ -1,0 +1,397 @@
+// 赛博鱼乐管理后台 · 数据模型
+// ------------------------------------------------------------
+// SQLite 连接器不支持原生枚举，所有枚举字段以 String 承载，
+// 值域与类型定义统一收敛在 src/lib/enums.ts（前端有对应的 constants.ts）。
+// 切换 PostgreSQL：把 provider 改为 "postgresql"，DATABASE_URL 换成 pg 连接串，业务代码零改动。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// 账号与鉴权
+// ============================================================
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String
+  role         String   @default("VIEWER") // AdminRole
+  status       String   @default("ACTIVE") // ActiveStatus
+  email        String?
+  lastLoginAt  DateTime?
+  lastLoginIp  String?
+  failCount    Int      @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs        AuditLog[]        @relation("AuditOperator")
+  appVersions      AppVersion[]      @relation("AppVersionCreator")
+  models           MlModel[]         @relation("ModelCreator")
+  dispatches       ModelDispatch[]   @relation("DispatchOperator")
+  assignedReports  Misreport[]       @relation("ReportAssignee")
+  reviewedReports  Misreport[]       @relation("ReportReviewer")
+  statusLogs       MisreportStatusLog[]
+  files            FileAsset[]
+
+  @@index([role])
+  @@index([status])
+}
+
+// ============================================================
+// APP 版本管理
+// ============================================================
+
+model AppVersion {
+  id           String  @id @default(cuid())
+  versionName  String // "1.2.0"
+  versionCode  Int     @unique // 120，APP 端比较依据
+  platform     String  @default("ANDROID") // Platform
+  channel      String  @default("official")
+  updateType   String  @default("OPTIONAL") // UpdateType
+
+  releaseNotes String @default("")
+
+  // 安装包
+  apkUrl    String?
+  apkSize   BigInt?
+  apkSha256 String?
+  apkFileId String?
+
+  minSupportedCode Int? // 低于此版本强制升级
+
+  status        String @default("DRAFT") // ReleaseStatus
+  grayPercent   Int    @default(0)
+  grayDeviceIds String @default("[]") // JSON array
+  downloadCount Int    @default(0)
+
+  onlineAt  DateTime?
+  offlineAt DateTime?
+
+  createdById String?
+  updatedById String?
+  createdBy   AdminUser? @relation("AppVersionCreator", fields: [createdById], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  misreports Misreport[]
+  dispatches ModelDispatch[]
+
+  @@index([status])
+  @@index([platform, channel])
+  @@index([createdAt])
+}
+
+// ============================================================
+// YOLO 模型管理
+// ============================================================
+
+model MlModel {
+  id           String  @id @default(cuid())
+  modelVersion String  @unique // "yolov8n-int8-v3"
+  name         String
+  arch         String  @default("YOLOv8n")
+  quant        String  @default("INT8") // QuantType
+  framework    String  @default("TFLITE") // Framework
+
+  // 文件
+  fileUrl    String?
+  fileSize   BigInt?
+  sha256     String?
+  fileId     String?
+  inputSize  Int      @default(640)
+  numClasses Int      @default(1)
+  labels     String   @default("[\"鱼漂\"]") // JSON array
+
+  // 精度指标
+  map50        Float @default(0)
+  map50_95     Float @default(0)
+  precision    Float @default(0)
+  recall       Float @default(0)
+  avgLatencyMs Int   @default(0)
+
+  // 适配范围
+  minAppCode Int?
+  maxAppCode Int?
+
+  status       String    @default("DRAFT") // ModelStatus
+  isRollback   Boolean   @default(false)
+  rollbackToId String?
+  publishedAt  DateTime?
+
+  remark      String?
+  createdById String?
+  createdBy   AdminUser? @relation("ModelCreator", fields: [createdById], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  dispatches ModelDispatch[]
+
+  @@index([status])
+  @@index([quant])
+  @@index([createdAt])
+}
+
+model ModelDispatch {
+  id      String   @id @default(cuid())
+  modelId String
+  model   MlModel  @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  targetType  String  // DispatchTargetType
+  targetValue String  @default("{}") // JSON
+  grayPercent Int     @default(100)
+
+  status         String @default("PENDING") // DispatchStatus
+  totalDevices   Int    @default(0)
+  successDevices Int    @default(0)
+  failedDevices  Int    @default(0)
+
+  isRollback     Boolean @default(false)
+  rollbackFromId String? // 被回滚的下发单
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  remark     String?
+
+  operatorId String?
+  operator   AdminUser? @relation("DispatchOperator", fields: [operatorId], references: [id])
+
+  appVersionId String?
+  appVersion   AppVersion? @relation(fields: [appVersionId], references: [id])
+
+  deviceLogs DeviceDispatchLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([modelId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model DeviceDispatchLog {
+  id         String        @id @default(cuid())
+  dispatchId String
+  dispatch   ModelDispatch @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+
+  deviceId         String
+  fromModelVersion String @default("")
+  toModelVersion   String
+
+  status       String  @default("PENDING") // DeviceDispatchStatus
+  progress     Int     @default(0)
+  errorCode    String?
+  errorMessage String?
+  retryCount   Int     @default(0)
+
+  clientIp  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dispatchId, deviceId])
+  @@index([deviceId])
+  @@index([status])
+}
+
+// ============================================================
+// 用户误报管理
+// ============================================================
+
+model Misreport {
+  id       String @id @default(cuid())
+  reportNo String @unique // MR202609030001
+
+  userId      String
+  deviceId    String
+  deviceModel String @default("")
+  osVersion   String @default("")
+
+  // 版本快照（冗余存储，删除版本后仍可解释）
+  appVersionName String @default("")
+  appVersionCode Int    @default(0)
+  modelVersion   String @default("")
+
+  appVersionId String?
+  appVersion   AppVersion? @relation(fields: [appVersionId], references: [id])
+
+  reportType String // ReportType
+  status     String @default("PENDING") // MisreportStatus
+  severity   String @default("MEDIUM") // Severity
+
+  userNote String @default("")
+
+  // 特征快照 JSON
+  rawData String @default("{}")
+
+  thumbnailUrl String?
+  snapshotUrls String @default("[]") // JSON array
+  videoUrl     String?
+
+  sceneTags String @default("[]") // JSON array
+
+  // 复核结论
+  rootCause        String? // RootCause
+  groundTruth      String? // GroundTruth
+  reviewerNote     String?
+  resolution       String?
+  addToTrainingSet Boolean @default(false)
+
+  assignedToId String?
+  assignedTo   AdminUser? @relation("ReportAssignee", fields: [assignedToId], references: [id])
+  reviewedById String?
+  reviewedBy   AdminUser? @relation("ReportReviewer", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+
+  reportedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  statusLogs MisreportStatusLog[]
+
+  @@index([status])
+  @@index([reportType])
+  @@index([appVersionCode])
+  @@index([modelVersion])
+  @@index([assignedToId])
+  @@index([reportedAt])
+  @@index([deviceId])
+}
+
+model MisreportStatusLog {
+  id          String    @id @default(cuid())
+  misreportId String
+  misreport   Misreport @relation(fields: [misreportId], references: [id], onDelete: Cascade)
+
+  fromStatus   String? // MisreportStatus
+  toStatus     String // MisreportStatus
+  operatorId   String?
+  operator     AdminUser? @relation(fields: [operatorId], references: [id])
+  operatorName String     @default("system")
+  note         String?
+
+  createdAt DateTime @default(now())
+
+  @@index([misreportId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// 看板数据
+// ============================================================
+
+model AppUser {
+  id             String   @id @default(cuid())
+  deviceId       String   @unique
+  userId         String?
+  channel        String   @default("official")
+  deviceModel    String   @default("")
+  appVersionCode Int      @default(0)
+  modelVersion   String   @default("")
+  modelCallCount Int      @default(0)
+  triggerCount   Int      @default(0)
+  firstSeenAt    DateTime @default(now())
+  lastActiveAt   DateTime @default(now())
+
+  @@index([appVersionCode])
+  @@index([modelVersion])
+  @@index([firstSeenAt])
+  @@index([lastActiveAt])
+}
+
+model AppEvent {
+  id             String   @id @default(cuid())
+  deviceId       String
+  eventType      String // EventType
+  appVersionCode Int      @default(0)
+  modelVersion   String   @default("")
+  count          Int      @default(1)
+  payload        String   @default("{}") // JSON
+  occurredAt     DateTime @default(now())
+
+  @@index([eventType])
+  @@index([occurredAt])
+  @@index([deviceId])
+  @@index([appVersionCode])
+  @@index([modelVersion])
+}
+
+model DailyMetric {
+  id             String   @id @default(cuid())
+  date           DateTime @unique
+  dau            Int      @default(0)
+  mau            Int      @default(0)
+  newUsers       Int      @default(0)
+  activeDevices  Int      @default(0)
+  modelCallCount Int      @default(0)
+  triggerCount   Int      @default(0)
+  misreportCount Int      @default(0)
+  misreportRate  Float    @default(0)
+  crashCount     Int      @default(0)
+  avgInferenceMs Int      @default(0)
+
+  @@index([date])
+}
+
+// ============================================================
+// 操作日志（审计）
+// ============================================================
+
+model AuditLog {
+  id           String     @id @default(cuid())
+  operatorId   String?
+  operator     AdminUser? @relation("AuditOperator", fields: [operatorId], references: [id])
+  operatorName String     @default("system")
+
+  module     String // AuditModule
+  action     String // AuditAction
+  targetType String?
+  targetId   String?
+  targetName String?
+
+  before String? // JSON
+  after  String? // JSON
+
+  result    String @default("SUCCESS") // AuditResult
+  reason    String?
+  ip        String?
+  userAgent String?
+  requestId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([module])
+  @@index([action])
+  @@index([operatorId])
+  @@index([createdAt])
+  @@index([targetType, targetId])
+}
+
+// ============================================================
+// 文件资产
+// ============================================================
+
+model FileAsset {
+  id           String  @id @default(cuid())
+  bizType      String // FileBizType
+  originalName String
+  filename     String
+  storagePath  String
+  url          String
+  mimeType     String
+  size         BigInt
+  sha256       String
+
+  uploadedById String?
+  uploadedBy   AdminUser? @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime   @default(now())
+
+  @@index([bizType])
+  @@index([sha256])
+}
