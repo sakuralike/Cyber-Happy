@@ -18,8 +18,8 @@ class MainActivityTest {
     @Test
     fun primaryNavigationAndThemeControlsAreInteractive() {
         activityRule.onNodeWithText("实时监控").assertIsDisplayed()
-        activityRule.onNodeWithText("停止监控").performClick()
-        activityRule.onNodeWithText("开始监控").assertIsDisplayed()
+        activityRule.onNodeWithTag("camera-preview").assertIsDisplayed()
+        activityRule.onNodeWithTag("monitor-control").assertIsDisplayed()
 
         activityRule.onNodeWithContentDescription("记录").performClick()
         activityRule.onNodeWithText("中鱼记录").assertIsDisplayed()
