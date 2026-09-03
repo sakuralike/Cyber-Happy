@@ -1,6 +1,8 @@
 package com.cyberfish.app.ui.screens
 
 import androidx.camera.view.PreviewView
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +28,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,12 +41,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.cyberfish.app.alert.AndroidAlertNotifier
 import com.cyberfish.app.capture.CameraFrameSource
 import com.cyberfish.app.capture.CaptureStatus
 import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.MockDetector
+import com.cyberfish.app.trigger.TriggerEvent
+import com.cyberfish.app.trigger.TriggerPipeline
 import com.cyberfish.app.ui.components.StatusChip
 
 @Composable
@@ -51,32 +58,52 @@ fun CameraPreviewCard(
     monitoring: Boolean,
     permissionGranted: Boolean,
     permissionDenied: Boolean,
+    onTrigger: (TriggerEvent) -> Unit,
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = context as LifecycleOwner
+    val lifecycleOwner = context.findLifecycleOwner()
+    val mainExecutor = remember(context) { ContextCompat.getMainExecutor(context) }
+    val currentOnTrigger = rememberUpdatedState(onTrigger)
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var metrics by remember { mutableStateOf<FrameMetrics?>(null) }
     var captureStatus by remember { mutableStateOf(CaptureStatus.Idle) }
+    val notifier = remember(context) { AndroidAlertNotifier(context.applicationContext) }
+    val triggerPipeline = remember {
+        TriggerPipeline { event ->
+            mainExecutor.execute {
+                notifier.alert(event)
+                currentOnTrigger.value(event)
+            }
+        }
+    }
     val frameSource = remember {
         CameraFrameSource(
             context = context.applicationContext,
             detector = MockDetector(),
             onFrame = { metrics = it },
             onStatusChanged = { captureStatus = it },
+            onDetection = { detection, timestampMillis -> triggerPipeline.accept(detection, timestampMillis) },
         )
     }
 
     DisposableEffect(frameSource) {
-        onDispose { frameSource.close() }
+        onDispose {
+            frameSource.close()
+            triggerPipeline.reset()
+        }
     }
     DisposableEffect(monitoring, permissionGranted, lifecycleOwner, previewView) {
-        if (monitoring && permissionGranted && previewView != null) {
+        if (monitoring && permissionGranted && previewView != null && lifecycleOwner != null) {
             frameSource.start(lifecycleOwner, previewView!!)
         } else {
             frameSource.stop()
+            triggerPipeline.reset()
             metrics = null
         }
-        onDispose { frameSource.stop() }
+        onDispose {
+            frameSource.stop()
+            triggerPipeline.reset()
+        }
     }
 
     val status = monitorStatus(monitoring, permissionGranted, permissionDenied, captureStatus, metrics?.detection)
@@ -104,6 +131,12 @@ fun CameraPreviewCard(
             PreviewStatus(Modifier.align(Alignment.BottomCenter), status, metrics)
         }
     }
+}
+
+private fun Context.findLifecycleOwner(): LifecycleOwner? = when (this) {
+    is LifecycleOwner -> this
+    is ContextWrapper -> baseContext.findLifecycleOwner()
+    else -> null
 }
 
 @Composable
