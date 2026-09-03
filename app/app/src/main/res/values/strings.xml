@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">赛博鱼乐</string>
+    <string name="foundation_ready">工程基线已就绪</string>
+    <string name="foundation_detail">Android 9+ · API 34 · Compose</string>
+</resources>
