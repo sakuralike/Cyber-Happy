@@ -48,7 +48,14 @@ export default function App() {
                 </RequirePerm>
               }
             />
-            <Route path="/audit-logs" element={<AuditLogPage />} />
+            <Route
+              path="/audit-logs"
+              element={
+                <RequirePerm perm="auditLog:read">
+                  <AuditLogPage />
+                </RequirePerm>
+              }
+            />
             <Route
               path="/admins"
               element={

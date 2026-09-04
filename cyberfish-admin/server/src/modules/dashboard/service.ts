@@ -27,6 +27,22 @@ function eventFilter(
   };
 }
 
+function appUserFilter(q: DashboardQuery): Prisma.AppUserWhereInput {
+  return {
+    ...(q.appVersionCode !== undefined ? { appVersionCode: q.appVersionCode } : {}),
+    ...(q.modelVersion ? { modelVersion: q.modelVersion } : {}),
+    ...(q.channel ? { channel: q.channel } : {}),
+  };
+}
+
+function misreportFilter(q: DashboardQuery, from: Date, to: Date): Prisma.MisreportWhereInput {
+  return {
+    reportedAt: { gte: from, lte: to },
+    ...(q.appVersionCode !== undefined ? { appVersionCode: q.appVersionCode } : {}),
+    ...(q.modelVersion ? { modelVersion: q.modelVersion } : {}),
+  };
+}
+
 function calcDelta(current: number, previous: number): number {
   if (previous === 0) return current === 0 ? 0 : 1;
   return Number(((current - previous) / previous).toFixed(4));
@@ -59,13 +75,12 @@ export async function overview(q: DashboardQuery) {
       where: eventFilter(EventType.TRIGGER, from, to, q),
       _sum: { count: true },
     }),
-    prisma.misreport.count({ where: { reportedAt: { gte: from, lte: to } } }),
-    prisma.appUser.count({ where: { firstSeenAt: { gte: from, lte: to } } }),
+    prisma.misreport.count({ where: misreportFilter(q, from, to) }),
+    prisma.appUser.count({ where: { firstSeenAt: { gte: from, lte: to }, ...appUserFilter(q) } }),
     prisma.appUser.count({
       where: {
         lastActiveAt: { gte: from, lte: to },
-        ...(q.appVersionCode !== undefined ? { appVersionCode: q.appVersionCode } : {}),
-        ...(q.modelVersion ? { modelVersion: q.modelVersion } : {}),
+        ...appUserFilter(q),
       },
     }),
   ]);
@@ -104,8 +119,8 @@ export async function overview(q: DashboardQuery) {
       where: eventFilter(EventType.TRIGGER, prevFrom, prevTo, q),
       _sum: { count: true },
     }),
-    prisma.misreport.count({ where: { reportedAt: { gte: prevFrom, lte: prevTo } } }),
-    prisma.appUser.count({ where: { firstSeenAt: { gte: prevFrom, lte: prevTo } } }),
+    prisma.misreport.count({ where: misreportFilter(q, prevFrom, prevTo) }),
+    prisma.appUser.count({ where: { firstSeenAt: { gte: prevFrom, lte: prevTo }, ...appUserFilter(q) } }),
   ]);
 
   const prevTriggers = prevTriggerAgg._sum.count ?? 0;
@@ -143,7 +158,7 @@ export async function trend(q: DashboardQuery) {
       select: { deviceId: true, occurredAt: true },
     }),
     prisma.appUser.findMany({
-      where: { firstSeenAt: { gte: from, lte: to } },
+      where: { firstSeenAt: { gte: from, lte: to }, ...appUserFilter(q) },
       select: { firstSeenAt: true },
     }),
     prisma.appEvent.findMany({
@@ -155,7 +170,7 @@ export async function trend(q: DashboardQuery) {
       select: { count: true, occurredAt: true },
     }),
     prisma.misreport.findMany({
-      where: { reportedAt: { gte: from, lte: to } },
+      where: misreportFilter(q, from, to),
       select: { reportedAt: true },
     }),
   ]);
@@ -205,8 +220,7 @@ export async function trend(q: DashboardQuery) {
 
 export async function versionDistribution(q: DashboardQuery) {
   const where: Prisma.AppUserWhereInput = {
-    ...(q.appVersionCode !== undefined ? { appVersionCode: q.appVersionCode } : {}),
-    ...(q.modelVersion ? { modelVersion: q.modelVersion } : {}),
+    ...appUserFilter(q),
   };
   const [grouped, versions, total] = await Promise.all([
     prisma.appUser.groupBy({ by: ['appVersionCode'], where, _count: { _all: true }, orderBy: { appVersionCode: 'desc' } }),
@@ -253,7 +267,7 @@ export async function misreportAnalysis(q: DashboardQuery) {
 
   const [reports, triggersAgg] = await Promise.all([
     prisma.misreport.findMany({
-      where: { reportedAt: { gte: from, lte: to } },
+      where: misreportFilter(q, from, to),
       select: { reportedAt: true, rootCause: true, reportType: true, modelVersion: true },
     }),
     prisma.appEvent.aggregate({
@@ -303,7 +317,7 @@ export async function health(q: DashboardQuery) {
       distinct: ['deviceId'],
     }),
     prisma.misreport.findMany({
-      where: { reportedAt: { gte: from, lte: to } },
+      where: misreportFilter(q, from, to),
       select: { rawData: true },
       take: 500,
     }),

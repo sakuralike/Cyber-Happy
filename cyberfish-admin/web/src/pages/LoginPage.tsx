@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Form, Input, Button, Card, Typography, message, Space } from 'antd';
+import { Form, Input, Button, Card, Typography, message } from 'antd';
 import { UserOutlined, LockOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth';
@@ -53,14 +53,6 @@ export function LoginPage() {
             </Button>
           </Form.Item>
         </Form>
-        <Space direction="vertical" size={0} style={{ width: '100%' }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            演示账号：admin / admin123（管理员）
-          </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            operator / operator123 · reviewer / reviewer123 · viewer / viewer123
-          </Typography.Text>
-        </Space>
       </Card>
     </div>
   );
