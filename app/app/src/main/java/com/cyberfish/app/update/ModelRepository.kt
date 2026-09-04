@@ -371,7 +371,7 @@ private fun liteRtModelDescriptorFromJson(raw: String): LiteRtModelDescriptor {
         inputName = data.optString("inputName").takeIf { it.isNotBlank() },
         inputLayout = data.optString("inputLayout", "NCHW"),
         outputName = data.optString("outputName").takeIf { it.isNotBlank() },
-        coordinatesNormalized = data.optBoolean("coordinatesNormalized", true),
+        coordinatesNormalized = data.optBoolean("coordinatesNormalized", false),
         valuesPerDetection = data.optInt("valuesPerDetection", 6),
     )
 }
