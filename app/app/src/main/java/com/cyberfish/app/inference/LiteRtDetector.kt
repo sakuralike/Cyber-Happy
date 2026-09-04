@@ -35,9 +35,10 @@ class LiteRtDetector(
         get() = true
 
     override fun detect(frame: CameraFrame): Detection? {
-        val input = frame.normalizedRgb ?: return null
+        val pixels = frame.normalizedRgb ?: return null
         val expectedInputElements = descriptor.inputSize * descriptor.inputSize * 3
-        if (input.size != expectedInputElements) return null
+        if (pixels.size != expectedInputElements) return null
+        val input = toModelLayout(pixels)
         return synchronized(lock) {
             try {
                 inputBuffers[0].writeFloat(input)
@@ -47,6 +48,16 @@ class LiteRtDetector(
             } catch (_: Exception) {
                 null
             }
+        }
+    }
+
+    private fun toModelLayout(rgb: FloatArray): FloatArray {
+        if (descriptor.inputLayout.equals("NHWC", ignoreCase = true)) return rgb
+        val planeSize = descriptor.inputSize * descriptor.inputSize
+        return FloatArray(rgb.size) { index ->
+            val channel = index / planeSize
+            val pixel = index % planeSize
+            rgb[pixel * 3 + channel]
         }
     }
 

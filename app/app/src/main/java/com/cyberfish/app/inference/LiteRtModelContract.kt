@@ -14,6 +14,7 @@ data class LiteRtModelDescriptor(
     val signatureExpiresAtMillis: Long? = null,
     val runtimeSignatureName: String? = null,
     val inputName: String? = null,
+    val inputLayout: String = "NCHW",
     val outputName: String? = null,
     val coordinatesNormalized: Boolean = true,
     val valuesPerDetection: Int = 6,
@@ -38,6 +39,7 @@ object LiteRtModelContract {
             if (descriptor.signature.isNullOrBlank()) add("模型签名缺失")
             if (descriptor.signatureAlgorithm !in SUPPORTED_SIGNATURE_ALGORITHMS) add("模型签名算法不支持")
             if (descriptor.publicKeyId.isNullOrBlank()) add("模型公钥标识缺失")
+            if (descriptor.inputLayout.uppercase() !in SUPPORTED_INPUT_LAYOUTS) add("模型输入布局不支持")
             if (descriptor.signatureExpiresAtMillis != null && descriptor.signatureExpiresAtMillis <= nowMillis) add("模型签名已过期")
         }
         return LiteRtContractResult(errors)
@@ -46,4 +48,5 @@ object LiteRtModelContract {
     private val MODEL_VERSION_PATTERN = Regex("[A-Za-z0-9._-]{1,80}")
     private val SHA256_PATTERN = Regex("[A-Fa-f0-9]{64}")
     private val SUPPORTED_SIGNATURE_ALGORITHMS = setOf("ECDSA_P256_SHA256")
+    private val SUPPORTED_INPUT_LAYOUTS = setOf("NCHW", "NHWC")
 }
