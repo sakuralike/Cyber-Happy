@@ -174,6 +174,7 @@ class AppApiClient(
                         ?: model.optString("signatureExpiresAt").toEpochMillisOrNull(),
                     runtimeSignatureName = model.optString("runtimeSignatureName").takeIf { it.isNotBlank() },
                     inputName = model.optString("inputName").takeIf { it.isNotBlank() },
+                    inputLayout = model.optString("inputLayout", "NCHW"),
                     outputName = model.optString("outputName").takeIf { it.isNotBlank() },
                     coordinatesNormalized = model.optBoolean("coordinatesNormalized", true),
                     valuesPerDetection = model.optInt("valuesPerDetection", 6),
