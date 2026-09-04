@@ -34,6 +34,16 @@ export const createModelSchema = z.object({
   minAppCode: z.number().int().nonnegative().optional(),
   maxAppCode: z.number().int().nonnegative().optional(),
   remark: z.string().max(1000).optional(),
+  signature: z.string().trim().max(20000).optional().nullable(),
+  signatureAlgorithm: z.string().trim().max(80).optional().nullable(),
+  publicKeyId: z.string().trim().max(120).optional().nullable(),
+  signatureExpiresAt: z.string().datetime().optional().nullable(),
+  runtimeSignatureName: z.string().trim().max(120).optional().nullable(),
+  inputName: z.string().trim().max(120).optional().nullable(),
+  inputLayout: z.enum(['NCHW', 'NHWC']).default('NCHW'),
+  outputName: z.string().trim().max(120).optional().nullable(),
+  coordinatesNormalized: z.boolean().default(false),
+  valuesPerDetection: z.number().int().positive().default(6),
 });
 
 export const updateModelSchema = createModelSchema.partial().omit({ modelVersion: true });

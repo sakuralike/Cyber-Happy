@@ -12,7 +12,7 @@ const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
     'appVersion:read', 'appVersion:write', 'appVersion:publish', 'appVersion:delete',
     'model:read', 'model:write', 'model:dispatch', 'model:rollback',
     'misreport:read', 'misreport:review', 'misreport:assign', 'misreport:export',
-    'dashboard:read', 'auditLog:read', 'admin:read', 'admin:write', 'file:read', 'file:upload',
+    'dashboard:read', 'auditLog:read', 'admin:read', 'admin:write', 'siteConfig:write', 'file:read', 'file:upload',
   ],
   OPERATOR: [
     'appVersion:read', 'appVersion:write', 'appVersion:publish',
@@ -33,6 +33,8 @@ const PUBLIC_PATHS = [
   '/health',
   '/api/v1/health',
   '/api/v1/auth/login',
+  '/api/v1/site-config',
+  '/api/v1/site-config/apk',
 ];
 
 function isPublic(url: string): boolean {

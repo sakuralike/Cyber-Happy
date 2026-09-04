@@ -127,6 +127,16 @@ model MlModel {
   publishedAt  DateTime?
 
   remark      String?
+  signature   String?
+  signatureAlgorithm String?
+  publicKeyId String?
+  signatureExpiresAt String?
+  runtimeSignatureName String?
+  inputName String?
+  inputLayout String @default("NCHW")
+  outputName String?
+  coordinatesNormalized Boolean @default(false)
+  valuesPerDetection Int @default(6)
   createdById String?
   createdBy   AdminUser? @relation("ModelCreator", fields: [createdById], references: [id])
   createdAt   DateTime   @default(now())
@@ -394,4 +404,19 @@ model FileAsset {
 
   @@index([bizType])
   @@index([sha256])
+}
+
+// ============================================================
+// 公开首页配置
+// ============================================================
+
+model SiteConfig {
+  id        String   @id @default("default")
+  title     String   @default("赛博鱼乐")
+  content   String   @default("")
+  apkUrl    String?
+  apkFileId String?
+  updatedById String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { config } from './config';
@@ -17,6 +18,8 @@ import modelRoutes from './modules/model/routes';
 import misreportRoutes from './modules/misreport/routes';
 import dashboardRoutes from './modules/dashboard/routes';
 import auditLogRoutes from './modules/audit-log/routes';
+import siteConfigRoutes from './modules/site-config/routes';
+import appEventRoutes from './modules/app-event/routes';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -29,6 +32,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.setSerializerCompiler(() => (data: unknown) => JSON.stringify(data, jsonReplacer));
+
+  await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 
   await app.register(cors, {
     origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(',').map((s) => s.trim()),
@@ -70,6 +75,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(misreportRoutes, { prefix: '/misreports' });
       await v1.register(dashboardRoutes, { prefix: '/dashboard' });
       await v1.register(auditLogRoutes, { prefix: '/audit-logs' });
+      await v1.register(siteConfigRoutes, { prefix: '/site-config' });
+      await v1.register(appEventRoutes, { prefix: '/app-events' });
     },
     { prefix: '/api/v1' },
   );
