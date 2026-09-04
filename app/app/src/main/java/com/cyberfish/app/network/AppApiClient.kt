@@ -176,7 +176,7 @@ class AppApiClient(
                     inputName = model.optString("inputName").takeIf { it.isNotBlank() },
                     inputLayout = model.optString("inputLayout", "NCHW"),
                     outputName = model.optString("outputName").takeIf { it.isNotBlank() },
-                    coordinatesNormalized = model.optBoolean("coordinatesNormalized", true),
+                    coordinatesNormalized = model.optBoolean("coordinatesNormalized", false),
                     valuesPerDetection = model.optInt("valuesPerDetection", 6),
                 ),
                 downloadUrl = config.resolve(downloadUrl),
