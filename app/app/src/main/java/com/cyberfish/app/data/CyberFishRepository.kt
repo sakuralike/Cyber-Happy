@@ -7,14 +7,22 @@ import com.cyberfish.app.data.local.FishRecordEntity
 import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.data.preferences.AppPreferencesStore
+import com.cyberfish.app.network.ApiConfig
+import com.cyberfish.app.network.ApiResult
+import com.cyberfish.app.network.AppApiClient
+import com.cyberfish.app.network.AppUpdateInfo
+import com.cyberfish.app.network.DeviceIdentityStore
+import com.cyberfish.app.network.MisreportUploadWorker
 import com.cyberfish.app.trigger.TriggerEvent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 class CyberFishRepository(context: Context) {
-    private val database = CyberFishDatabase.get(context)
+    private val appContext = context.applicationContext
+    private val database = CyberFishDatabase.get(appContext)
     private val recordDao: FishRecordDao = database.fishRecordDao()
-    private val preferencesStore = AppPreferencesStore(context.applicationContext)
+    private val preferencesStore = AppPreferencesStore(appContext)
+    private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext))
 
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
     val preferences: Flow<AppPreferences> = preferencesStore.data
@@ -23,16 +31,19 @@ class CyberFishRepository(context: Context) {
         recordDao.insert(FishRecordEntity.fromEvent(event, System.currentTimeMillis()))
     }
 
-    suspend fun markFalsePositive(event: TriggerEvent) {
+    suspend fun confirmMisreport(event: TriggerEvent) {
         recordDao.insert(FishRecordEntity.fromEvent(event, System.currentTimeMillis(), isFalsePositive = true))
-        recordDao.markFalsePositiveByTriggerTimestamp(event.timestampMillis)
+        confirmMisreport(event.timestampMillis)
     }
 
-    suspend fun markFalsePositive(triggerTimestampMillis: Long) {
-        recordDao.markFalsePositiveByTriggerTimestamp(triggerTimestampMillis)
+    suspend fun confirmMisreport(triggerTimestampMillis: Long) {
+        recordDao.markMisreportPending(triggerTimestampMillis, com.cyberfish.app.data.model.MisreportSyncState.Pending.name)
+        MisreportUploadWorker.enqueue(appContext, triggerTimestampMillis)
     }
 
     suspend fun savePreferences(preferences: AppPreferences) {
         preferencesStore.save(preferences)
     }
+
+    suspend fun checkForUpdate(): ApiResult<AppUpdateInfo> = appApiClient.checkForUpdate()
 }
