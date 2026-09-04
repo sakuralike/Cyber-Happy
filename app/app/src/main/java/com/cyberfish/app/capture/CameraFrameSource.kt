@@ -76,7 +76,14 @@ class CameraFrameSource(
         val startedAt = SystemClock.elapsedRealtimeNanos()
         try {
             if (expectedGeneration != generation) return
-            val detection = detector.detect(CameraFrame(image.width, image.height, image.imageInfo.timestamp))
+            val detection = detector.detect(
+                CameraFrame(
+                    width = image.width,
+                    height = image.height,
+                    timestampNanos = image.imageInfo.timestamp,
+                    normalizedRgb = if (detector.requiresPixelData) image.toNormalizedRgb(detector.inputSize) else null,
+                ),
+            )
             val now = SystemClock.elapsedRealtime()
             onDetection(detection, now)
             updateFrameRate(now)
