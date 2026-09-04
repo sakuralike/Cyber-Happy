@@ -12,17 +12,29 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import com.cyberfish.app.alert.AlertPreferences
+import com.cyberfish.app.data.CyberFishRepository
+import com.cyberfish.app.data.model.FishRecord
+import com.cyberfish.app.data.preferences.AppPreferences
+import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.PillTabBar
 import com.cyberfish.app.ui.screens.MonitorScreen
 import com.cyberfish.app.ui.screens.ProfileScreen
 import com.cyberfish.app.ui.screens.RecordsScreen
 import com.cyberfish.app.ui.screens.SettingsScreen
 import com.cyberfish.app.ui.theme.CyberFishTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlin.math.roundToLong
 
 internal enum class AppTab(val label: String) {
     Monitor("监控"),
@@ -39,15 +51,18 @@ enum class ThemeMode(val label: String) {
 
 @Composable
 fun CyberFishApp() {
+    val context = LocalContext.current.applicationContext
+    val repository = remember(context) { CyberFishRepository(context) }
+    val coroutineScope = rememberCoroutineScope()
+    val preferences by repository.preferences.collectAsState(initial = AppPreferences())
+    val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
-    var themeModeName by rememberSaveable { mutableStateOf(ThemeMode.Dark.name) }
     val selectedTab = AppTab.valueOf(selectedTabName)
-    val themeMode = ThemeMode.valueOf(themeModeName)
-    val darkTheme = when (themeMode) {
-        ThemeMode.System -> isSystemInDarkTheme()
-        ThemeMode.Light -> false
-        ThemeMode.Dark -> true
-    }
+    val darkTheme = resolveDarkTheme(
+        preferences = preferences,
+        systemDark = isSystemInDarkTheme(),
+        hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
+    )
 
     CyberFishTheme(darkTheme = darkTheme) {
         Scaffold(
@@ -63,17 +78,53 @@ fun CyberFishApp() {
                     when (selectedTab) {
                         AppTab.Monitor -> MonitorScreen(
                             onOpenSettings = { selectedTabName = AppTab.Settings.name },
+                            triggerConfig = preferences.toTriggerConfig(),
+                            alertPreferences = AlertPreferences(
+                                soundEnabled = preferences.soundEnabled,
+                                vibrationEnabled = preferences.vibrationEnabled,
+                                notificationEnabled = preferences.notificationEnabled,
+                                quietHoursEnabled = preferences.quietHoursEnabled,
+                            ),
+                            onTriggerPersist = { event ->
+                                coroutineScope.launch(Dispatchers.IO) { repository.saveTrigger(event) }
+                            },
+                            onMarkFalsePositive = { event ->
+                                coroutineScope.launch(Dispatchers.IO) { repository.markFalsePositive(event) }
+                            },
                         )
-                        AppTab.Records -> RecordsScreen()
+                        AppTab.Records -> RecordsScreen(
+                            records = records,
+                            onMarkFalsePositive = { record ->
+                                coroutineScope.launch(Dispatchers.IO) { repository.markFalsePositive(record.triggerTimestampMillis) }
+                            },
+                        )
                         AppTab.Settings -> SettingsScreen(
-                            themeMode = themeMode,
-                            onThemeModeChange = { themeModeName = it.name },
+                            settings = preferences,
+                            onSettingsChange = { next ->
+                                coroutineScope.launch(Dispatchers.IO) { repository.savePreferences(next) }
+                            },
                         )
                         AppTab.Profile -> ProfileScreen()
                     }
                 }
             }
         }
+    }
+}
+
+private fun AppPreferences.toTriggerConfig() = TriggerConfig(
+    sinkThresholdPx = sinkThresholdPx,
+    trembleThresholdHz = trembleThresholdHz,
+    minSinkDurationMillis = (durationSeconds * 1_000f).roundToLong(),
+    minConfidence = confidenceThreshold,
+)
+
+internal fun resolveDarkTheme(preferences: AppPreferences, systemDark: Boolean, hourOfDay: Int): Boolean {
+    if (preferences.autoTheme) return hourOfDay < 6 || hourOfDay >= 18
+    return when (ThemeMode.entries.firstOrNull { it.name == preferences.themeMode } ?: ThemeMode.Dark) {
+        ThemeMode.System -> systemDark
+        ThemeMode.Light -> false
+        ThemeMode.Dark -> true
     }
 }
 

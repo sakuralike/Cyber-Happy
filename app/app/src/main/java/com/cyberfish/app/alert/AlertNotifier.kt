@@ -20,7 +20,11 @@ data class AlertPreferences(
     val soundEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val notificationEnabled: Boolean = true,
+    val quietHoursEnabled: Boolean = true,
 )
+
+fun AlertPreferences.isQuietHour(hourOfDay: Int): Boolean =
+    quietHoursEnabled && (hourOfDay >= QUIET_START_HOUR || hourOfDay < QUIET_END_HOUR)
 
 interface AlertNotifier {
     fun alert(event: TriggerEvent)
@@ -35,6 +39,7 @@ class AndroidAlertNotifier(
     private val notificationId = AtomicInteger()
 
     override fun alert(event: TriggerEvent) {
+        if (preferences.isQuietHour(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))) return
         if (preferences.soundEnabled) playSound()
         if (preferences.vibrationEnabled) vibrate()
         if (preferences.notificationEnabled) postNotification(event)
@@ -96,3 +101,6 @@ class AndroidAlertNotifier(
         val VIBRATION_PATTERN = longArrayOf(0L, 200L, 100L, 200L)
     }
 }
+
+private const val QUIET_START_HOUR = 22
+private const val QUIET_END_HOUR = 6
