@@ -11,6 +11,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.ByteArrayOutputStream
 
 class AppApiClientTest {
     private lateinit var server: MockWebServer
@@ -97,6 +98,58 @@ class AppApiClientTest {
         ).checkForUpdate()
 
         assertTrue(result is ApiResult.ParseError)
+    }
+
+    @Test
+    fun `model check parses LiteRT metadata and resolves relative url`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"hasUpdate":true,"model":{"modelVersion":"yolo26n-w8a32-v1","arch":"YOLO26n","quant":"W8A32","framework":"LiteRT","inputSize":640,"url":"/files/models/yolo26n.tflite","size":1234,"sha256":"${"a".repeat(64)}","labels":["fish_float"],"signature":"c2ln","signatureAlgorithm":"ECDSA_P256_SHA256","publicKeyId":"key-1","signatureExpiresAt":"2030-01-01T00:00:00Z"},"dispatchId":"dispatch-1"}}""",
+            ),
+        )
+
+        val result = client().checkModel()
+
+        val check = (result as ApiResult.Success).value
+        assertTrue(check.hasUpdate)
+        assertEquals("yolo26n-w8a32-v1", check.update?.descriptor?.modelVersion)
+        assertEquals("YOLO26n", check.update?.descriptor?.architecture)
+        assertEquals("LiteRT", check.update?.descriptor?.framework)
+        assertEquals("fish_float", check.update?.descriptor?.labels?.single())
+        assertEquals("dispatch-1", check.update?.dispatchId)
+        assertTrue(check.update?.downloadUrl?.endsWith("/files/models/yolo26n.tflite") == true)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/models/check", request.requestUrl?.encodedPath)
+        assertEquals("device-123", request.requestUrl?.queryParameter("deviceId"))
+    }
+
+    @Test
+    fun `model report sends device status and progress`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"code":0,"message":"ok","data":{}}"""))
+
+        val result = client().reportModelDispatch("dispatch-1", ModelDispatchStatus.DOWNLOADING, 45, "", "")
+
+        assertTrue(result is ApiResult.Success)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/models/dispatches/dispatch-1/report", request.requestUrl?.encodedPath)
+        val payload = JSONObject(request.body.readUtf8())
+        assertEquals("device-123", payload.getString("deviceId"))
+        assertEquals("DOWNLOADING", payload.getString("status"))
+        assertEquals(45, payload.getInt("progress"))
+    }
+
+    @Test
+    fun `model download streams bytes and reports progress`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("model-bytes"))
+        val output = ByteArrayOutputStream()
+        val progress = mutableListOf<Long>()
+
+        val result = client().downloadModel(server.url("/model.tflite").toString(), output) { downloaded, _ -> progress += downloaded }
+
+        assertEquals(11L, (result as ApiResult.Success).value)
+        assertEquals("model-bytes", output.toString(Charsets.UTF_8.name()))
+        assertEquals(listOf(11L), progress)
     }
 
     private fun client() = AppApiClient(

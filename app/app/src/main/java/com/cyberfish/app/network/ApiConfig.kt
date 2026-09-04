@@ -9,7 +9,13 @@ data class ApiConfig(
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() && appToken.isNotBlank()
 
-    fun endpoint(path: String): String = "${baseUrl.trimEnd('/')}/${path.trimStart('/')}"
+    fun endpoint(path: String): String = resolve(path)
+
+    fun resolve(pathOrUrl: String): String = if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+        pathOrUrl
+    } else {
+        "${baseUrl.trimEnd('/')}/${pathOrUrl.trimStart('/')}"
+    }
 
     companion object {
         fun fromBuildConfig() = ApiConfig(

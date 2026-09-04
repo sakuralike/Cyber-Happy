@@ -45,6 +45,8 @@ import com.cyberfish.app.ui.components.MetricCard
 import com.cyberfish.app.ui.components.ScreenTitle
 import com.cyberfish.app.ui.components.SectionCard
 import com.cyberfish.app.trigger.TriggerEvent
+import com.cyberfish.app.inference.Detector
+import com.cyberfish.app.inference.MockDetector
 
 @Composable
 fun MonitorScreen(
@@ -53,6 +55,7 @@ fun MonitorScreen(
     alertPreferences: AlertPreferences,
     onTriggerPersist: (TriggerEvent) -> Unit,
     onMarkFalsePositive: (TriggerEvent) -> Unit,
+    detector: Detector = MockDetector(),
 ) {
     val context = LocalContext.current
     var permissionGranted by rememberSaveable { mutableStateOf(hasCameraPermission(context)) }
@@ -76,6 +79,7 @@ fun MonitorScreen(
                 permissionDenied = permissionDenied,
                 triggerConfig = triggerConfig,
                 alertPreferences = alertPreferences,
+                detector = detector,
                 onTrigger = {
                     triggerEvent = it
                     falsePositiveMarked = false

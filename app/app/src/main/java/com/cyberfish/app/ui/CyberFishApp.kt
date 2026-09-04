@@ -59,6 +59,7 @@ fun CyberFishApp() {
     val coroutineScope = rememberCoroutineScope()
     val preferences by repository.preferences.collectAsState(initial = AppPreferences())
     val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
+    val modelState by repository.modelState.collectAsState()
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     val selectedTab = AppTab.valueOf(selectedTabName)
@@ -95,6 +96,7 @@ fun CyberFishApp() {
                             onMarkFalsePositive = { event ->
                                 coroutineScope.launch(Dispatchers.IO) { repository.confirmMisreport(event) }
                             },
+                            detector = repository.modelRepository.detectorSlot,
                         )
                         AppTab.Records -> RecordsScreen(
                             records = records,
@@ -108,6 +110,7 @@ fun CyberFishApp() {
                                 coroutineScope.launch(Dispatchers.IO) { repository.savePreferences(next) }
                             },
                             versionCheckState = versionCheckState,
+                            modelState = modelState,
                             onCheckForUpdate = {
                                 coroutineScope.launch {
                                     versionCheckState = VersionCheckState.Checking
@@ -119,6 +122,12 @@ fun CyberFishApp() {
                                         is ApiResult.ParseError -> VersionCheckState.Failed(result.message)
                                     }
                                 }
+                            },
+                            onCheckModel = {
+                                coroutineScope.launch(Dispatchers.IO) { repository.checkForModelUpdate() }
+                            },
+                            onRollbackModel = {
+                                coroutineScope.launch(Dispatchers.IO) { repository.rollbackModel() }
                             },
                         )
                         AppTab.Profile -> ProfileScreen()
