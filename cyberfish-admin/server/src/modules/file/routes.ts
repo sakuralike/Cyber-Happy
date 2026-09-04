@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fs from 'node:fs';
 import { parseOrThrow } from '../../lib/zod';
 import { sendOk, sendCreated } from '../../lib/response';
@@ -7,8 +7,22 @@ import { uploadQuerySchema, fileIdParamSchema } from './schema';
 import * as service from './service';
 
 const routes: FastifyPluginAsync = async (app) => {
+  const uploadPermission = app.requirePermission('file:upload');
+  const readPermission = app.requirePermission('file:read');
+  const uploadGuard = async (request: FastifyRequest, reply: FastifyReply) => {
+    const isAppClient = (request as FastifyRequest & { isAppClient?: boolean }).isAppClient;
+    const bizType = String((request.query as Record<string, unknown> | undefined)?.bizType ?? '');
+    if (isAppClient && ['IMAGE', 'VIDEO'].includes(bizType)) return;
+    if (isAppClient) throw AppError.forbidden('APP 端仅允许上传误报媒体');
+    return uploadPermission(request, reply);
+  };
+  const readGuard = async (request: FastifyRequest, reply: FastifyReply) => {
+    if ((request as FastifyRequest & { isAppClient?: boolean }).isAppClient) return;
+    return readPermission(request, reply);
+  };
+
   /** 统一文件上传：multipart/form-data，字段 bizType + file */
-  app.post('/upload', async (request, reply) => {
+  app.post('/upload', { onRequest: [uploadGuard] }, async (request, reply) => {
     const { bizType } = parseOrThrow(uploadQuerySchema, request.query);
 
     const parts = request.parts();
@@ -43,13 +57,13 @@ const routes: FastifyPluginAsync = async (app) => {
     return sendCreated(reply, result);
   });
 
-  app.get('/:id', async (request, reply) => {
+  app.get('/:id', { onRequest: [readGuard] }, async (request, reply) => {
     const { id } = parseOrThrow(fileIdParamSchema, request.params);
     return sendOk(reply, await service.detail(id));
   });
 
   /** 带鉴权的下载 */
-  app.get('/:id/download', async (request, reply) => {
+  app.get('/:id/download', { onRequest: [readGuard] }, async (request, reply) => {
     const { id } = parseOrThrow(fileIdParamSchema, request.params);
     const asset = await service.detail(id);
     const full = service.resolvePath(asset.url);

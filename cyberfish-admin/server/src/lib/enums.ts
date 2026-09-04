@@ -43,6 +43,7 @@ export const ReleaseStatus = {
 export type ReleaseStatus = (typeof ReleaseStatus)[keyof typeof ReleaseStatus];
 
 export const QuantType = {
+  W8A32: 'W8A32',
   INT8: 'INT8',
   FP16: 'FP16',
   FP32: 'FP32',
@@ -50,6 +51,7 @@ export const QuantType = {
 export type QuantType = (typeof QuantType)[keyof typeof QuantType];
 
 export const Framework = {
+  LITERT: 'LiteRT',
   TFLITE: 'TFLITE',
   ONNX: 'ONNX',
   NCNN: 'NCNN',
