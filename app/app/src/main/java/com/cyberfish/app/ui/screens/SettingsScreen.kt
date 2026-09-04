@@ -47,6 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.VersionCheckState
+import com.cyberfish.app.update.ModelInstallStatus
+import com.cyberfish.app.update.ModelState
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPreset
 import com.cyberfish.app.ui.ThemeMode
@@ -64,6 +66,9 @@ fun SettingsScreen(
     onSettingsChange: (AppPreferences) -> Unit,
     versionCheckState: VersionCheckState,
     onCheckForUpdate: () -> Unit,
+    modelState: ModelState = ModelState(),
+    onCheckModel: () -> Unit = {},
+    onRollbackModel: () -> Unit = {},
 ) {
     var sectionName by rememberSaveable { mutableStateOf(SettingsSection.Parameters.name) }
     val section = SettingsSection.valueOf(sectionName)
@@ -84,7 +89,7 @@ fun SettingsScreen(
             when (section) {
                 SettingsSection.Parameters -> ParameterSettings(settings, onSettingsChange)
                 SettingsSection.Alerts -> AlertSettings(settings, onSettingsChange)
-                SettingsSection.Model -> ModelSettings(settings, onSettingsChange, versionCheckState, onCheckForUpdate)
+                SettingsSection.Model -> ModelSettings(settings, onSettingsChange, versionCheckState, onCheckForUpdate, modelState, onCheckModel, onRollbackModel)
             }
         }
     }
@@ -242,19 +247,37 @@ private fun ModelSettings(
     onSettingsChange: (AppPreferences) -> Unit,
     versionCheckState: VersionCheckState,
     onCheckForUpdate: () -> Unit,
+    modelState: ModelState,
+    onCheckModel: () -> Unit,
+    onRollbackModel: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionCard("模型状态") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("占位模型 MockDetector", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("规则模拟 · 仅供联调", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Text(modelStateTitle(modelState), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(modelStateSubtitle(modelState), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
-                StatusChip("未接入", MaterialTheme.colorScheme.error)
+                StatusChip(modelStateLabel(modelState), modelStateColor(modelState))
             }
             Spacer(Modifier.height(12.dp)); ThinDivider()
-            SettingRow("训练进度", "数据采集 → 标注 → 训练中 → 接入 APP") { Text("训练中", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold) }
+            SettingRow("模型版本", modelState.modelVersion) { Text("${modelState.progress}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold) }
+            if (modelState.errorMessage != null) {
+                Text(modelState.errorMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Button(
+                    onClick = onCheckModel,
+                    enabled = modelState.status != ModelInstallStatus.CHECKING && modelState.status != ModelInstallStatus.DOWNLOADING && modelState.status != ModelInstallStatus.VERIFYING,
+                    modifier = Modifier.weight(1f),
+                ) { Text("检查模型") }
+                Button(
+                    onClick = onRollbackModel,
+                    enabled = modelState.status == ModelInstallStatus.READY,
+                    modifier = Modifier.weight(1f),
+                ) { Text("回滚模型") }
+            }
         }
         SectionCard("推理后端") {
             listOf("NNAPI", "GPU Delegate", "XNNPACK (CPU)").forEach { option ->
@@ -308,6 +331,35 @@ private fun versionCheckMessage(state: VersionCheckState) = when (state) {
     VersionCheckState.UpToDate -> "当前已是最新版本"
     is VersionCheckState.UpdateAvailable -> "发现 v${state.update.versionName ?: state.update.versionCode} 更新"
     is VersionCheckState.Failed -> "检查失败：${state.message}"
+}
+
+private fun modelStateTitle(state: ModelState) = if (state.status == ModelInstallStatus.MOCK) "占位模型 MockDetector" else state.modelVersion
+
+private fun modelStateSubtitle(state: ModelState) = when (state.status) {
+    ModelInstallStatus.MOCK -> "规则模拟 · 仅供联调"
+    ModelInstallStatus.CHECKING -> "正在检查可用模型"
+    ModelInstallStatus.DOWNLOADING -> "正在下载模型 · ${state.progress}%"
+    ModelInstallStatus.VERIFYING -> "正在校验模型完整性"
+    ModelInstallStatus.READY -> "LiteRT · 已就绪"
+    ModelInstallStatus.FAILED -> "模型更新失败"
+    ModelInstallStatus.ROLLED_BACK -> "已回滚上一模型"
+}
+
+private fun modelStateLabel(state: ModelState) = when (state.status) {
+    ModelInstallStatus.MOCK -> "未接入"
+    ModelInstallStatus.CHECKING -> "检查中"
+    ModelInstallStatus.DOWNLOADING -> "下载中"
+    ModelInstallStatus.VERIFYING -> "校验中"
+    ModelInstallStatus.READY -> "已就绪"
+    ModelInstallStatus.FAILED -> "失败"
+    ModelInstallStatus.ROLLED_BACK -> "已回滚"
+}
+
+@Composable
+private fun modelStateColor(state: ModelState) = when (state.status) {
+    ModelInstallStatus.FAILED -> MaterialTheme.colorScheme.error
+    ModelInstallStatus.READY, ModelInstallStatus.ROLLED_BACK -> MaterialTheme.colorScheme.primary
+    else -> MaterialTheme.colorScheme.secondary
 }
 
 @Composable
