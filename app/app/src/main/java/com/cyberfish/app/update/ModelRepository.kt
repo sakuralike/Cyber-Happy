@@ -206,6 +206,10 @@ class ModelRepository(
         if (!previousFile.isFile || !previousMetadata.isFile) return fail("NO_PREVIOUS_MODEL", "没有可回滚的上一模型", false)
         return try {
             val descriptor = liteRtModelDescriptorFromJson(previousMetadata.readText())
+            val contract = LiteRtModelContract.validate(descriptor)
+            require(contract.isValid) { contract.errors.joinToString("；") }
+            require(sha256(previousFile).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
+            require(signatureVerifier.verify(previousFile, descriptor)) { "模型签名校验失败" }
             val nextDetector = detectorFactory(previousFile, descriptor)
             rollbackInternal(activeFile, previousFile, activeMetadata, previousMetadata)
             detectorSlot.replace(nextDetector)
@@ -226,6 +230,8 @@ class ModelRepository(
         try {
             val contract = LiteRtModelContract.validate(descriptor)
             require(contract.isValid) { contract.errors.joinToString("；") }
+            require(sha256(modelFile).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
+            require(signatureVerifier.verify(modelFile, descriptor)) { "模型签名校验失败" }
             detectorSlot.replace(detectorFactory(modelFile, descriptor))
             updateState(ModelState(ModelInstallStatus.READY, descriptor.modelVersion, 100))
         } catch (error: Exception) {
@@ -240,8 +246,10 @@ class ModelRepository(
 
     private fun report(dispatchId: String?, status: ModelDispatchStatus, progress: Int? = null, errorCode: String? = null, errorMessage: String? = null) {
         if (dispatchId == null) return
-        kotlinx.coroutines.runBlocking {
-            modelApi.reportModelDispatch(dispatchId, status, progress, errorCode, errorMessage)
+        runCatching {
+            kotlinx.coroutines.runBlocking {
+                modelApi.reportModelDispatch(dispatchId, status, progress, errorCode, errorMessage)
+            }
         }
     }
 
@@ -338,6 +346,7 @@ private fun LiteRtModelDescriptor.toJson(): String = org.json.JSONObject()
     .put("signatureExpiresAtMillis", signatureExpiresAtMillis)
     .put("runtimeSignatureName", runtimeSignatureName)
     .put("inputName", inputName)
+    .put("inputLayout", inputLayout)
     .put("outputName", outputName)
     .put("coordinatesNormalized", coordinatesNormalized)
     .put("valuesPerDetection", valuesPerDetection)
@@ -360,6 +369,7 @@ private fun liteRtModelDescriptorFromJson(raw: String): LiteRtModelDescriptor {
         signatureExpiresAtMillis = data.optLong("signatureExpiresAtMillis", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE },
         runtimeSignatureName = data.optString("runtimeSignatureName").takeIf { it.isNotBlank() },
         inputName = data.optString("inputName").takeIf { it.isNotBlank() },
+        inputLayout = data.optString("inputLayout", "NCHW"),
         outputName = data.optString("outputName").takeIf { it.isNotBlank() },
         coordinatesNormalized = data.optBoolean("coordinatesNormalized", true),
         valuesPerDetection = data.optInt("valuesPerDetection", 6),

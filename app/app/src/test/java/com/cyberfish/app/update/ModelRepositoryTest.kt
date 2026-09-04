@@ -93,6 +93,21 @@ class ModelRepositoryTest {
         assertEquals(ModelInstallStatus.READY, repository.state.value.status)
     }
 
+    @Test
+    fun `invalid previous metadata leaves active model unchanged`() = runBlocking {
+        val repository = repository(FakeModelApi())
+        assertTrue(repository.install(update("model-v1", "first model".toByteArray())).activated)
+        assertTrue(repository.install(update("model-v2", "second model".toByteArray())).activated)
+        File(storageDir, "previous.json").writeText("not-json")
+
+        val result = repository.rollback()
+
+        assertFalse(result.activated)
+        assertEquals("ROLLBACK_FAILED", result.errorCode)
+        assertEquals("model-v2", repository.activeVersion())
+        assertEquals(ModelInstallStatus.FAILED, repository.state.value.status)
+    }
+
     private fun repository(api: FakeModelApi, signatureValid: Boolean = true) = ModelRepository(
         modelApi = api,
         storageDir = storageDir,
