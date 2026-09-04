@@ -19,9 +19,9 @@ export const createModelSchema = z.object({
     .max(80)
     .regex(/^[a-zA-Z0-9._-]+$/, '模型版本只允许字母数字 . _ -'),
   name: z.string().trim().min(1).max(100),
-  arch: z.string().trim().min(1).max(50).default('YOLOv8n'),
-  quant: z.nativeEnum(QuantType).default(QuantType.INT8),
-  framework: z.nativeEnum(Framework).default(Framework.TFLITE),
+  arch: z.string().trim().min(1).max(50).default('YOLO26n'),
+  quant: z.nativeEnum(QuantType).default(QuantType.W8A32),
+  framework: z.nativeEnum(Framework).default(Framework.LITERT),
   fileId: z.string().min(1).optional(),
   inputSize: z.number().int().positive().default(640),
   numClasses: z.number().int().positive().default(1),

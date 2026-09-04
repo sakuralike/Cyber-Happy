@@ -19,7 +19,8 @@ import {
   Cell,
 } from 'recharts';
 import * as dashboardApi from '../api/dashboard';
-import { appVersionStats } from '../api/appVersion';
+import { listAppVersions } from '../api/appVersion';
+import { listModels } from '../api/model';
 import type { DashboardQuery } from '../api/dashboard';
 import { ROOT_CAUSE_MAP } from '../utils/constants';
 import { formatNumber, formatPercent } from '../utils/format';
@@ -61,7 +62,14 @@ export function DashboardPage() {
   const modelQ = useQuery({ queryKey: ['dash', 'model', params], queryFn: () => dashboardApi.modelUsage(params) });
   const misQ = useQuery({ queryKey: ['dash', 'mis', params], queryFn: () => dashboardApi.misreportAnalysis(params) });
   const healthQ = useQuery({ queryKey: ['dash', 'health', params], queryFn: () => dashboardApi.health(params) });
-  const versionsQ = useQuery({ queryKey: ['appVersions', 'stats'], queryFn: appVersionStats });
+  const versionsQ = useQuery({
+    queryKey: ['appVersions', 'options'],
+    queryFn: () => listAppVersions({ page: 1, pageSize: 200 }),
+  });
+  const modelsQ = useQuery({
+    queryKey: ['models', 'options'],
+    queryFn: () => listModels({ page: 1, pageSize: 200 }),
+  });
 
   const loading = overviewQ.isLoading || trendQ.isLoading;
 
@@ -76,6 +84,8 @@ export function DashboardPage() {
 
   const trendData = trendQ.data?.series ?? [];
   const versionData = (versionQ.data ?? []).map((v) => ({ name: v.versionName, value: v.devices }));
+  const versionOptions = (versionsQ.data?.list ?? []).map((v) => ({ value: v.versionCode, label: `v${v.versionName}` }));
+  const modelOptions = (modelsQ.data?.list ?? []).map((m) => ({ value: m.modelVersion, label: m.modelVersion }));
   const modelData = (modelQ.data?.items ?? []).map((m) => ({ name: m.modelVersion, value: m.calls }));
   const rootCauseData = (misQ.data?.rootCauses ?? []).map((r) => ({
     name: ROOT_CAUSE_MAP[r.rootCause as keyof typeof ROOT_CAUSE_MAP]?.label ?? r.rootCause,
@@ -100,12 +110,7 @@ export function DashboardPage() {
             style={{ width: 180 }}
             value={appVersionCode}
             onChange={(v) => setAppVersionCode(v)}
-            options={[
-              { value: 100, label: 'v1.0.0' },
-              { value: 110, label: 'v1.1.0' },
-              { value: 120, label: 'v1.2.0' },
-              { value: 130, label: 'v1.3.0' },
-            ]}
+            options={versionOptions}
           />
           <Typography.Text strong>模型版本</Typography.Text>
           <Select
@@ -114,11 +119,7 @@ export function DashboardPage() {
             style={{ width: 220 }}
             value={modelVersion}
             onChange={(v) => setModelVersion(v)}
-            options={[
-              { value: 'yolov8n-int8-v1', label: 'yolov8n-int8-v1' },
-              { value: 'yolov8n-int8-v2', label: 'yolov8n-int8-v2' },
-              { value: 'yolov8n-int8-v3', label: 'yolov8n-int8-v3' },
-            ]}
+            options={modelOptions}
           />
         </Space>
       </Card>

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import {
   Card,
   Table,
@@ -38,7 +39,7 @@ import {
   enumOptions,
 } from '../utils/constants';
 import { formatDateTime } from '../utils/format';
-import { notifyError } from '../api/client';
+import { getToken, notifyError } from '../api/client';
 
 export function MisreportPage() {
   const qc = useQueryClient();
@@ -458,7 +459,7 @@ function DetailDrawer({
       </Typography.Title>
       <Space wrap>
         {(data.snapshotUrls ?? []).length ? (
-          data.snapshotUrls.map((u, i) => <Image key={i} src={u} width={160} style={{ borderRadius: 8 }} />)
+          data.snapshotUrls.map((u, i) => <ProtectedImage key={i} src={u} width={160} />)
         ) : (
           <Typography.Text type="secondary">暂无截图</Typography.Text>
         )}
@@ -469,7 +470,7 @@ function DetailDrawer({
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             视频
           </Typography.Title>
-          <video src={data.videoUrl} controls style={{ maxWidth: '100%', borderRadius: 8 }} />
+          <ProtectedVideo src={data.videoUrl} />
         </>
       )}
 
@@ -525,4 +526,51 @@ function DetailDrawer({
       )}
     </Drawer>
   );
+}
+
+function useProtectedMedia(src: string | null | undefined): string | undefined {
+  const [url, setUrl] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | undefined;
+    if (!src) {
+      setUrl(undefined);
+      return () => undefined;
+    }
+    if (/^(https?:|data:|blob:)/i.test(src)) {
+      setUrl(src);
+      return () => undefined;
+    }
+    setUrl(undefined);
+    void axios
+      .get(src, {
+        responseType: 'blob',
+        headers: { Authorization: `Bearer ${getToken() ?? ''}` },
+      })
+      .then((response) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(response.data);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (active) setUrl(undefined);
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+
+  return url;
+}
+
+function ProtectedImage({ src, width }: { src: string; width: number }) {
+  const url = useProtectedMedia(src);
+  return url ? <Image src={url} width={width} style={{ borderRadius: 8 }} /> : <Typography.Text type="secondary">加载中</Typography.Text>;
+}
+
+function ProtectedVideo({ src }: { src: string }) {
+  const url = useProtectedMedia(src);
+  return url ? <video src={url} controls style={{ maxWidth: '100%', borderRadius: 8 }} /> : <Typography.Text type="secondary">加载中</Typography.Text>;
 }

@@ -36,8 +36,10 @@ import {
 } from '../utils/constants';
 import { formatDateTime, formatSize, formatNumber } from '../utils/format';
 import { notifyError } from '../api/client';
+import { useAuth } from '../store/auth';
 
 export function ModelPage() {
+  const { hasPerm } = useAuth();
   const [tab, setTab] = useState('models');
   const qc = useQueryClient();
   const [params, setParams] = useState<Record<string, unknown>>({ page: 1, pageSize: 10 });
@@ -117,7 +119,7 @@ export function ModelPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ arch: 'YOLOv8n', quant: 'INT8', framework: 'TFLITE', inputSize: 640, numClasses: 1, labels: ['鱼漂'] });
+    form.setFieldsValue({ arch: 'YOLO26n', quant: 'W8A32', framework: 'LiteRT', inputSize: 640, numClasses: 1, labels: ['鱼漂'] });
     setModalOpen(true);
   };
   const openEdit = (row: MlModel) => {
@@ -233,10 +235,10 @@ export function ModelPage() {
         fixed: 'right',
         render: (_, r) => (
           <Space>
-            <Button size="small" disabled={r.status === 'ONLINE'} onClick={() => openEdit(r)}>
+            {hasPerm('model:write') && <Button size="small" disabled={r.status === 'ONLINE'} onClick={() => openEdit(r)}>
               编辑
-            </Button>
-            <Button
+            </Button>}
+            {hasPerm('model:dispatch') && <Button
               size="small"
               type="primary"
               ghost
@@ -245,16 +247,16 @@ export function ModelPage() {
               onClick={() => openDispatch(r)}
             >
               下发
-            </Button>
-            <Button
+            </Button>}
+            {hasPerm('model:rollback') && <Button
               size="small"
               icon={<RollbackOutlined />}
               disabled={!['ONLINE', 'GRAY'].includes(r.status)}
               onClick={() => openRollback(r)}
             >
               回滚
-            </Button>
-            {r.status === 'DRAFT' && (
+            </Button>}
+            {hasPerm('model:write') && r.status === 'DRAFT' && (
               <Popconfirm title="确认删除该草稿？" onConfirm={() => deleteMut.mutate(r.id)}>
                 <Button size="small" danger>
                   删除
@@ -265,8 +267,7 @@ export function ModelPage() {
         ),
       },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [hasPerm],
   );
 
   const dispatchColumns: ColumnsType<ModelDispatch> = useMemo(
@@ -351,9 +352,9 @@ export function ModelPage() {
           tab === 'models' ? (
             <Space>
               <Button icon={<ReloadOutlined />} onClick={() => refetch()} />
-              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              {hasPerm('model:write') && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
                 新建模型
-              </Button>
+              </Button>}
             </Space>
           ) : undefined
         }
@@ -458,7 +459,7 @@ export function ModelPage() {
         <Form form={form} layout="vertical">
           <Space size={12} style={{ display: 'flex' }}>
             <Form.Item name="modelVersion" label="模型版本" rules={[{ required: true, message: '请输入' }]} style={{ flex: 1 }}>
-              <Input placeholder="yolov8n-int8-v4" disabled={!!editing} />
+              <Input placeholder="yolo26n-w8a32-v4" disabled={!!editing} />
             </Form.Item>
             <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入' }]} style={{ flex: 1 }}>
               <Input placeholder="鱼漂识别 v4" />
@@ -466,7 +467,7 @@ export function ModelPage() {
           </Space>
           <Space size={12} style={{ display: 'flex' }}>
             <Form.Item name="arch" label="架构" style={{ flex: 1 }}>
-              <Input placeholder="YOLOv8n" />
+              <Input placeholder="YOLO26n" />
             </Form.Item>
             <Form.Item name="quant" label="量化" style={{ flex: 1 }}>
               <Select options={enumOptions(QUANT_MAP)} />
@@ -514,7 +515,7 @@ export function ModelPage() {
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} maxLength={1000} />
           </Form.Item>
-          <Form.Item name="fileId" label="模型文件（.tflite / .onnx）">
+          <Form.Item name="fileId" label="模型文件（LiteRT .tflite / .onnx）">
             <FileUpload
               bizType="MODEL"
               accept=".tflite,.onnx,.bin,.param"

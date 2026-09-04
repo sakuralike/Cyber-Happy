@@ -75,8 +75,8 @@ export interface AppVersion {
 }
 
 // ============ 模型 ============
-export type QuantType = 'INT8' | 'FP16' | 'FP32';
-export type Framework = 'TFLITE' | 'ONNX' | 'NCNN';
+export type QuantType = 'W8A32' | 'INT8' | 'FP16' | 'FP32';
+export type Framework = 'LiteRT' | 'TFLITE' | 'ONNX' | 'NCNN';
 export type ModelStatus = 'DRAFT' | 'GRAY' | 'ONLINE' | 'OFFLINE' | 'ROLLBACK';
 export type DispatchTargetType = 'GLOBAL' | 'APP_VERSION' | 'DEVICE_GROUP' | 'DEVICE_ID';
 export type DispatchStatus = 'PENDING' | 'DISPATCHING' | 'SUCCESS' | 'PARTIAL' | 'FAILED' | 'ROLLED_BACK';

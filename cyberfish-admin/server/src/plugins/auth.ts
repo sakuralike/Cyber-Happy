@@ -12,16 +12,16 @@ const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
     'appVersion:read', 'appVersion:write', 'appVersion:publish', 'appVersion:delete',
     'model:read', 'model:write', 'model:dispatch', 'model:rollback',
     'misreport:read', 'misreport:review', 'misreport:assign', 'misreport:export',
-    'dashboard:read', 'auditLog:read', 'admin:read', 'admin:write', 'file:upload',
+    'dashboard:read', 'auditLog:read', 'admin:read', 'admin:write', 'file:read', 'file:upload',
   ],
   OPERATOR: [
     'appVersion:read', 'appVersion:write', 'appVersion:publish',
     'model:read', 'model:write', 'model:dispatch',
     'misreport:read', 'misreport:review', 'misreport:assign', 'misreport:export',
-    'dashboard:read', 'auditLog:read', 'file:upload',
+    'dashboard:read', 'auditLog:read', 'file:read', 'file:upload',
   ],
-  REVIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'misreport:review', 'dashboard:read'],
-  VIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'dashboard:read'],
+  REVIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'misreport:review', 'dashboard:read', 'file:read'],
+  VIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'dashboard:read', 'file:read'],
 };
 
 export function permissionsOf(role: AdminRole): string[] {
