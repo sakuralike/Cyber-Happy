@@ -25,6 +25,8 @@ import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.data.CyberFishRepository
 import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.data.preferences.AppPreferences
+import com.cyberfish.app.network.ApiResult
+import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.PillTabBar
 import com.cyberfish.app.ui.screens.MonitorScreen
@@ -34,6 +36,7 @@ import com.cyberfish.app.ui.screens.SettingsScreen
 import com.cyberfish.app.ui.theme.CyberFishTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToLong
 
 internal enum class AppTab(val label: String) {
@@ -57,6 +60,7 @@ fun CyberFishApp() {
     val preferences by repository.preferences.collectAsState(initial = AppPreferences())
     val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
+    var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     val selectedTab = AppTab.valueOf(selectedTabName)
     val darkTheme = resolveDarkTheme(
         preferences = preferences,
@@ -89,19 +93,32 @@ fun CyberFishApp() {
                                 coroutineScope.launch(Dispatchers.IO) { repository.saveTrigger(event) }
                             },
                             onMarkFalsePositive = { event ->
-                                coroutineScope.launch(Dispatchers.IO) { repository.markFalsePositive(event) }
+                                coroutineScope.launch(Dispatchers.IO) { repository.confirmMisreport(event) }
                             },
                         )
                         AppTab.Records -> RecordsScreen(
                             records = records,
                             onMarkFalsePositive = { record ->
-                                coroutineScope.launch(Dispatchers.IO) { repository.markFalsePositive(record.triggerTimestampMillis) }
+                                coroutineScope.launch(Dispatchers.IO) { repository.confirmMisreport(record.triggerTimestampMillis) }
                             },
                         )
                         AppTab.Settings -> SettingsScreen(
                             settings = preferences,
                             onSettingsChange = { next ->
                                 coroutineScope.launch(Dispatchers.IO) { repository.savePreferences(next) }
+                            },
+                            versionCheckState = versionCheckState,
+                            onCheckForUpdate = {
+                                coroutineScope.launch {
+                                    versionCheckState = VersionCheckState.Checking
+                                    versionCheckState = when (val result = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
+                                        is ApiResult.Success -> if (result.value.hasUpdate) VersionCheckState.UpdateAvailable(result.value) else VersionCheckState.UpToDate
+                                        ApiResult.NotConfigured -> VersionCheckState.NotConfigured
+                                        is ApiResult.HttpError -> VersionCheckState.Failed("${result.statusCode} ${result.message}")
+                                        is ApiResult.NetworkError -> VersionCheckState.Failed(result.message)
+                                        is ApiResult.ParseError -> VersionCheckState.Failed(result.message)
+                                    }
+                                }
                             },
                         )
                         AppTab.Profile -> ProfileScreen()

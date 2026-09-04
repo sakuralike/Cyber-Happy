@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.cyberfish.app.data.model.FishRecord
+import com.cyberfish.app.data.model.MisreportSyncState
 import com.cyberfish.app.trigger.TriggerEvent
 
 @Entity(
@@ -20,6 +21,10 @@ data class FishRecordEntity(
     val trajectoryCsv: String,
     val isFalsePositive: Boolean = false,
     val videoPath: String? = null,
+    val misreportState: String = MisreportSyncState.None.name,
+    val remoteMisreportId: String? = null,
+    val misreportAttemptCount: Int = 0,
+    val misreportLastError: String? = null,
 ) {
     fun toDomain() = FishRecord(
         id = id,
@@ -31,6 +36,10 @@ data class FishRecordEntity(
         trajectoryPx = trajectoryCsv.split(',').mapNotNull { it.toFloatOrNull() },
         isFalsePositive = isFalsePositive,
         videoPath = videoPath,
+        misreportState = MisreportSyncState.entries.firstOrNull { it.name == misreportState } ?: MisreportSyncState.None,
+        remoteMisreportId = remoteMisreportId,
+        misreportAttemptCount = misreportAttemptCount,
+        misreportLastError = misreportLastError,
     )
 
     companion object {
@@ -39,6 +48,7 @@ data class FishRecordEntity(
             occurredAtMillis: Long,
             isFalsePositive: Boolean = false,
             videoPath: String? = null,
+            misreportState: MisreportSyncState = MisreportSyncState.None,
         ) = FishRecordEntity(
             occurredAtMillis = occurredAtMillis,
             triggerTimestampMillis = event.timestampMillis,
@@ -48,6 +58,7 @@ data class FishRecordEntity(
             trajectoryCsv = event.trajectoryPx.joinToString(","),
             isFalsePositive = isFalsePositive,
             videoPath = videoPath,
+            misreportState = misreportState.name,
         )
     }
 }
