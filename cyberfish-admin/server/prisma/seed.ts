@@ -64,7 +64,7 @@ async function seedAppVersions(): Promise<Record<string, string>> {
   const list = [
     { versionName: '1.0.0', versionCode: 100, status: 'OFFLINE', updateType: 'OPTIONAL', releaseNotes: '首发版本：实时监控 + 基础识别' },
     { versionName: '1.1.0', versionCode: 110, status: 'ONLINE', updateType: 'OPTIONAL', releaseNotes: '优化夜间识别，新增昼夜主题' },
-    { versionName: '1.2.0', versionCode: 120, status: 'GRAY', updateType: 'FORCE', releaseNotes: '升级 YOLOv8n-int8 模型，误报率下降 12%', grayPercent: 20 },
+    { versionName: '1.2.0', versionCode: 120, status: 'GRAY', updateType: 'FORCE', releaseNotes: '升级 YOLO26n LiteRT 模型，误报率下降 12%', grayPercent: 20 },
     { versionName: '1.3.0', versionCode: 130, status: 'DRAFT', updateType: 'OPTIONAL', releaseNotes: '（开发中）支持多漂同框与鱼种识别' },
   ] as const;
 
@@ -97,10 +97,10 @@ async function seedAppVersions(): Promise<Record<string, string>> {
 async function seedModels(): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
   const list = [
-    { modelVersion: 'yolov8n-int8-v1', name: '鱼漂识别 v1', arch: 'YOLOv8n', quant: 'INT8', status: 'OFFLINE', map50: 0.81, avgLatencyMs: 48 },
-    { modelVersion: 'yolov8n-int8-v2', name: '鱼漂识别 v2', arch: 'YOLOv8n', quant: 'INT8', status: 'ONLINE', map50: 0.84, avgLatencyMs: 42 },
-    { modelVersion: 'yolov8n-int8-v3', name: '鱼漂识别 v3（灰度）', arch: 'YOLOv8n', quant: 'INT8', status: 'GRAY', map50: 0.865, avgLatencyMs: 39 },
-    { modelVersion: 'yolov8s-int8-v1', name: '鱼漂识别 S 增强版（草稿）', arch: 'YOLOv8s', quant: 'INT8', status: 'DRAFT', map50: 0.89, avgLatencyMs: 78 },
+    { modelVersion: 'yolo26n-w8a32-v1', name: '鱼漂识别 v1', arch: 'YOLO26n', quant: 'W8A32', status: 'OFFLINE', map50: 0.81, avgLatencyMs: 48 },
+    { modelVersion: 'yolo26n-w8a32-v2', name: '鱼漂识别 v2', arch: 'YOLO26n', quant: 'W8A32', status: 'ONLINE', map50: 0.84, avgLatencyMs: 42 },
+    { modelVersion: 'yolo26n-w8a32-v3', name: '鱼漂识别 v3（灰度）', arch: 'YOLO26n', quant: 'W8A32', status: 'GRAY', map50: 0.865, avgLatencyMs: 39 },
+    { modelVersion: 'yolo26n-w8a32-s1', name: '鱼漂识别增强版（草稿）', arch: 'YOLO26n', quant: 'W8A32', status: 'DRAFT', map50: 0.89, avgLatencyMs: 78 },
   ] as const;
 
   for (const m of list) {
@@ -110,7 +110,7 @@ async function seedModels(): Promise<Record<string, string>> {
         name: m.name,
         arch: m.arch,
         quant: m.quant,
-        framework: 'TFLITE',
+        framework: 'LiteRT',
         fileUrl: m.status === 'DRAFT' ? null : `/files/models/${m.modelVersion}.tflite`,
         fileSize: m.status === 'DRAFT' ? null : BigInt(6 * 1024 * 1024),
         sha256: m.status === 'DRAFT' ? null : `sha256_${CUID()}`,
@@ -156,7 +156,7 @@ async function seedAppUsersAndEvents(): Promise<void> {
       channel: 'official',
       deviceModel: `${devicePrefixes[idx]} ${models[idx]}`,
       appVersionCode: code,
-      modelVersion: code >= 120 ? 'yolov8n-int8-v2' : 'yolov8n-int8-v1',
+      modelVersion: code >= 120 ? 'yolo26n-w8a32-v2' : 'yolo26n-w8a32-v1',
       modelCallCount: 0,
       triggerCount: 0,
       firstSeenAt: dayjs().subtract(Math.floor(Math.random() * 60), 'day').toDate(),
@@ -196,7 +196,7 @@ async function seedAppUsersAndEvents(): Promise<void> {
       deviceId: 'AGG',
       eventType: 'MODEL_CALL',
       appVersionCode: 120,
-      modelVersion: 'yolov8n-int8-v2',
+      modelVersion: 'yolo26n-w8a32-v2',
       count: active * callsPerActive,
       occurredAt: day.toDate(),
     });
@@ -204,7 +204,7 @@ async function seedAppUsersAndEvents(): Promise<void> {
       deviceId: 'AGG',
       eventType: 'TRIGGER',
       appVersionCode: 120,
-      modelVersion: 'yolov8n-int8-v2',
+      modelVersion: 'yolo26n-w8a32-v2',
       count: Math.floor(active * callsPerActive * triggerRate),
       occurredAt: day.toDate(),
     });
@@ -212,7 +212,7 @@ async function seedAppUsersAndEvents(): Promise<void> {
       deviceId: 'AGG',
       eventType: 'CRASH',
       appVersionCode: 120,
-      modelVersion: 'yolov8n-int8-v2',
+      modelVersion: 'yolo26n-w8a32-v2',
       count: Math.floor(active * crashRate),
       occurredAt: day.toDate(),
     });
@@ -233,7 +233,7 @@ async function seedMisreports(): Promise<void> {
 
   for (let i = 0; i < 60; i++) {
     const code = [100, 110, 120][Math.floor(Math.random() * 3)]!;
-    const model = code >= 120 ? 'yolov8n-int8-v2' : 'yolov8n-int8-v1';
+    const model = code >= 120 ? 'yolo26n-w8a32-v2' : 'yolo26n-w8a32-v1';
     const status = statuses[Math.floor(Math.random() * statuses.length)]!;
     const reportType = types[Math.floor(Math.random() * types.length)]!;
     const rootCause = causes[Math.floor(Math.random() * causes.length)]!;
@@ -289,8 +289,8 @@ async function seedMisreports(): Promise<void> {
 }
 
 async function seedDispatches(modelIds: Record<string, string>): Promise<void> {
-  const onlineId = modelIds['yolov8n-int8-v2']!;
-  const grayId = modelIds['yolov8n-int8-v3']!;
+  const onlineId = modelIds['yolo26n-w8a32-v2']!;
+  const grayId = modelIds['yolo26n-w8a32-v3']!;
 
   // 一条已完成的全量下发（v1 -> v2）
   const d1 = await prisma.modelDispatch.create({
@@ -332,8 +332,8 @@ async function seedDispatches(modelIds: Record<string, string>): Promise<void> {
     logs1.push({
       dispatchId: d1.id,
       deviceId: `DEV${String(i).padStart(5, '0')}`,
-      fromModelVersion: 'yolov8n-int8-v1',
-      toModelVersion: 'yolov8n-int8-v2',
+      fromModelVersion: 'yolo26n-w8a32-v1',
+      toModelVersion: 'yolo26n-w8a32-v2',
       status: ok ? 'SUCCESS' : 'FAILED',
       progress: ok ? 100 : Math.floor(Math.random() * 60),
       errorCode: ok ? null : 'E_DOWNLOAD',
@@ -350,8 +350,8 @@ async function seedDispatches(modelIds: Record<string, string>): Promise<void> {
     logs2.push({
       dispatchId: d2.id,
       deviceId: `DEV${String(i).padStart(5, '0')}`,
-      fromModelVersion: 'yolov8n-int8-v2',
-      toModelVersion: 'yolov8n-int8-v3',
+      fromModelVersion: 'yolo26n-w8a32-v2',
+      toModelVersion: 'yolo26n-w8a32-v3',
       status,
       progress: status === 'SUCCESS' ? 100 : status === 'DOWNLOADING' ? Math.floor(Math.random() * 80) + 10 : 0,
     });

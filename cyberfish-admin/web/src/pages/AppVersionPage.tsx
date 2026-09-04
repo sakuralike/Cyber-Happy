@@ -36,8 +36,10 @@ import {
 } from '../utils/constants';
 import { formatDateTime, formatSize, formatNumber } from '../utils/format';
 import { notifyError } from '../api/client';
+import { useAuth } from '../store/auth';
 
 export function AppVersionPage() {
+  const { hasPerm } = useAuth();
   const qc = useQueryClient();
   const [params, setParams] = useState<Record<string, unknown>>({ page: 1, pageSize: 10 });
   const [modalOpen, setModalOpen] = useState(false);
@@ -126,6 +128,7 @@ export function AppVersionPage() {
 
   const actionItems = (row: AppVersion) => {
     const items: { key: string; label: string; danger?: boolean }[] = [];
+    if (!hasPerm('appVersion:publish')) return items;
     if (['DRAFT', 'GRAY', 'OFFLINE'].includes(row.status)) {
       items.push({ key: 'PUBLISH_GRAY', label: row.status === 'GRAY' ? '调整灰度比例' : '灰度发布' });
     }
@@ -203,18 +206,18 @@ export function AppVersionPage() {
         fixed: 'right',
         render: (_, r) => (
           <Space>
-            <Button size="small" disabled={r.status === 'ONLINE'} onClick={() => openEdit(r)}>
+            {hasPerm('appVersion:write') && <Button size="small" disabled={r.status === 'ONLINE'} onClick={() => openEdit(r)}>
               编辑
-            </Button>
-            <Dropdown
+            </Button>}
+            {hasPerm('appVersion:publish') && <Dropdown
               menu={{ items: actionItems(r), onClick: ({ key }) => onAction(r, key) }}
               disabled={actionItems(r).length === 0}
             >
               <Button size="small" type="primary" ghost>
                 <ThunderboltOutlined /> 状态操作 <DownOutlined />
               </Button>
-            </Dropdown>
-            {r.status === 'DRAFT' && (
+            </Dropdown>}
+            {hasPerm('appVersion:delete') && r.status === 'DRAFT' && (
               <Popconfirm title="确认删除该草稿？" onConfirm={() => deleteMut.mutate(r.id)}>
                 <Button size="small" danger>
                   删除
@@ -225,8 +228,7 @@ export function AppVersionPage() {
         ),
       },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [hasPerm],
   );
 
   return (
@@ -235,9 +237,9 @@ export function AppVersionPage() {
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          {hasPerm('appVersion:write') && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             新建版本
-          </Button>
+          </Button>}
         </Space>
       }
     >

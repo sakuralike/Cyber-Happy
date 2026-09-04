@@ -18,22 +18,22 @@ import { ROLE_MAP } from '../utils/constants';
 const { Header, Sider, Content } = Layout;
 
 export function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, hasPerm } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = theme.useToken();
 
   const items = useMemo(() => {
     const list = [
-      { key: '/dashboard', icon: <DashboardOutlined />, label: '数据看板' },
-      { key: '/app-versions', icon: <MobileOutlined />, label: 'APP 版本管理' },
-      { key: '/models', icon: <ApiOutlined />, label: 'YOLO 模型管理' },
-      { key: '/misreports', icon: <BugOutlined />, label: '用户误报管理' },
-      { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
-    ];
-    if (user?.role === 'ADMIN') list.push({ key: '/admins', icon: <TeamOutlined />, label: '账号管理' });
+      hasPerm('dashboard:read') && { key: '/dashboard', icon: <DashboardOutlined />, label: '数据看板' },
+      hasPerm('appVersion:read') && { key: '/app-versions', icon: <MobileOutlined />, label: 'APP 版本管理' },
+      hasPerm('model:read') && { key: '/models', icon: <ApiOutlined />, label: 'YOLO 模型管理' },
+      hasPerm('misreport:read') && { key: '/misreports', icon: <BugOutlined />, label: '用户误报管理' },
+      hasPerm('auditLog:read') && { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
+      hasPerm('admin:read') && { key: '/admins', icon: <TeamOutlined />, label: '账号管理' },
+    ].filter(Boolean) as { key: string; icon: JSX.Element; label: string }[];
     return list;
-  }, [user?.role]);
+  }, [hasPerm]);
 
   const selectedKey = useMemo(() => {
     const match = items.find((i) => location.pathname.startsWith(i.key));

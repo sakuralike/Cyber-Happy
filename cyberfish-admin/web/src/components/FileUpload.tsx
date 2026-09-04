@@ -16,8 +16,6 @@ export function FileUpload({ bizType, accept, value, onChange, onFileMeta }: Fil
   const [uploading, setUploading] = useState(false);
   const [pct, setPct] = useState(0);
 
-  const beforeUpload = () => false; // 拦截默认上传，改用自定义
-
   const customRequest = async (options: { file: File | Blob; onSuccess: () => void; onError: (e: Error) => void }) => {
     const file = options.file as File;
     setUploading(true);
@@ -41,7 +39,6 @@ export function FileUpload({ bizType, accept, value, onChange, onFileMeta }: Fil
       <Upload
         accept={accept}
         showUploadList={false}
-        beforeUpload={beforeUpload}
         customRequest={customRequest as never}
         disabled={uploading}
       >

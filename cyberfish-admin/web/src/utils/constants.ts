@@ -55,12 +55,14 @@ export const RELEASE_STATUS_MAP: ColorMap<ReleaseStatus> = {
 };
 
 export const QUANT_MAP: ColorMap<QuantType> = {
+  W8A32: { label: 'W8A32', color: 'green' },
   INT8: { label: 'INT8', color: 'green' },
   FP16: { label: 'FP16', color: 'blue' },
   FP32: { label: 'FP32', color: 'purple' },
 };
 
 export const FRAMEWORK_MAP: ColorMap<Framework> = {
+  LiteRT: { label: 'LiteRT', color: 'green' },
   TFLITE: { label: 'TFLite', color: 'green' },
   ONNX: { label: 'ONNX', color: 'blue' },
   NCNN: { label: 'NCNN', color: 'purple' },
