@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.cyberfish.app.data.preferences.AppPreferences
+import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPreset
 import com.cyberfish.app.ui.ThemeMode
@@ -61,6 +62,8 @@ private enum class SettingsSection(val label: String) { Parameters("参数配置
 fun SettingsScreen(
     settings: AppPreferences,
     onSettingsChange: (AppPreferences) -> Unit,
+    versionCheckState: VersionCheckState,
+    onCheckForUpdate: () -> Unit,
 ) {
     var sectionName by rememberSaveable { mutableStateOf(SettingsSection.Parameters.name) }
     val section = SettingsSection.valueOf(sectionName)
@@ -81,7 +84,7 @@ fun SettingsScreen(
             when (section) {
                 SettingsSection.Parameters -> ParameterSettings(settings, onSettingsChange)
                 SettingsSection.Alerts -> AlertSettings(settings, onSettingsChange)
-                SettingsSection.Model -> ModelSettings(settings, onSettingsChange)
+                SettingsSection.Model -> ModelSettings(settings, onSettingsChange, versionCheckState, onCheckForUpdate)
             }
         }
     }
@@ -234,7 +237,12 @@ private fun AlertSettings(settings: AppPreferences, onSettingsChange: (AppPrefer
 }
 
 @Composable
-private fun ModelSettings(settings: AppPreferences, onSettingsChange: (AppPreferences) -> Unit) {
+private fun ModelSettings(
+    settings: AppPreferences,
+    onSettingsChange: (AppPreferences) -> Unit,
+    versionCheckState: VersionCheckState,
+    onCheckForUpdate: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionCard("模型状态") {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -274,6 +282,16 @@ private fun ModelSettings(settings: AppPreferences, onSettingsChange: (AppPrefer
             }
             SettingRow("当前指标", "FPS 28 · 推理耗时 36 ms") { StatusChip("实时", MaterialTheme.colorScheme.primary) }
         }
+        SectionCard("APP 服务") {
+            Text(versionCheckMessage(versionCheckState), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            Button(
+                onClick = onCheckForUpdate,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                enabled = versionCheckState !is VersionCheckState.Checking,
+            ) {
+                Text(if (versionCheckState is VersionCheckState.Checking) "检查中" else "检查 APP 更新")
+            }
+        }
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -281,6 +299,15 @@ private fun ModelSettings(settings: AppPreferences, onSettingsChange: (AppPrefer
             }
         }
     }
+}
+
+private fun versionCheckMessage(state: VersionCheckState) = when (state) {
+    VersionCheckState.Idle -> "使用已配置的 APP 服务检查版本"
+    VersionCheckState.Checking -> "正在检查版本信息"
+    VersionCheckState.NotConfigured -> "未配置服务地址或 APP 令牌"
+    VersionCheckState.UpToDate -> "当前已是最新版本"
+    is VersionCheckState.UpdateAvailable -> "发现 v${state.update.versionName ?: state.update.versionCode} 更新"
+    is VersionCheckState.Failed -> "检查失败：${state.message}"
 }
 
 @Composable

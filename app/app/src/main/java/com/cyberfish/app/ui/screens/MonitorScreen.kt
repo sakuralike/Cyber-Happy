@@ -60,6 +60,7 @@ fun MonitorScreen(
     var monitoring by rememberSaveable { mutableStateOf(permissionGranted) }
     var sensitivity by rememberSaveable { mutableFloatStateOf(0.62f) }
     var triggerEvent by remember { mutableStateOf<TriggerEvent?>(null) }
+    var pendingMisreportEvent by remember { mutableStateOf<TriggerEvent?>(null) }
     var falsePositiveMarked by rememberSaveable { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionGranted = granted
@@ -88,8 +89,7 @@ fun MonitorScreen(
                     event = event,
                     falsePositiveMarked = falsePositiveMarked,
                     onMarkFalsePositive = {
-                        falsePositiveMarked = true
-                        onMarkFalsePositive(event)
+                        pendingMisreportEvent = event
                     },
                     onDismiss = { triggerEvent = null },
                 )
@@ -130,6 +130,17 @@ fun MonitorScreen(
                 Text(monitorActionLabel(monitoring, permissionGranted, permissionDenied), style = MaterialTheme.typography.titleMedium)
             }
         }
+    }
+
+    pendingMisreportEvent?.let { event ->
+        MisreportConfirmDialog(
+            onDismiss = { pendingMisreportEvent = null },
+            onConfirm = {
+                falsePositiveMarked = true
+                onMarkFalsePositive(event)
+                pendingMisreportEvent = null
+            },
+        )
     }
 }
 
