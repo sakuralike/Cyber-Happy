@@ -50,6 +50,7 @@ import com.cyberfish.app.capture.CaptureStatus
 import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.MockDetector
+import com.cyberfish.app.inference.Detector
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPipeline
@@ -63,6 +64,7 @@ fun CameraPreviewCard(
     triggerConfig: TriggerConfig,
     alertPreferences: AlertPreferences,
     onTrigger: (TriggerEvent) -> Unit,
+    detector: Detector = MockDetector(),
 ) {
     val context = LocalContext.current
     val lifecycleOwner = context.findLifecycleOwner()
@@ -80,10 +82,10 @@ fun CameraPreviewCard(
             }
         }
     }
-    val frameSource = remember(triggerPipeline) {
+    val frameSource = remember(triggerPipeline, detector) {
         CameraFrameSource(
             context = context.applicationContext,
-            detector = MockDetector(),
+            detector = detector,
             onFrame = { metrics = it },
             onStatusChanged = { captureStatus = it },
             onDetection = { detection, timestampMillis -> triggerPipeline.accept(detection, timestampMillis) },
@@ -128,11 +130,11 @@ fun CameraPreviewCard(
             }
 
             DetectionOverlay(metrics?.detection)
-            PreviewHud(metrics, captureStatus)
+            PreviewHud(metrics, captureStatus, detector.modelVersion)
             if (!permissionGranted || !monitoring || captureStatus == CaptureStatus.Failed) {
                 PreviewState(Modifier.align(Alignment.Center), status)
             }
-            PreviewStatus(Modifier.align(Alignment.BottomCenter), status, metrics)
+            PreviewStatus(Modifier.align(Alignment.BottomCenter), status, metrics, detector.modelVersion)
         }
     }
 }
@@ -167,7 +169,7 @@ private fun DetectionOverlay(detection: Detection?) {
 }
 
 @Composable
-private fun PreviewHud(metrics: FrameMetrics?, captureStatus: CaptureStatus) {
+private fun PreviewHud(metrics: FrameMetrics?, captureStatus: CaptureStatus, modelVersion: String) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -177,7 +179,7 @@ private fun PreviewHud(metrics: FrameMetrics?, captureStatus: CaptureStatus) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         StatusChip(
-            text = if (captureStatus == CaptureStatus.Running) "Mock · 检测中" else "Mock · 待机",
+            text = if (captureStatus == CaptureStatus.Running) "$modelVersion · 检测中" else "$modelVersion · 待机",
             color = MaterialTheme.colorScheme.secondary,
         )
     }
@@ -205,7 +207,7 @@ private fun PreviewState(modifier: Modifier, status: String) {
 }
 
 @Composable
-private fun PreviewStatus(modifier: Modifier, status: String, metrics: FrameMetrics?) {
+private fun PreviewStatus(modifier: Modifier, status: String, metrics: FrameMetrics?, modelVersion: String) {
     Surface(
         modifier = modifier.fillMaxWidth().padding(12.dp),
         shape = RoundedCornerShape(14.dp),
@@ -218,7 +220,7 @@ private fun PreviewStatus(modifier: Modifier, status: String, metrics: FrameMetr
             Column(Modifier.weight(1f)) {
                 Text(status, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    metrics?.detection?.let { "检测置信度 %.0f%%".format(it.confidence * 100) } ?: "后置相机 · MockDetector",
+                    metrics?.detection?.let { "检测置信度 %.0f%%".format(it.confidence * 100) } ?: "后置相机 · $modelVersion",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                 )

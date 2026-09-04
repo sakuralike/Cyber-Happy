@@ -5,6 +5,9 @@ import java.util.concurrent.atomic.AtomicInteger
 class MockDetector : Detector {
     private val frameIndex = AtomicInteger()
 
+    override val modelVersion: String
+        get() = "MockDetector"
+
     override fun detect(frame: CameraFrame): Detection? {
         val sequenceIndex = Math.floorMod(frameIndex.getAndIncrement(), SEQUENCE_LENGTH)
         if (sequenceIndex >= LOST_START) return null
