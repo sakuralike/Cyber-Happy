@@ -82,14 +82,14 @@ class LiteRtDetector(
             val right = values[offset + 2]
             val bottom = values[offset + 3]
             val bounds = if (descriptor.coordinatesNormalized) {
-                DetectionBounds(left, top, right, bottom)
+                DetectionBounds(left, top, right, bottom).normalized()
             } else {
                 DetectionBounds(
                     left / descriptor.inputSize,
                     top / descriptor.inputSize,
                     right / descriptor.inputSize,
                     bottom / descriptor.inputSize,
-                )
+                ).normalized()
             }
             if (best == null || confidence > best.confidence) {
                 best = Detection(bounds = bounds, confidence = confidence)
@@ -97,6 +97,13 @@ class LiteRtDetector(
         }
         return best
     }
+
+    private fun DetectionBounds.normalized() = DetectionBounds(
+        left = left.coerceIn(0f, 1f),
+        top = top.coerceIn(0f, 1f),
+        right = right.coerceIn(0f, 1f),
+        bottom = bottom.coerceIn(0f, 1f),
+    )
 
     private companion object {
         const val CONFIDENCE_INDEX = 4

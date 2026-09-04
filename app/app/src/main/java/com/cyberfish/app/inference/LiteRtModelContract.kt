@@ -16,7 +16,7 @@ data class LiteRtModelDescriptor(
     val inputName: String? = null,
     val inputLayout: String = "NCHW",
     val outputName: String? = null,
-    val coordinatesNormalized: Boolean = true,
+    val coordinatesNormalized: Boolean = false,
     val valuesPerDetection: Int = 6,
 )
 
