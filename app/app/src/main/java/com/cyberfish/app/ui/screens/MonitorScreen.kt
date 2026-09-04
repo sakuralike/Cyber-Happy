@@ -39,13 +39,21 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.cyberfish.app.alert.AlertPreferences
+import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.MetricCard
 import com.cyberfish.app.ui.components.ScreenTitle
 import com.cyberfish.app.ui.components.SectionCard
 import com.cyberfish.app.trigger.TriggerEvent
 
 @Composable
-fun MonitorScreen(onOpenSettings: () -> Unit) {
+fun MonitorScreen(
+    onOpenSettings: () -> Unit,
+    triggerConfig: TriggerConfig,
+    alertPreferences: AlertPreferences,
+    onTriggerPersist: (TriggerEvent) -> Unit,
+    onMarkFalsePositive: (TriggerEvent) -> Unit,
+) {
     val context = LocalContext.current
     var permissionGranted by rememberSaveable { mutableStateOf(hasCameraPermission(context)) }
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
@@ -65,9 +73,12 @@ fun MonitorScreen(onOpenSettings: () -> Unit) {
                 monitoring = monitoring,
                 permissionGranted = permissionGranted,
                 permissionDenied = permissionDenied,
+                triggerConfig = triggerConfig,
+                alertPreferences = alertPreferences,
                 onTrigger = {
                     triggerEvent = it
                     falsePositiveMarked = false
+                    onTriggerPersist(it)
                 },
             )
         }
@@ -76,7 +87,10 @@ fun MonitorScreen(onOpenSettings: () -> Unit) {
                 TriggerHeroCard(
                     event = event,
                     falsePositiveMarked = falsePositiveMarked,
-                    onMarkFalsePositive = { falsePositiveMarked = true },
+                    onMarkFalsePositive = {
+                        falsePositiveMarked = true
+                        onMarkFalsePositive(event)
+                    },
                     onDismiss = { triggerEvent = null },
                 )
             }
