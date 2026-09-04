@@ -116,6 +116,7 @@ class AppApiClientTest {
         assertEquals("YOLO26n", check.update?.descriptor?.architecture)
         assertEquals("LiteRT", check.update?.descriptor?.framework)
         assertEquals("fish_float", check.update?.descriptor?.labels?.single())
+        assertFalse(check.update?.descriptor?.coordinatesNormalized ?: true)
         assertEquals("dispatch-1", check.update?.dispatchId)
         assertTrue(check.update?.downloadUrl?.endsWith("/files/models/yolo26n.tflite") == true)
         val request = server.takeRequest()

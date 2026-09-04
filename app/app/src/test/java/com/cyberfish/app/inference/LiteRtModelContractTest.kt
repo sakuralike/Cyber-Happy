@@ -7,7 +7,10 @@ import org.junit.Test
 class LiteRtModelContractTest {
     @Test
     fun `valid YOLO26n LiteRT descriptor passes`() {
-        assertTrue(LiteRtModelContract.validate(descriptor()).isValid)
+        val descriptor = descriptor()
+
+        assertTrue(LiteRtModelContract.validate(descriptor).isValid)
+        assertFalse(descriptor.coordinatesNormalized)
     }
 
     @Test
