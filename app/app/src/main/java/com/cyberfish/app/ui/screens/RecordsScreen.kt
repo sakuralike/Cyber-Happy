@@ -45,6 +45,7 @@ fun RecordsScreen(
     onMarkFalsePositive: (FishRecord) -> Unit,
 ) {
     var selectedRecord by remember { mutableStateOf<FishRecord?>(null) }
+    var pendingMisreportRecord by remember { mutableStateOf<FishRecord?>(null) }
     var filter by remember { mutableStateOf(RecordFilter.All) }
     val loadedRecords = records.orEmpty()
     val visibleRecords = when (filter) {
@@ -78,8 +79,18 @@ fun RecordsScreen(
             record = record,
             onDismiss = { selectedRecord = null },
             onMarkFalsePositive = {
+                pendingMisreportRecord = record
+            },
+        )
+    }
+
+    pendingMisreportRecord?.let { record ->
+        MisreportConfirmDialog(
+            onDismiss = { pendingMisreportRecord = null },
+            onConfirm = {
                 onMarkFalsePositive(record)
                 selectedRecord = record.copy(isFalsePositive = true)
+                pendingMisreportRecord = null
             },
         )
     }
@@ -200,6 +211,10 @@ private fun RecordDetailDialog(
                 Text("置信度 %.0f%%".format(record.confidence * 100))
                 Text("轨迹 ${record.trajectoryPx.size} 帧")
                 Text(if (record.videoPath == null) "视频片段：暂无" else "视频片段：${record.videoPath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (record.isFalsePositive) {
+                    Text("误报上报：${record.misreportState.label}")
+                    record.misreportLastError?.let { Text("上次错误：$it", color = MaterialTheme.colorScheme.error) }
+                }
             }
         },
         confirmButton = {
