@@ -1,15 +1,13 @@
 import { prisma } from '../lib/prisma';
 import { logger } from '../lib/logger';
 
-const BATCH_SIZE = 50;
 const TICK_MS = 10_000;
 
 /**
  * 下发单调度器
  * ------------------------------------------------------------
- * 把 PENDING 的下发单推进到 DISPATCHING，并逐批把设备日志推到 SUCCESS。
- * 演示实现：以可控速率模拟设备下载结果（约 4% 失败率，用于验证 PARTIAL/FAILED 分支）。
- * 生产环境替换为真实推送 / 长连接通道即可，服务层接口契约不变。
+ * 把 PENDING 的下发单推进到 DISPATCHING，并根据 APP 回传重算聚合状态。
+ * 设备状态必须来自真实 APP 回传，调度器不再伪造下载结果。
  */
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -29,31 +27,6 @@ async function tick(): Promise<void> {
         await prisma.modelDispatch.update({
           where: { id: d.id },
           data: { status: 'DISPATCHING', startedAt: new Date() },
-        });
-      }
-
-      const batch = await prisma.deviceDispatchLog.findMany({
-        where: { dispatchId: d.id, status: { in: ['PENDING', 'DOWNLOADING'] } },
-        orderBy: { deviceId: 'asc' },
-        take: BATCH_SIZE,
-      });
-
-      for (const log of batch) {
-        const roll = Math.random();
-        // 进入下载中 → 下一轮再定结果，模拟真实下载耗时
-        if (log.status === 'PENDING' && roll < 0.5) {
-          await prisma.deviceDispatchLog.update({
-            where: { id: log.id },
-            data: { status: 'DOWNLOADING', progress: 10 + Math.floor(Math.random() * 60) },
-          });
-          continue;
-        }
-        const ok = roll > 0.04; // 4% 失败
-        await prisma.deviceDispatchLog.update({
-          where: { id: log.id },
-          data: ok
-            ? { status: 'SUCCESS', progress: 100 }
-            : { status: 'FAILED', progress: log.progress, errorCode: 'E_DOWNLOAD', errorMessage: '下载超时或校验失败' },
         });
       }
 

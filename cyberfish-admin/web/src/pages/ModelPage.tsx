@@ -142,6 +142,16 @@ export function ModelPage() {
       minAppCode: row.minAppCode ?? undefined,
       maxAppCode: row.maxAppCode ?? undefined,
       remark: row.remark ?? undefined,
+      signature: row.signature ?? undefined,
+      signatureAlgorithm: row.signatureAlgorithm ?? undefined,
+      publicKeyId: row.publicKeyId ?? undefined,
+      signatureExpiresAt: row.signatureExpiresAt ?? undefined,
+      runtimeSignatureName: row.runtimeSignatureName ?? undefined,
+      inputName: row.inputName ?? undefined,
+      inputLayout: row.inputLayout,
+      outputName: row.outputName ?? undefined,
+      coordinatesNormalized: row.coordinatesNormalized,
+      valuesPerDetection: row.valuesPerDetection,
     });
     setModalOpen(true);
   };
@@ -512,6 +522,31 @@ export function ModelPage() {
           <Form.Item name="labels" label="标签">
             <Select mode="tags" placeholder="输入后回车" />
           </Form.Item>
+          <Space size={12} style={{ display: 'flex' }}>
+            <Form.Item name="signatureAlgorithm" label="签名算法" style={{ flex: 1 }}>
+              <Input placeholder="ECDSA_P256_SHA256" />
+            </Form.Item>
+            <Form.Item name="publicKeyId" label="公钥标识" style={{ flex: 1 }}>
+              <Input placeholder="model-key-1" />
+            </Form.Item>
+          </Space>
+          <Form.Item name="signature" label="模型签名（Base64）">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+          <Form.Item name="signatureExpiresAt" label="签名有效期（ISO 8601）">
+            <Input placeholder="2027-01-01T00:00:00.000Z" />
+          </Form.Item>
+          <Space size={12} style={{ display: 'flex' }}>
+            <Form.Item name="runtimeSignatureName" label="运行时签名名称" style={{ flex: 1 }}>
+              <Input />
+            </Form.Item>
+            <Form.Item name="inputLayout" label="输入布局" style={{ flex: 1 }}>
+              <Select options={[{ value: 'NCHW', label: 'NCHW' }, { value: 'NHWC', label: 'NHWC' }]} />
+            </Form.Item>
+            <Form.Item name="valuesPerDetection" label="每检测项列数" style={{ flex: 1 }}>
+              <InputNumber min={6} style={{ width: '100%' }} />
+            </Form.Item>
+          </Space>
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} maxLength={1000} />
           </Form.Item>

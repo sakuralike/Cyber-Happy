@@ -10,6 +10,7 @@ import {
   DownOutlined,
   LogoutOutlined,
   ThunderboltOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth';
@@ -31,6 +32,7 @@ export function AppLayout() {
       hasPerm('misreport:read') && { key: '/misreports', icon: <BugOutlined />, label: '用户误报管理' },
       hasPerm('auditLog:read') && { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
       hasPerm('admin:read') && { key: '/admins', icon: <TeamOutlined />, label: '账号管理' },
+      hasPerm('siteConfig:write') && { key: '/site-config', icon: <SettingOutlined />, label: '首页配置' },
     ].filter(Boolean) as { key: string; icon: JSX.Element; label: string }[];
     return list;
   }, [hasPerm]);

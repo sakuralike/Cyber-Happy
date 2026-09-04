@@ -113,6 +113,16 @@ export async function create(input: CreateModelInput, operatorId?: string) {
       minAppCode: input.minAppCode ?? null,
       maxAppCode: input.maxAppCode ?? null,
       remark: input.remark ?? null,
+      signature: input.signature ?? null,
+      signatureAlgorithm: input.signatureAlgorithm ?? null,
+      publicKeyId: input.publicKeyId ?? null,
+      signatureExpiresAt: input.signatureExpiresAt ?? null,
+      runtimeSignatureName: input.runtimeSignatureName ?? null,
+      inputName: input.inputName ?? null,
+      inputLayout: input.inputLayout,
+      outputName: input.outputName ?? null,
+      coordinatesNormalized: input.coordinatesNormalized,
+      valuesPerDetection: input.valuesPerDetection,
       createdById: operatorId ?? null,
     },
   });
@@ -144,6 +154,16 @@ export async function update(id: string, input: UpdateModelInput) {
   if (input.minAppCode !== undefined) data.minAppCode = input.minAppCode;
   if (input.maxAppCode !== undefined) data.maxAppCode = input.maxAppCode;
   if (input.remark !== undefined) data.remark = input.remark;
+  if (input.signature !== undefined) data.signature = input.signature;
+  if (input.signatureAlgorithm !== undefined) data.signatureAlgorithm = input.signatureAlgorithm;
+  if (input.publicKeyId !== undefined) data.publicKeyId = input.publicKeyId;
+  if (input.signatureExpiresAt !== undefined) data.signatureExpiresAt = input.signatureExpiresAt;
+  if (input.runtimeSignatureName !== undefined) data.runtimeSignatureName = input.runtimeSignatureName;
+  if (input.inputName !== undefined) data.inputName = input.inputName;
+  if (input.inputLayout !== undefined) data.inputLayout = input.inputLayout;
+  if (input.outputName !== undefined) data.outputName = input.outputName;
+  if (input.coordinatesNormalized !== undefined) data.coordinatesNormalized = input.coordinatesNormalized;
+  if (input.valuesPerDetection !== undefined) data.valuesPerDetection = input.valuesPerDetection;
 
   if (input.fileId && input.fileId !== found.fileId) {
     const f = await prisma.fileAsset.findUnique({ where: { id: input.fileId } });
@@ -475,6 +495,16 @@ export async function checkModel(q: CheckModelQuery) {
       sha256: hit.sha256,
       minAppCode: hit.minAppCode,
       labels: parseJson<string[]>(hit.labels, []),
+      signature: hit.signature,
+      signatureAlgorithm: hit.signatureAlgorithm,
+      publicKeyId: hit.publicKeyId,
+      signatureExpiresAt: hit.signatureExpiresAt,
+      runtimeSignatureName: hit.runtimeSignatureName,
+      inputName: hit.inputName,
+      inputLayout: hit.inputLayout,
+      outputName: hit.outputName,
+      coordinatesNormalized: hit.coordinatesNormalized,
+      valuesPerDetection: hit.valuesPerDetection,
     },
     dispatchId: latestDispatch?.id ?? null,
   };

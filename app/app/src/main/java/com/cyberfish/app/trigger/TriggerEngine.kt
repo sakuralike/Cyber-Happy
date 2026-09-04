@@ -38,6 +38,8 @@ data class TriggerEvent(
     val reason: String,
     val features: FeatureSnapshot,
     val trajectoryPx: List<Float>,
+    val modelVersion: String = "MockDetector",
+    val snapshotPath: String? = null,
 )
 
 class TriggerEngine(

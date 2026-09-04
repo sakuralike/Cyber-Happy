@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.cyberfish.app.inference.CameraFrame
 import com.cyberfish.app.inference.Detector
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -20,6 +21,8 @@ class CameraFrameSource(
     private val onFrame: (FrameMetrics) -> Unit,
     private val onStatusChanged: (CaptureStatus) -> Unit,
     private val onDetection: (detection: com.cyberfish.app.inference.Detection?, timestampMillis: Long) -> Unit = { _, _ -> },
+    private val snapshotDir: File? = null,
+    private val onSnapshotReady: (File) -> Unit = {},
 ) : FrameSource {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -30,10 +33,16 @@ class CameraFrameSource(
     private var framesPerSecond = 0
     private var windowStartedAt = 0L
     private var lastReportedAt = 0L
+    private var lastSnapshotAt = 0L
+    @Volatile
+    private var latestSnapshotFile: File? = null
+
+    fun latestSnapshot(): File? = latestSnapshotFile?.takeIf { it.isFile }
 
     override fun start(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val currentGeneration = ++generation
         onStatusChanged(CaptureStatus.Starting)
+        lastSnapshotAt = 0L
         val providerFuture = ProcessCameraProvider.getInstance(context)
         providerFuture.addListener({
             if (currentGeneration != generation) return@addListener
@@ -76,15 +85,30 @@ class CameraFrameSource(
         val startedAt = SystemClock.elapsedRealtimeNanos()
         try {
             if (expectedGeneration != generation) return
+            val normalizedRgb = if (detector.requiresPixelData) image.toNormalizedRgb(detector.inputSize) else null
             val detection = detector.detect(
                 CameraFrame(
                     width = image.width,
                     height = image.height,
                     timestampNanos = image.imageInfo.timestamp,
-                    normalizedRgb = if (detector.requiresPixelData) image.toNormalizedRgb(detector.inputSize) else null,
+                    normalizedRgb = normalizedRgb,
                 ),
             )
             val now = SystemClock.elapsedRealtime()
+            val snapshotDirectory = snapshotDir
+            if (normalizedRgb != null && snapshotDirectory != null && now - lastSnapshotAt >= SNAPSHOT_INTERVAL_MILLIS) {
+                lastSnapshotAt = now
+                runCatching {
+                    val snapshot = File(snapshotDirectory, "snapshot-$now.jpg")
+                    normalizedRgb.writeJpeg(detector.inputSize, snapshot)
+                    latestSnapshotFile = snapshot
+                    onSnapshotReady(snapshot)
+                    snapshotDirectory.listFiles { file -> file.name.startsWith("snapshot-") && file.extension == "jpg" }
+                        ?.sortedByDescending { it.lastModified() }
+                        ?.drop(MAX_SNAPSHOT_FILES)
+                        ?.forEach(File::delete)
+                }
+            }
             onDetection(detection, now)
             updateFrameRate(now)
             if (now - lastReportedAt >= REPORT_INTERVAL_MILLIS) {
@@ -115,5 +139,7 @@ class CameraFrameSource(
         const val NANOS_PER_MILLISECOND = 1_000_000L
         const val ONE_SECOND_MILLIS = 1_000L
         const val REPORT_INTERVAL_MILLIS = 250L
+        const val SNAPSHOT_INTERVAL_MILLIS = 500L
+        const val MAX_SNAPSHOT_FILES = 12
     }
 }
