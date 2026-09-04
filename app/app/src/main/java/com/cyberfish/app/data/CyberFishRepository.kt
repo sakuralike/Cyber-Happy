@@ -21,7 +21,10 @@ import com.cyberfish.app.update.AppUpdateWorker
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.channels.awaitClose
+import androidx.lifecycle.Observer
 import org.json.JSONObject
 
 class CyberFishRepository(context: Context) {
@@ -32,8 +35,11 @@ class CyberFishRepository(context: Context) {
     private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext))
     val modelRepository = ModelRuntime.get(appContext, appApiClient)
     val modelState = modelRepository.state
-    val appUpdateWorkInfo: Flow<WorkInfo?> = kotlinx.coroutines.flow.flow {
-        emit(WorkManager.getInstance(appContext).getWorkInfosForUniqueWork(AppUpdateWorker.WORK_NAME).get().firstOrNull())
+    val appUpdateWorkInfo: Flow<WorkInfo?> = callbackFlow {
+        val liveData = WorkManager.getInstance(appContext).getWorkInfosForUniqueWorkLiveData(AppUpdateWorker.WORK_NAME)
+        val observer = Observer<List<WorkInfo>> { trySend(it.firstOrNull()).isSuccess }
+        liveData.observeForever(observer)
+        awaitClose { liveData.removeObserver(observer) }
     }
 
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
