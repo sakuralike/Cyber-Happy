@@ -14,6 +14,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -26,7 +27,9 @@ import com.cyberfish.app.data.CyberFishRepository
 import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.ApiResult
+import com.cyberfish.app.network.AppEventType
 import com.cyberfish.app.network.VersionCheckState
+import com.cyberfish.app.update.installApk
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.PillTabBar
 import com.cyberfish.app.ui.screens.MonitorScreen
@@ -37,6 +40,7 @@ import com.cyberfish.app.ui.theme.CyberFishTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import kotlin.math.roundToLong
 
 internal enum class AppTab(val label: String) {
@@ -60,9 +64,13 @@ fun CyberFishApp() {
     val preferences by repository.preferences.collectAsState(initial = AppPreferences())
     val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
     val modelState by repository.modelState.collectAsState()
+    val appUpdateWorkInfo by repository.appUpdateWorkInfo.collectAsState(initial = null)
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     val selectedTab = AppTab.valueOf(selectedTabName)
+    LaunchedEffect(repository) {
+        withContext(Dispatchers.IO) { repository.reportEvent(AppEventType.LAUNCH) }
+    }
     val darkTheme = resolveDarkTheme(
         preferences = preferences,
         systemDark = isSystemInDarkTheme(),
@@ -91,10 +99,24 @@ fun CyberFishApp() {
                                 quietHoursEnabled = preferences.quietHoursEnabled,
                             ),
                             onTriggerPersist = { event ->
-                                coroutineScope.launch(Dispatchers.IO) { repository.saveTrigger(event) }
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    repository.saveTrigger(event)
+                                    repository.reportEvent(AppEventType.TRIGGER, event.modelVersion)
+                                }
                             },
                             onMarkFalsePositive = { event ->
                                 coroutineScope.launch(Dispatchers.IO) { repository.confirmMisreport(event) }
+                            },
+                            onFrameMetrics = { metrics ->
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    repository.reportEvent(
+                                        eventType = AppEventType.MODEL_CALL,
+                                        modelVersion = repository.modelRepository.detectorSlot.modelVersion,
+                                        payload = JSONObject()
+                                            .put("inferenceMs", metrics.latencyMillis)
+                                            .put("fps", metrics.framesPerSecond),
+                                    )
+                                }
                             },
                             detector = repository.modelRepository.detectorSlot,
                         )
@@ -111,6 +133,7 @@ fun CyberFishApp() {
                             },
                             versionCheckState = versionCheckState,
                             modelState = modelState,
+                            appUpdateWorkInfo = appUpdateWorkInfo,
                             onCheckForUpdate = {
                                 coroutineScope.launch {
                                     versionCheckState = VersionCheckState.Checking
@@ -123,6 +146,10 @@ fun CyberFishApp() {
                                     }
                                 }
                             },
+                            onDownloadAppUpdate = {
+                                (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.let(repository::enqueueAppUpdate)
+                            },
+                            onInstallAppUpdate = { path -> installApk(context, path) },
                             onCheckModel = {
                                 coroutineScope.launch(Dispatchers.IO) { repository.checkForModelUpdate() }
                             },

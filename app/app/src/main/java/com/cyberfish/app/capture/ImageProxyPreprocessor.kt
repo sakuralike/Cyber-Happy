@@ -1,6 +1,8 @@
 package com.cyberfish.app.capture
 
 import androidx.camera.core.ImageProxy
+import android.graphics.Bitmap
+import java.io.File
 import kotlin.math.min
 
 fun ImageProxy.toNormalizedRgb(targetSize: Int): FloatArray {
@@ -46,4 +48,20 @@ fun ImageProxy.toNormalizedRgb(targetSize: Int): FloatArray {
 private fun java.nio.ByteBuffer.getUnsigned(index: Int): Int {
     if (index < 0 || index >= limit()) return 0
     return get(index).toInt() and 0xFF
+}
+
+fun FloatArray.writeJpeg(targetSize: Int, file: File) {
+    require(size == targetSize * targetSize * 3) { "RGB 数据尺寸不匹配" }
+    val pixels = IntArray(targetSize * targetSize)
+    for (index in pixels.indices) {
+        val offset = index * 3
+        val red = (this[offset] * 255f).toInt().coerceIn(0, 255)
+        val green = (this[offset + 1] * 255f).toInt().coerceIn(0, 255)
+        val blue = (this[offset + 2] * 255f).toInt().coerceIn(0, 255)
+        pixels[index] = (0xFF shl 24) or (red shl 16) or (green shl 8) or blue
+    }
+    val bitmap = Bitmap.createBitmap(pixels, targetSize, targetSize, Bitmap.Config.ARGB_8888)
+    file.parentFile?.mkdirs()
+    file.outputStream().use { output -> bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output) }
+    bitmap.recycle()
 }

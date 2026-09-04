@@ -36,6 +36,16 @@ export interface CreateModelInput {
   minAppCode?: number;
   maxAppCode?: number;
   remark?: string;
+  signature?: string | null;
+  signatureAlgorithm?: string | null;
+  publicKeyId?: string | null;
+  signatureExpiresAt?: string | null;
+  runtimeSignatureName?: string | null;
+  inputName?: string | null;
+  inputLayout?: 'NCHW' | 'NHWC';
+  outputName?: string | null;
+  coordinatesNormalized?: boolean;
+  valuesPerDetection?: number;
 }
 
 export async function createModel(input: CreateModelInput): Promise<MlModel> {

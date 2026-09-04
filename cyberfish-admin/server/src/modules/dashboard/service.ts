@@ -316,19 +316,22 @@ export async function health(q: DashboardQuery) {
       select: { deviceId: true },
       distinct: ['deviceId'],
     }),
-    prisma.misreport.findMany({
-      where: misreportFilter(q, from, to),
-      select: { rawData: true },
-      take: 500,
+    prisma.appEvent.findMany({
+      where: eventFilter(EventType.MODEL_CALL, from, to, q),
+      select: { payload: true, count: true },
+      take: 5000,
     }),
   ]);
 
-  // 从 rawData 中提取 fps / 推理耗时，算 P95
+  // 从模型调用事件的 payload 中提取实际推理耗时，算 P95
   const latencies: number[] = [];
   for (const r of inference) {
     try {
-      const raw = JSON.parse(r.rawData) as { backend?: string; fps?: number };
-      if (typeof raw.fps === 'number' && raw.fps > 0) latencies.push(Math.round(1000 / raw.fps));
+      const raw = JSON.parse(r.payload) as { inferenceMs?: number; latencyMs?: number };
+      const latency = raw.inferenceMs ?? raw.latencyMs;
+      if (typeof latency === 'number' && latency >= 0) {
+        for (let i = 0; i < Math.max(1, r.count); i += 1) latencies.push(Math.round(latency));
+      }
     } catch {
       /* 忽略非法 JSON */
     }

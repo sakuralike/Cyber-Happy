@@ -49,6 +49,8 @@ import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.update.ModelInstallStatus
 import com.cyberfish.app.update.ModelState
+import com.cyberfish.app.update.AppUpdateWorker
+import androidx.work.WorkInfo
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPreset
 import com.cyberfish.app.ui.ThemeMode
@@ -67,8 +69,11 @@ fun SettingsScreen(
     versionCheckState: VersionCheckState,
     onCheckForUpdate: () -> Unit,
     modelState: ModelState = ModelState(),
+    appUpdateWorkInfo: WorkInfo? = null,
     onCheckModel: () -> Unit = {},
     onRollbackModel: () -> Unit = {},
+    onDownloadAppUpdate: () -> Unit = {},
+    onInstallAppUpdate: (String) -> Unit = {},
 ) {
     var sectionName by rememberSaveable { mutableStateOf(SettingsSection.Parameters.name) }
     val section = SettingsSection.valueOf(sectionName)
@@ -89,7 +94,18 @@ fun SettingsScreen(
             when (section) {
                 SettingsSection.Parameters -> ParameterSettings(settings, onSettingsChange)
                 SettingsSection.Alerts -> AlertSettings(settings, onSettingsChange)
-                SettingsSection.Model -> ModelSettings(settings, onSettingsChange, versionCheckState, onCheckForUpdate, modelState, onCheckModel, onRollbackModel)
+                SettingsSection.Model -> ModelSettings(
+                    settings = settings,
+                    onSettingsChange = onSettingsChange,
+                    versionCheckState = versionCheckState,
+                    onCheckForUpdate = onCheckForUpdate,
+                    modelState = modelState,
+                    appUpdateWorkInfo = appUpdateWorkInfo,
+                    onCheckModel = onCheckModel,
+                    onRollbackModel = onRollbackModel,
+                    onDownloadAppUpdate = onDownloadAppUpdate,
+                    onInstallAppUpdate = onInstallAppUpdate,
+                )
             }
         }
     }
@@ -248,8 +264,11 @@ private fun ModelSettings(
     versionCheckState: VersionCheckState,
     onCheckForUpdate: () -> Unit,
     modelState: ModelState,
+    appUpdateWorkInfo: WorkInfo?,
     onCheckModel: () -> Unit,
     onRollbackModel: () -> Unit,
+    onDownloadAppUpdate: () -> Unit,
+    onInstallAppUpdate: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionCard("模型状态") {
@@ -313,6 +332,39 @@ private fun ModelSettings(
                 enabled = versionCheckState !is VersionCheckState.Checking,
             ) {
                 Text(if (versionCheckState is VersionCheckState.Checking) "检查中" else "检查 APP 更新")
+            }
+            val update = (versionCheckState as? VersionCheckState.UpdateAvailable)?.update
+            if (update != null) {
+                Text(
+                    "发现 v${update.versionName ?: update.versionCode ?: ""}，${update.releaseNotes ?: ""}",
+                    modifier = Modifier.padding(top = 8.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                when (appUpdateWorkInfo?.state) {
+                    WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
+                        Text(
+                            "下载中 ${appUpdateWorkInfo.progress.getInt(AppUpdateWorker.KEY_PROGRESS, 0)}%",
+                            modifier = Modifier.padding(top = 8.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        val apkPath = appUpdateWorkInfo.outputData.getString(AppUpdateWorker.KEY_APK_PATH)
+                        if (apkPath != null) {
+                            Button(onClick = { onInstallAppUpdate(apkPath) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                                Text("安装更新")
+                            }
+                        }
+                    }
+                    else -> {
+                        Button(
+                            onClick = onDownloadAppUpdate,
+                            enabled = update.apkUrl != null && update.apkSha256 != null,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        ) { Text("下载并安装") }
+                    }
+                }
             }
         }
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) {

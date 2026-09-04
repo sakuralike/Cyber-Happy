@@ -13,7 +13,7 @@ const routes: FastifyPluginAsync = async (app) => {
   });
 
   /** 登录 */
-  app.post('/login', async (request, reply) => {
+  app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const input = parseOrThrow(loginSchema, request.body);
     const m = meta(request as never);
     const result = await service.login(

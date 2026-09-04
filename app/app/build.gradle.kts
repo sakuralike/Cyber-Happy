@@ -27,8 +27,8 @@ android {
         applicationId = "com.cyberfish.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 130
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("int", "PLANNED_MIN_SDK", "28")
