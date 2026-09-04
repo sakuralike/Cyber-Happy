@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.alert.AndroidAlertNotifier
 import com.cyberfish.app.capture.CameraFrameSource
 import com.cyberfish.app.capture.CaptureStatus
@@ -50,6 +51,7 @@ import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.MockDetector
 import com.cyberfish.app.trigger.TriggerEvent
+import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPipeline
 import com.cyberfish.app.ui.components.StatusChip
 
@@ -58,6 +60,8 @@ fun CameraPreviewCard(
     monitoring: Boolean,
     permissionGranted: Boolean,
     permissionDenied: Boolean,
+    triggerConfig: TriggerConfig,
+    alertPreferences: AlertPreferences,
     onTrigger: (TriggerEvent) -> Unit,
 ) {
     val context = LocalContext.current
@@ -67,16 +71,16 @@ fun CameraPreviewCard(
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var metrics by remember { mutableStateOf<FrameMetrics?>(null) }
     var captureStatus by remember { mutableStateOf(CaptureStatus.Idle) }
-    val notifier = remember(context) { AndroidAlertNotifier(context.applicationContext) }
-    val triggerPipeline = remember {
-        TriggerPipeline { event ->
+    val notifier = remember(context, alertPreferences) { AndroidAlertNotifier(context.applicationContext, alertPreferences) }
+    val triggerPipeline = remember(triggerConfig, notifier) {
+        TriggerPipeline(config = triggerConfig) { event ->
             mainExecutor.execute {
                 notifier.alert(event)
                 currentOnTrigger.value(event)
             }
         }
     }
-    val frameSource = remember {
+    val frameSource = remember(triggerPipeline) {
         CameraFrameSource(
             context = context.applicationContext,
             detector = MockDetector(),
@@ -92,7 +96,7 @@ fun CameraPreviewCard(
             triggerPipeline.reset()
         }
     }
-    DisposableEffect(monitoring, permissionGranted, lifecycleOwner, previewView) {
+    DisposableEffect(monitoring, permissionGranted, lifecycleOwner, previewView, frameSource) {
         if (monitoring && permissionGranted && previewView != null && lifecycleOwner != null) {
             frameSource.start(lifecycleOwner, previewView!!)
         } else {
