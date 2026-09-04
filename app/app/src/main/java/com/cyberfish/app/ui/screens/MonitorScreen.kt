@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.cyberfish.app.alert.AlertPreferences
+import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.MetricCard
 import com.cyberfish.app.ui.components.ScreenTitle
@@ -55,6 +56,7 @@ fun MonitorScreen(
     alertPreferences: AlertPreferences,
     onTriggerPersist: (TriggerEvent) -> Unit,
     onMarkFalsePositive: (TriggerEvent) -> Unit,
+    onFrameMetrics: (FrameMetrics) -> Unit = {},
     detector: Detector = MockDetector(),
 ) {
     val context = LocalContext.current
@@ -80,6 +82,7 @@ fun MonitorScreen(
                 triggerConfig = triggerConfig,
                 alertPreferences = alertPreferences,
                 detector = detector,
+                onFrameMetrics = onFrameMetrics,
                 onTrigger = {
                     triggerEvent = it
                     falsePositiveMarked = false

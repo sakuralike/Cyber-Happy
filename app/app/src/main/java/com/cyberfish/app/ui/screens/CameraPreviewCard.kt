@@ -55,6 +55,8 @@ import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPipeline
 import com.cyberfish.app.ui.components.StatusChip
+import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 
 @Composable
 fun CameraPreviewCard(
@@ -64,21 +66,26 @@ fun CameraPreviewCard(
     triggerConfig: TriggerConfig,
     alertPreferences: AlertPreferences,
     onTrigger: (TriggerEvent) -> Unit,
+    onFrameMetrics: (FrameMetrics) -> Unit = {},
     detector: Detector = MockDetector(),
 ) {
     val context = LocalContext.current
     val lifecycleOwner = context.findLifecycleOwner()
     val mainExecutor = remember(context) { ContextCompat.getMainExecutor(context) }
     val currentOnTrigger = rememberUpdatedState(onTrigger)
+    val snapshotDir = remember(context) { File(context.filesDir, "media") }
+    val latestSnapshot = remember { AtomicReference<File?>(null) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var metrics by remember { mutableStateOf<FrameMetrics?>(null) }
+    var lastTelemetryAt by remember { mutableStateOf(0L) }
     var captureStatus by remember { mutableStateOf(CaptureStatus.Idle) }
     val notifier = remember(context, alertPreferences) { AndroidAlertNotifier(context.applicationContext, alertPreferences) }
-    val triggerPipeline = remember(triggerConfig, notifier) {
+    val triggerPipeline = remember(triggerConfig, notifier, detector) {
         TriggerPipeline(config = triggerConfig) { event ->
             mainExecutor.execute {
                 notifier.alert(event)
-                currentOnTrigger.value(event)
+                val snapshotPath = latestSnapshot.get()?.let { copySnapshot(it, snapshotDir, event.timestampMillis) }
+                currentOnTrigger.value(event.copy(modelVersion = detector.modelVersion, snapshotPath = snapshotPath))
             }
         }
     }
@@ -86,9 +93,17 @@ fun CameraPreviewCard(
         CameraFrameSource(
             context = context.applicationContext,
             detector = detector,
-            onFrame = { metrics = it },
+            onFrame = {
+                metrics = it
+                if (it.timestampMillis - lastTelemetryAt >= 5_000L) {
+                    lastTelemetryAt = it.timestampMillis
+                    onFrameMetrics(it)
+                }
+            },
             onStatusChanged = { captureStatus = it },
             onDetection = { detection, timestampMillis -> triggerPipeline.accept(detection, timestampMillis) },
+            snapshotDir = snapshotDir,
+            onSnapshotReady = { latestSnapshot.set(it) },
         )
     }
 
@@ -144,6 +159,14 @@ private fun Context.findLifecycleOwner(): LifecycleOwner? = when (this) {
     is ContextWrapper -> baseContext.findLifecycleOwner()
     else -> null
 }
+
+private fun copySnapshot(source: File, directory: File, timestampMillis: Long): String? = runCatching {
+    if (!source.isFile) return@runCatching null
+    directory.mkdirs()
+    val target = File(directory, "trigger-$timestampMillis.jpg")
+    source.inputStream().use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+    target.absolutePath
+}.getOrNull()
 
 @Composable
 private fun DetectionOverlay(detection: Detection?) {

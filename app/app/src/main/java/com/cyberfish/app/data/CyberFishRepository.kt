@@ -10,14 +10,19 @@ import com.cyberfish.app.data.preferences.AppPreferencesStore
 import com.cyberfish.app.network.ApiConfig
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.AppApiClient
+import com.cyberfish.app.network.AppEventType
 import com.cyberfish.app.network.AppUpdateInfo
 import com.cyberfish.app.network.DeviceIdentityStore
 import com.cyberfish.app.network.MisreportUploadWorker
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.update.ModelRuntime
 import com.cyberfish.app.update.ModelUpdateWorker
+import com.cyberfish.app.update.AppUpdateWorker
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import org.json.JSONObject
 
 class CyberFishRepository(context: Context) {
     private val appContext = context.applicationContext
@@ -27,6 +32,9 @@ class CyberFishRepository(context: Context) {
     private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext))
     val modelRepository = ModelRuntime.get(appContext, appApiClient)
     val modelState = modelRepository.state
+    val appUpdateWorkInfo: Flow<WorkInfo?> = kotlinx.coroutines.flow.flow {
+        emit(WorkManager.getInstance(appContext).getWorkInfosForUniqueWork(AppUpdateWorker.WORK_NAME).get().firstOrNull())
+    }
 
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
     val preferences: Flow<AppPreferences> = preferencesStore.data
@@ -50,6 +58,15 @@ class CyberFishRepository(context: Context) {
     }
 
     suspend fun checkForUpdate(): ApiResult<AppUpdateInfo> = appApiClient.checkForUpdate()
+
+    suspend fun reportEvent(
+        eventType: AppEventType,
+        modelVersion: String? = null,
+        count: Int = 1,
+        payload: JSONObject = JSONObject(),
+    ) = appApiClient.reportEvent(eventType, count, modelVersion, payload)
+
+    fun enqueueAppUpdate(update: AppUpdateInfo) = AppUpdateWorker.enqueue(appContext, update)
 
     suspend fun checkForModelUpdate() = modelRepository.checkAndInstall()
 

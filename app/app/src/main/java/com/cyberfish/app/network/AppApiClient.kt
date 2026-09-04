@@ -6,13 +6,16 @@ import com.cyberfish.app.inference.LiteRtModelDescriptor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.io.File
 import java.io.OutputStream
 import java.time.Instant
 import java.util.concurrent.TimeUnit
@@ -31,7 +34,12 @@ data class AppUpdateInfo(
     val versionName: String? = null,
     val versionCode: Int? = null,
     val releaseNotes: String? = null,
+    val apkUrl: String? = null,
+    val apkSizeBytes: Long? = null,
+    val apkSha256: String? = null,
 )
+
+enum class AppEventType { LAUNCH, TRIGGER, MODEL_CALL, MISREPORT, CRASH }
 
 data class ModelCheckInfo(
     val hasUpdate: Boolean,
@@ -99,6 +107,9 @@ class AppApiClient(
                 versionName = latest?.optString("versionName")?.takeIf { it.isNotBlank() },
                 versionCode = latest?.takeIf { it.has("versionCode") }?.optInt("versionCode"),
                 releaseNotes = latest?.optString("releaseNotes")?.takeIf { it.isNotBlank() },
+                apkUrl = latest?.optString("apkUrl")?.takeIf { it.isNotBlank() }?.let(config::resolve),
+                apkSizeBytes = latest?.optLong("apkSize", Long.MIN_VALUE)?.takeIf { it != Long.MIN_VALUE },
+                apkSha256 = latest?.optString("sha256")?.takeIf { it.isNotBlank() },
             )
         }
     }
@@ -112,6 +123,22 @@ class AppApiClient(
             .put("jitterHz", record.jitterHz)
             .put("confidence", record.confidence)
             .put("trajectoryPx", JSONArray(record.trajectoryCsv.split(',').mapNotNull { it.toDoubleOrNull() }))
+        val snapshotUrls = when (val result = record.snapshotPath?.let { uploadMedia(File(it), "IMAGE") }) {
+            null -> emptyList()
+            is ApiResult.Success -> listOf(result.value)
+            ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
+            is ApiResult.HttpError -> return@withContext ApiResult.HttpError(result.statusCode, result.message)
+            is ApiResult.NetworkError -> return@withContext ApiResult.NetworkError(result.message)
+            is ApiResult.ParseError -> return@withContext ApiResult.ParseError(result.message)
+        }
+        val videoUrl = when (val result = record.videoPath?.let { uploadMedia(File(it), "VIDEO") }) {
+            null -> null
+            is ApiResult.Success -> result.value
+            ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
+            is ApiResult.HttpError -> return@withContext ApiResult.HttpError(result.statusCode, result.message)
+            is ApiResult.NetworkError -> return@withContext ApiResult.NetworkError(result.message)
+            is ApiResult.ParseError -> return@withContext ApiResult.ParseError(result.message)
+        }
         val body = JSONObject()
             .put("deviceId", identity.deviceId)
             .put("userId", identity.userId)
@@ -119,13 +146,15 @@ class AppApiClient(
             .put("osVersion", identity.osVersion)
             .put("appVersionName", BuildConfig.VERSION_NAME)
             .put("appVersionCode", BuildConfig.VERSION_CODE)
-            .put("modelVersion", "MockDetector")
+            .put("modelVersion", record.modelVersion)
             .put("reportType", "FALSE_POSITIVE")
             .put("severity", "MEDIUM")
             .put("userNote", "用户确认标记为误报")
             .put("reportedAt", Instant.ofEpochMilli(record.occurredAtMillis).toString())
             .put("rawData", rawData)
-            .put("sceneTags", JSONArray(listOf("mock-detector", "user-confirmed")))
+            .put("sceneTags", JSONArray(listOf(record.modelVersion, "user-confirmed")))
+            .put("snapshotUrls", JSONArray(snapshotUrls))
+        videoUrl?.let { body.put("videoUrl", it) }
         val requestUrl = config.endpoint("api/v1/misreports").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
         val request = Request.Builder()
@@ -134,6 +163,35 @@ class AppApiClient(
             .appToken(config.appToken)
             .build()
         executeJson(request) { data -> data.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("上报响应缺少 id") }
+    }
+
+    suspend fun reportEvent(
+        eventType: AppEventType,
+        count: Int = 1,
+        modelVersion: String? = null,
+        payload: JSONObject = JSONObject(),
+    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val identity = identityStore.get()
+        val body = JSONObject()
+            .put("deviceId", identity.deviceId)
+            .put("userId", identity.userId)
+            .put("channel", "official")
+            .put("deviceModel", identity.deviceModel)
+            .put("appVersionCode", BuildConfig.VERSION_CODE)
+            .put("modelVersion", modelVersion ?: "")
+            .put("eventType", eventType.name)
+            .put("count", count)
+            .put("payload", payload)
+        val requestUrl = config.endpoint("api/v1/app-events").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder()
+                .url(requestUrl)
+                .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .appToken(config.appToken)
+                .build(),
+        ) { Unit }
     }
 
     override suspend fun checkModel(currentModelVersion: String?): ApiResult<ModelCheckInfo> = withContext(Dispatchers.IO) {
@@ -217,12 +275,24 @@ class AppApiClient(
         url: String,
         output: OutputStream,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
+    ): ApiResult<Long> = downloadBinary(url, output, onProgress)
+
+    suspend fun downloadApk(
+        url: String,
+        output: OutputStream,
+        onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
+    ): ApiResult<Long> = downloadBinary(url, output, onProgress)
+
+    private suspend fun downloadBinary(
+        url: String,
+        output: OutputStream,
+        onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
     ): ApiResult<Long> = withContext(Dispatchers.IO) {
-        val requestUrl = url.toHttpUrlOrNull() ?: return@withContext ApiResult.ParseError("模型下载地址无效")
+        val requestUrl = url.toHttpUrlOrNull() ?: return@withContext ApiResult.ParseError("下载地址无效")
         try {
             httpClient.newCall(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()).execute().use { response ->
                 if (!response.isSuccessful) return@withContext ApiResult.HttpError(response.code, response.message)
-                val body = response.body ?: return@withContext ApiResult.ParseError("模型下载响应为空")
+                val body = response.body ?: return@withContext ApiResult.ParseError("下载响应为空")
                 val total = body.contentLength().takeIf { it >= 0L }
                 var downloaded = 0L
                 body.byteStream().use { input ->
@@ -276,6 +346,25 @@ class AppApiClient(
     }
 
     private fun Request.Builder.appToken(token: String) = header("X-App-Token", token)
+
+    private suspend fun uploadMedia(file: File, bizType: String): ApiResult<String> = withContext(Dispatchers.IO) {
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        if (!file.isFile) return@withContext ApiResult.ParseError("媒体文件不存在")
+        val mediaType = when (bizType) {
+            "VIDEO" -> "video/mp4"
+            else -> "image/jpeg"
+        }.toMediaType()
+        val multipart = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("file", file.name, file.asRequestBody(mediaType))
+            .build()
+        val requestUrl = config.endpoint("api/v1/files/upload?bizType=$bizType").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder().url(requestUrl).post(multipart).appToken(config.appToken).build(),
+        ) { data -> data.optString("url").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("媒体上传响应缺少 url") }
+    }
+
 
     private companion object {
         const val DOWNLOAD_BUFFER_SIZE = 16 * 1024

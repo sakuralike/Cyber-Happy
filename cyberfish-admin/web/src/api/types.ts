@@ -45,6 +45,18 @@ export interface AdminUser {
   updatedAt?: string;
 }
 
+export interface SiteConfig {
+  id: string;
+  title: string;
+  content: string;
+  apkUrl: string | null;
+  apkFileId: string | null;
+  downloadUrl: string | null;
+  updatedById?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 // ============ APP 版本 ============
 export type Platform = 'ANDROID' | 'IOS' | 'HARMONY';
 export type UpdateType = 'FORCE' | 'OPTIONAL' | 'NONE';
@@ -107,6 +119,16 @@ export interface MlModel {
   isRollback: boolean;
   publishedAt: string | null;
   remark: string | null;
+  signature: string | null;
+  signatureAlgorithm: string | null;
+  publicKeyId: string | null;
+  signatureExpiresAt: string | null;
+  runtimeSignatureName: string | null;
+  inputName: string | null;
+  inputLayout: 'NCHW' | 'NHWC';
+  outputName: string | null;
+  coordinatesNormalized: boolean;
+  valuesPerDetection: number;
   createdAt: string;
   updatedAt: string;
   createdBy?: { id: string; displayName: string } | null;

@@ -9,6 +9,8 @@ import { ModelPage } from './pages/ModelPage';
 import { MisreportPage } from './pages/MisreportPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { AdminPage } from './pages/AdminPage';
+import { HomePage } from './pages/HomePage';
+import { SiteConfigPage } from './pages/SiteConfigPage';
 
 export default function App() {
   return (
@@ -16,6 +18,7 @@ export default function App() {
       <HashRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/" element={<HomePage />} />
           <Route
             element={
               <RequireAuth>
@@ -64,7 +67,14 @@ export default function App() {
                 </RequirePerm>
               }
             />
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route
+              path="/site-config"
+              element={
+                <RequirePerm perm="siteConfig:write">
+                  <SiteConfigPage />
+                </RequirePerm>
+              }
+            />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Routes>
