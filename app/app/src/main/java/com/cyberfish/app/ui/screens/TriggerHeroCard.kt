@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.ui.components.SectionCard
 import com.cyberfish.app.ui.components.StatusChip
+import com.cyberfish.app.ui.theme.ChartPalette
 
 @Composable
 fun TriggerHeroCard(
@@ -37,7 +38,7 @@ fun TriggerHeroCard(
     SectionCard("检测到上鱼动作", Modifier.padding(horizontal = 24.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("反向确认完成", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("反向确认完成", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(event.reason, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             StatusChip("置信度 %.0f%%".format(event.confidence * 100), MaterialTheme.colorScheme.primary)
@@ -59,8 +60,8 @@ fun TriggerHeroCard(
                 onClick = onMarkFalsePositive,
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (falsePositiveMarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = if (falsePositiveMarked) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurface,
+                    containerColor = if (falsePositiveMarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = if (falsePositiveMarked) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.primary,
                 ),
             ) {
                 Icon(if (falsePositiveMarked) Icons.Filled.Check else Icons.Filled.Info, contentDescription = null)
@@ -79,7 +80,7 @@ fun TriggerHeroCard(
 @Composable
 private fun HeroMetric(label: String, value: String, modifier: Modifier) {
     Column(modifier) {
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     }
 }
@@ -91,7 +92,7 @@ private fun TrajectoryPreview(values: List<Float>, modifier: Modifier) {
         val minValue = values.minOrNull() ?: return@Canvas
         val maxValue = values.maxOrNull() ?: return@Canvas
         val range = (maxValue - minValue).coerceAtLeast(1f)
-        val color = Color(0xFF1FD3A3)
+        val color = ChartPalette.TracePrimary
         for (index in 0 until values.lastIndex) {
             val start = Offset(
                 x = size.width * index / values.lastIndex,

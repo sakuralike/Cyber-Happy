@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -36,19 +37,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cyberfish.app.ui.AppTab
 import com.cyberfish.app.ui.icon
+import com.cyberfish.app.ui.theme.CyberFishType
 
 @Composable
 fun ScreenTitle(
     title: String,
+    subtitle: String? = null,
     actionIcon: ImageVector? = null,
     actionDescription: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge) }
+        }
         if (actionIcon != null && onAction != null) {
             androidx.compose.material3.IconButton(onClick = onAction) {
                 Icon(actionIcon, contentDescription = actionDescription)
@@ -59,7 +65,7 @@ fun ScreenTitle(
 
 @Composable
 fun StatusChip(text: String, color: Color = MaterialTheme.colorScheme.primary) {
-    Surface(shape = CircleShape, color = color.copy(alpha = 0.14f), contentColor = color) {
+    Surface(shape = CircleShape, color = if (color == MaterialTheme.colorScheme.primary) MaterialTheme.colorScheme.primaryContainer else color.copy(alpha = 0.14f), contentColor = color) {
         Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(color))
             Spacer(modifier = Modifier.width(6.dp))
@@ -70,15 +76,9 @@ fun StatusChip(text: String, color: Color = MaterialTheme.colorScheme.primary) {
 
 @Composable
 fun MetricCard(value: String, label: String, modifier: Modifier = Modifier, highlighted: Boolean = false) {
-    Card(
-        modifier = modifier.height(96.dp),
-        colors = CardDefaults.cardColors(containerColor = if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.Center) {
-            Text(value, color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Column(modifier = modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(value, color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, style = CyberFishType.Metric, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(label, modifier = Modifier.padding(top = 5.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
     }
 }
 
@@ -87,11 +87,11 @@ fun SectionCard(title: String, modifier: Modifier = Modifier, content: @Composab
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(modifier = Modifier.height(12.dp))
             content()
         }
@@ -103,14 +103,15 @@ internal fun PillTabBar(selectedTab: AppTab, onTabSelected: (AppTab) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).navigationBarsPadding(),
         shape = RoundedCornerShape(32.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         tonalElevation = 4.dp,
     ) {
-        Row(modifier = Modifier.fillMaxWidth().height(64.dp).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().height(72.dp).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             AppTab.entries.forEach { tab ->
                 val selected = tab == selectedTab
                 Column(
-                    modifier = Modifier.weight(1f).fillMaxHeight().clip(CircleShape).background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent).clickable { onTabSelected(tab) }.padding(horizontal = 4.dp),
+                    modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(28.dp)).background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent).clickable { onTabSelected(tab) }.padding(horizontal = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {

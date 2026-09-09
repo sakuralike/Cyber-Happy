@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Form, Input, Button, Card, Typography, message } from 'antd';
-import { UserOutlined, LockOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Checkbox, Form, Input, Button, Typography, message } from 'antd';
+import { CheckCircleFilled, LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth';
+import { BrandMark } from '../components/BrandMark';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -15,45 +16,48 @@ export function LoginPage() {
       await login(values.username, values.password);
       message.success('登录成功');
       navigate('/dashboard');
-    } catch (e) {
-      message.error((e as Error).message);
+    } catch (error) {
+      message.error((error as Error).message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)',
-      }}
-    >
-      <Card style={{ width: 380, boxShadow: '0 8px 32px rgba(0,0,0,0.35)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <ThunderboltOutlined style={{ fontSize: 40, color: '#1677ff' }} />
-          <Typography.Title level={4} style={{ marginTop: 12, marginBottom: 4 }}>
-            赛博鱼乐 · 管理后台
-          </Typography.Title>
-          <Typography.Text type="secondary">运营与技术管理控制台</Typography.Text>
+    <main className="login-page">
+      <section className="login-brand-panel">
+        <div className="landing-brand"><BrandMark size={25} />赛博鱼乐</div>
+        <div>
+          <h1>鱼漂识别的<br />运营与技术中枢</h1>
+          <p>一个后台，管住 APP 发版、YOLO 模型下发、误报闭环与数据观测。</p>
+          <div className="login-benefits">
+            <div className="login-benefit"><CheckCircleFilled />APP 版本自动发版与灰度上架</div>
+            <div className="login-benefit"><CheckCircleFilled />YOLO 模型灰度下发与一键回滚</div>
+            <div className="login-benefit"><CheckCircleFilled />误报复核闭环，沉淀增量训练集</div>
+          </div>
         </div>
-        <Form onFinish={onFinish} size="large">
-          <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" autoFocus />
-          </Form.Item>
-          <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" block loading={loading}>
-              登录
-            </Button>
-          </Form.Item>
-        </Form>
-      </Card>
-    </div>
+        <div className="login-copyright">2026 赛博鱼乐 · 仅限内网 / VPN 访问</div>
+      </section>
+      <section className="login-form-panel">
+        <div className="login-form-wrap">
+          <h1>登录管理后台</h1>
+          <p>使用后台账号登录，所有写操作将记入审计日志</p>
+          <Form layout="vertical" onFinish={onFinish} size="large">
+            <Form.Item name="username" label="账号" rules={[{ required: true, message: '请输入账号' }]}>
+              <Input prefix={<UserOutlined />} placeholder="admin" autoFocus />
+            </Form.Item>
+            <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
+              <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" />
+            </Form.Item>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Checkbox>记住我</Checkbox>
+              <Typography.Link>忘记密码?</Typography.Link>
+            </div>
+            <Button type="primary" htmlType="submit" block loading={loading}>登录</Button>
+          </Form>
+          <div className="login-demo">演示账号：admin / cyberfish2026 · 复核员：reviewer</div>
+        </div>
+      </section>
+    </main>
   );
 }

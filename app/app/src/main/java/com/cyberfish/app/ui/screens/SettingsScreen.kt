@@ -28,10 +28,9 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -40,6 +39,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +60,7 @@ import com.cyberfish.app.ui.components.SectionCard
 import com.cyberfish.app.ui.components.SettingRow
 import com.cyberfish.app.ui.components.StatusChip
 import com.cyberfish.app.ui.components.ThinDivider
+import com.cyberfish.app.ui.theme.CyberFishType
 
 private enum class SettingsSection(val label: String) { Parameters("参数配置"), Alerts("提醒与外观"), Model("模型与性能") }
 
@@ -82,11 +84,23 @@ fun SettingsScreen(
         contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item { ScreenTitle("设置") }
+        item { ScreenTitle("设置", "阈值与提醒，随时可调") }
         item {
-            ScrollableTabRow(selectedTabIndex = section.ordinal, edgePadding = 24.dp, containerColor = MaterialTheme.colorScheme.background, divider = {}) {
-                SettingsSection.entries.forEach { item ->
-                    Tab(selected = item == section, onClick = { sectionName = item.name }, text = { Text(item.label) })
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SettingsSection.entries.forEach { item ->
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            color = if (item == section) MaterialTheme.colorScheme.surface else Color.Transparent,
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text(item.label, modifier = Modifier.fillMaxWidth().clickable { sectionName = item.name }.padding(vertical = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = if (item == section) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, fontWeight = if (item == section) FontWeight.SemiBold else FontWeight.Normal)
+                        }
+                    }
                 }
             }
         }
@@ -158,9 +172,9 @@ private fun ParameterSettings(settings: AppPreferences, onSettingsChange: (AppPr
         }
         Button(
             onClick = { saved = true },
-            modifier = Modifier.fillMaxWidth().height(54.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface, contentColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(14.dp),
         ) { Text(if (saved) "配置已保存" else "保存配置") }
     }
 }
@@ -170,12 +184,12 @@ private fun PresetCard(name: String, selected: Boolean, modifier: Modifier, onCl
     Card(
         onClick = onClick,
         modifier = modifier.height(108.dp),
-        colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.5.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
         shape = RoundedCornerShape(14.dp),
     ) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 when (name) { "默认" -> "宽松判定"; "高级" -> "灵敏判定"; "自定义" -> "手动阈值"; else -> "均衡判定" },
                 Modifier.padding(top = 5.dp),
@@ -201,7 +215,7 @@ private fun ThresholdSlider(label: String, value: Float, range: ClosedFloatingPo
 @Composable
 private fun SummaryValue(label: String, value: String, color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(value, color = color, style = CyberFishType.MetricSmall, fontWeight = FontWeight.SemiBold)
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     }
 }
@@ -275,7 +289,7 @@ private fun ModelSettings(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(modelStateTitle(modelState), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(modelStateTitle(modelState), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(modelStateSubtitle(modelState), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
                 StatusChip(modelStateLabel(modelState), modelStateColor(modelState))
@@ -367,7 +381,7 @@ private fun ModelSettings(
                 }
             }
         }
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(16.dp)) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Text("模型更新由 OTA 通道管理", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium)

@@ -354,7 +354,12 @@ export function ModelPage() {
   });
 
   return (
-    <Card title="YOLO 模型管理">
+    <div>
+      <div className="page-heading">
+        <div><h1>YOLO 模型管理</h1><p>训练产物上传即可灰度下发 · 异常一键回滚 · 可追踪到单设备</p></div>
+        {hasPerm('model:write') && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>上传模型</Button>}
+      </div>
+      <Card>
       <Tabs
         activeKey={tab}
         onChange={setTab}
@@ -362,9 +367,7 @@ export function ModelPage() {
           tab === 'models' ? (
             <Space>
               <Button icon={<ReloadOutlined />} onClick={() => refetch()} />
-              {hasPerm('model:write') && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-                新建模型
-              </Button>}
+
             </Space>
           ) : undefined
         }
@@ -648,7 +651,8 @@ export function ModelPage() {
 
       {/* 设备明细 */}
       <DeviceLogDrawer dispatch={deviceDrawer} onClose={() => setDeviceDrawer(null)} />
-    </Card>
+      </Card>
+    </div>
   );
 }
 

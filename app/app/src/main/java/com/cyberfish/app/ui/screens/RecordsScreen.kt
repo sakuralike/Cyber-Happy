@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.ui.components.EmptyState
 import com.cyberfish.app.ui.components.ScreenTitle
+import com.cyberfish.app.ui.theme.ChartPalette
+import com.cyberfish.app.ui.theme.CyberFishType
 
 @Composable
 fun RecordsScreen(
@@ -60,7 +62,7 @@ fun RecordsScreen(
         contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item { ScreenTitle("中鱼记录") }
+        item { ScreenTitle("中鱼记录", "今日 ${loadedRecords.count { it.occurredAtMillis >= todayStart() }} 条  ·  有效 ${loadedRecords.count { it.occurredAtMillis >= todayStart() && !it.isFalsePositive }} 条") }
         item { TodayStats(loadedRecords) }
         item { RecordFilterRow(filter) { filter = it } }
         if (records == null) {
@@ -104,22 +106,14 @@ private enum class RecordFilter(val label: String) {
 
 @Composable
 private fun RecordFilterRow(selected: RecordFilter, onSelected: (RecordFilter) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp)) {
+      Row(Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         RecordFilter.entries.forEach { filter ->
-            FilterChip(
-                selected = filter == selected,
-                onClick = { onSelected(filter) },
-                label = { Text(filter.label) },
-                modifier = Modifier.weight(1f),
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            )
+            Surface(modifier = Modifier.weight(1f).clickable { onSelected(filter) }, color = if (filter == selected) MaterialTheme.colorScheme.surface else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
+                Text(filter.label, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = if (filter == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, fontWeight = if (filter == selected) FontWeight.SemiBold else FontWeight.Normal)
+            }
         }
+      }
     }
 }
 
@@ -134,23 +128,17 @@ private fun TodayStats(records: List<FishRecord>) {
     val todayRecords = records.filter { it.occurredAtMillis >= todayStart }
     val validCount = todayRecords.count { !it.isFalsePositive }
     val falsePositiveCount = todayRecords.count { it.isFalsePositive }
-    Card(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
             StatCell(todayRecords.size.toString(), "今日中鱼", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
             StatCell(validCount.toString(), "有效", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
             StatCell(falsePositiveCount.toString(), "误报", MaterialTheme.colorScheme.error, Modifier.weight(1f))
         }
-    }
 }
 
 @Composable
 private fun StatCell(value: String, label: String, color: Color, modifier: Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = color, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(value, color = color, style = CyberFishType.Metric, fontWeight = FontWeight.SemiBold)
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     }
 }
@@ -158,25 +146,19 @@ private fun StatCell(value: String, label: String, color: Color, modifier: Modif
 @Composable
 private fun RecordRow(record: FishRecord, onClick: () -> Unit) {
     Card(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp).clickable(onClick = onClick),
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp).clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                Modifier.size(72.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = if (record.isFalsePositive) MaterialTheme.colorScheme.error.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-            ) { Waveform(!record.isFalsePositive) }
-            Spacer(Modifier.width(14.dp))
+        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(formatRecordTime(record.occurredAtMillis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(formatRecordTime(record.occurredAtMillis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.width(8.dp))
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (record.isFalsePositive) MaterialTheme.colorScheme.error.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        color = if (record.isFalsePositive) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
                         contentColor = if (record.isFalsePositive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                     ) {
                         Text(if (record.isFalsePositive) "误报" else "有效", Modifier.padding(horizontal = 7.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
@@ -205,7 +187,7 @@ private fun RecordDetailDialog(
         title = { Text("记录详情") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(formatRecordTime(record.occurredAtMillis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(formatRecordTime(record.occurredAtMillis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("下沉 %.1f px".format(record.verticalDisplacementPx))
                 Text("抖动 %.1f Hz".format(record.jitterHz))
                 Text("置信度 %.0f%%".format(record.confidence * 100))
@@ -229,7 +211,7 @@ private fun RecordDetailDialog(
 @Composable
 private fun Waveform(valid: Boolean) {
     Canvas(Modifier.fillMaxSize().padding(14.dp)) {
-        val color = if (valid) Color(0xFF1FD3A3) else Color(0xFFFF7A3D)
+        val color = if (valid) ChartPalette.TracePrimary else ChartPalette.TraceWarning
         val center = size.height / 2f
         val xs = listOf(0f, 0.2f, 0.4f, 0.6f, 0.8f, 1f)
         val ys = listOf(0f, -5f, 4f, -3f, 5f, 0f)
@@ -239,3 +221,10 @@ private fun Waveform(valid: Boolean) {
 
 private fun formatRecordTime(timestampMillis: Long): String =
     java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timestampMillis))
+
+private fun todayStart(): Long = java.util.Calendar.getInstance().apply {
+    set(java.util.Calendar.HOUR_OF_DAY, 0)
+    set(java.util.Calendar.MINUTE, 0)
+    set(java.util.Calendar.SECOND, 0)
+    set(java.util.Calendar.MILLISECOND, 0)
+}.timeInMillis

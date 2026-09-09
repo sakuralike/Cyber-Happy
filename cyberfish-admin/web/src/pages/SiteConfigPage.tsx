@@ -26,7 +26,9 @@ export function SiteConfigPage() {
   }, [data, form]);
 
   return (
-    <Card title="首页与下载配置" loading={isLoading}>
+    <div>
+      <div className="page-heading"><div><h1>首页与下载配置</h1><p>维护产品落地页标题、介绍与 Android 下载入口</p></div></div>
+      <Card loading={isLoading}>
       <Form form={form} layout="vertical" onFinish={(values) => updateMut.mutate(values)}>
         <Form.Item name="title" label="首页标题" rules={[{ required: true, message: '请输入首页标题' }]}>
           <Input maxLength={120} />
@@ -49,6 +51,7 @@ export function SiteConfigPage() {
           保存配置
         </Button>
       </Form>
-    </Card>
+      </Card>
+    </div>
   );
 }

@@ -140,17 +140,15 @@ export function AdminPage() {
   );
 
   return (
-    <Card
-      title="账号管理"
+    <div>
+      <div className="page-heading"><div><h1>账号管理</h1><p>管理后台成员、角色与访问状态</p></div><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建账号</Button></div>
+      <Card
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建账号
-          </Button>
         </Space>
       }
-    >
+      >
       <Space style={{ marginBottom: 16 }} wrap>
         <Input.Search
           placeholder="搜索用户名 / 显示名"
@@ -234,6 +232,7 @@ export function AdminPage() {
           角色权限：管理员=全部 · 运营=版本/模型/误报读写 · 复核员=误报复核 · 只读=仅查看
         </Typography.Text>
       </Modal>
-    </Card>
+      </Card>
+    </div>
   );
 }

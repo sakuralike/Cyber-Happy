@@ -232,17 +232,18 @@ export function AppVersionPage() {
   );
 
   return (
-    <Card
-      title="APP 版本管理"
+    <div>
+      <div className="page-heading">
+        <div><h1>APP 版本管理</h1><p>草稿 → 灰度 → 已上架 → 已下架 · 运营可自助完成发版全流程</p></div>
+        {hasPerm('appVersion:write') && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建版本</Button>}
+      </div>
+      <Card
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()} />
-          {hasPerm('appVersion:write') && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建版本
-          </Button>}
         </Space>
       }
-    >
+      >
       <Space style={{ marginBottom: 16 }} wrap>
         <Input.Search
           placeholder="搜索版本号 / 更新说明"
@@ -351,7 +352,8 @@ export function AppVersionPage() {
           actionMut.mutate({ id: grayTarget.id, action: 'PUBLISH_GRAY', extra: { grayPercent, deviceIds } });
         }}
       />
-    </Card>
+      </Card>
+    </div>
   );
 }
 
