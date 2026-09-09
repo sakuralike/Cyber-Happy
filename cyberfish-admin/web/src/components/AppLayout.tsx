@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Layout, Menu, Dropdown, Avatar, Space, theme, Typography } from 'antd';
+import { Layout, Menu, Dropdown, Avatar, Space, Input, Typography } from 'antd';
 import {
   DashboardOutlined,
   MobileOutlined,
@@ -7,14 +7,14 @@ import {
   BugOutlined,
   FileSearchOutlined,
   TeamOutlined,
-  DownOutlined,
   LogoutOutlined,
-  ThunderboltOutlined,
   SettingOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth';
 import { ROLE_MAP } from '../utils/constants';
+import { BrandMark } from './BrandMark';
 
 const { Header, Sider, Content } = Layout;
 
@@ -22,93 +22,75 @@ export function AppLayout() {
   const { user, logout, hasPerm } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { token } = theme.useToken();
 
   const items = useMemo(() => {
-    const list = [
+    const operations = [
       hasPerm('dashboard:read') && { key: '/dashboard', icon: <DashboardOutlined />, label: '数据看板' },
       hasPerm('appVersion:read') && { key: '/app-versions', icon: <MobileOutlined />, label: 'APP 版本管理' },
       hasPerm('model:read') && { key: '/models', icon: <ApiOutlined />, label: 'YOLO 模型管理' },
-      hasPerm('misreport:read') && { key: '/misreports', icon: <BugOutlined />, label: '用户误报管理' },
+      hasPerm('misreport:read') && { key: '/misreports', icon: <BugOutlined />, label: '用户误报复核' },
+    ].filter(Boolean);
+    const system = [
       hasPerm('auditLog:read') && { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
       hasPerm('admin:read') && { key: '/admins', icon: <TeamOutlined />, label: '账号管理' },
       hasPerm('siteConfig:write') && { key: '/site-config', icon: <SettingOutlined />, label: '首页配置' },
-    ].filter(Boolean) as { key: string; icon: JSX.Element; label: string }[];
-    return list;
+    ].filter(Boolean);
+    return [
+      { type: 'group', label: '运营', children: operations },
+      { type: 'group', label: '系统', children: system },
+    ];
   }, [hasPerm]);
 
-  const selectedKey = useMemo(() => {
-    const match = items.find((i) => location.pathname.startsWith(i.key));
-    return match?.key ?? '/dashboard';
-  }, [location.pathname, items]);
-
+  const selectedKey = ['/dashboard', '/app-versions', '/models', '/misreports', '/audit-logs', '/admins', '/site-config']
+    .find((key) => location.pathname.startsWith(key)) ?? '/dashboard';
   const roleMeta = user ? ROLE_MAP[user.role] : null;
 
+  const signOut = async () => {
+    await logout();
+    navigate('/login');
+  };
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider theme="dark" width={220}>
-        <div
-          style={{
-            height: 56,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '0 20px',
-            color: '#fff',
-            fontWeight: 700,
-            fontSize: 16,
-            borderBottom: '1px solid rgba(255,255,255,0.1)',
-          }}
-        >
-          <ThunderboltOutlined style={{ color: '#1677ff', fontSize: 20 }} />
-          赛博鱼乐 · 管理后台
+    <Layout className="admin-shell">
+      <Sider width={240} breakpoint="lg" collapsedWidth={0} trigger={null}>
+        <div className="admin-brand">
+          <span className="brand-mark"><BrandMark /></span>
+          <span>赛博鱼乐</span>
+          <Typography.Text style={{ color: '#8e91a0', fontSize: 12 }}>Admin</Typography.Text>
         </div>
         <Menu
+          className="admin-menu"
           theme="dark"
           mode="inline"
           selectedKeys={[selectedKey]}
-          items={items}
-          onClick={(e) => navigate(e.key)}
+          items={items as never}
+          onClick={(event) => navigate(event.key)}
         />
+        {user && (
+          <Dropdown menu={{ items: [{ key: 'logout', icon: <LogoutOutlined />, label: '退出登录' }], onClick: signOut }}>
+            <div className="admin-user">
+              <Avatar>{user.displayName.slice(0, 1)}</Avatar>
+              <div className="admin-user-meta">
+                <div className="admin-user-name">{user.displayName}</div>
+                <div className="admin-user-role">{roleMeta?.label ?? user.role}</div>
+              </div>
+            </div>
+          </Dropdown>
+        )}
       </Sider>
       <Layout>
-        <Header
-          style={{
-            background: token.colorBgContainer,
-            padding: '0 24px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          }}
-        >
-          <Typography.Text type="secondary">赛博鱼乐 · 鱼漂识别 APP 运营与技术管理后台</Typography.Text>
-          {user && (
-            <Dropdown
-              menu={{
-                items: [
-                  { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
-                ],
-                onClick: async ({ key }) => {
-                  if (key === 'logout') {
-                    await logout();
-                    navigate('/login');
-                  }
-                },
-              }}
-            >
-              <Space style={{ cursor: 'pointer' }}>
-                <Avatar style={{ background: '#1677ff' }}>{user.displayName.slice(0, 1)}</Avatar>
-                <span>{user.displayName}</span>
-                {roleMeta && <span style={{ color: '#999' }}>{roleMeta.label}</span>}
-                <DownOutlined style={{ fontSize: 12, color: '#999' }} />
-              </Space>
-            </Dropdown>
-          )}
+        <Header className="admin-topbar">
+          <Typography.Text className="admin-breadcrumb">
+            运营 / {items.flatMap((group) => (group as { children?: { key: string; label: string }[] }).children ?? []).find((item) => item.key === selectedKey)?.label ?? '数据看板'}
+          </Typography.Text>
+          <Space size={18}>
+            <Input className="admin-search" prefix={<SearchOutlined />} placeholder="搜索版本号 / 单号 / 模型" />
+            {user && <Dropdown menu={{ items: [{ key: 'logout', icon: <LogoutOutlined />, label: '退出登录' }], onClick: signOut }}>
+              <Avatar style={{ background: '#e6f4f1', color: '#0b7c6e', cursor: 'pointer' }}>{user.displayName.slice(0, 1)}</Avatar>
+            </Dropdown>}
+          </Space>
         </Header>
-        <Content style={{ padding: 24, overflow: 'auto' }}>
-          <Outlet />
-        </Content>
+        <Content className="admin-content"><Outlet /></Content>
       </Layout>
     </Layout>
   );

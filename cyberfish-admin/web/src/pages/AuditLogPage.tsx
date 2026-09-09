@@ -71,7 +71,9 @@ export function AuditLogPage() {
   );
 
   return (
-    <Card title="操作日志" extra={<Button icon={<ReloadOutlined />} onClick={() => refetch()} />}>
+    <div>
+      <div className="page-heading"><div><h1>操作日志</h1><p>所有写操作均记录在案，支持按操作人、模块和结果筛选</p></div><Button icon={<ReloadOutlined />} onClick={() => refetch()}>刷新</Button></div>
+      <Card>
       <Space style={{ marginBottom: 16 }} wrap>
         <Input.Search
           placeholder="搜索操作人 / 对象"
@@ -164,6 +166,7 @@ export function AuditLogPage() {
           </>
         )}
       </Drawer>
-    </Card>
+      </Card>
+    </div>
   );
 }

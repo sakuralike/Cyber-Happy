@@ -55,6 +55,8 @@ import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPipeline
 import com.cyberfish.app.ui.components.StatusChip
+import com.cyberfish.app.ui.theme.ChartPalette
+import com.cyberfish.app.ui.theme.CameraPanel
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 
@@ -130,10 +132,10 @@ fun CameraPreviewCard(
     val status = monitorStatus(monitoring, permissionGranted, permissionDenied, captureStatus, metrics?.detection)
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("camera-preview"),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = CameraPanel),
+        shape = RoundedCornerShape(20.dp),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(264.dp).clip(RoundedCornerShape(22.dp))) {
+        Box(modifier = Modifier.fillMaxWidth().height(264.dp).clip(RoundedCornerShape(20.dp))) {
             if (permissionGranted) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -141,7 +143,7 @@ fun CameraPreviewCard(
                     update = { previewView = it },
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
+                Box(Modifier.fillMaxSize().background(CameraPanel))
             }
 
             DetectionOverlay(metrics?.detection)
@@ -173,8 +175,8 @@ private fun DetectionOverlay(detection: Detection?) {
     Canvas(modifier = Modifier.fillMaxSize()) {
         val baselineY = size.height * 0.66f
         val thresholdY = size.height * 0.45f
-        drawLine(Color(0xFF1FD3A3), Offset(0f, baselineY), Offset(size.width, baselineY), 3f, StrokeCap.Round)
-        drawLine(Color(0xFFFFB74D), Offset(0f, thresholdY), Offset(size.width, thresholdY), 2f, StrokeCap.Round)
+        drawLine(ChartPalette.TracePrimary, Offset(0f, baselineY), Offset(size.width, baselineY), 3f, StrokeCap.Round)
+        drawLine(ChartPalette.TraceWarning, Offset(0f, thresholdY), Offset(size.width, thresholdY), 2f, StrokeCap.Round)
         detection?.let {
             val bounds = it.bounds
             val left = bounds.left * size.width
@@ -182,7 +184,7 @@ private fun DetectionOverlay(detection: Detection?) {
             val width = (bounds.right - bounds.left) * size.width
             val height = (bounds.bottom - bounds.top) * size.height
             drawRect(
-                color = Color(0xFF49E5C0),
+                color = ChartPalette.TraceAccent,
                 topLeft = Offset(left, top),
                 size = Size(width, height),
                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),

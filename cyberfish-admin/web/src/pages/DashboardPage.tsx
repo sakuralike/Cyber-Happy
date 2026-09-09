@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Card, Col, Row, Statistic, DatePicker, Select, Space, Typography, Spin, Empty } from 'antd';
-import { ArrowUpOutlined, ArrowDownOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Col, Row, Statistic, DatePicker, Select, Space, Typography, Spin, Empty, Button } from 'antd';
+import { ArrowUpOutlined, ArrowDownOutlined, ReloadOutlined, DownloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -25,12 +25,12 @@ import type { DashboardQuery } from '../api/dashboard';
 import { ROOT_CAUSE_MAP } from '../utils/constants';
 import { formatNumber, formatPercent } from '../utils/format';
 
-const PIE_COLORS = ['#1677ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96', '#a0d911'];
+const PIE_COLORS = ['#0B7C6E', '#2E6BFF', '#E8930C', '#DC2F3C', '#14B8A6', '#6B6F7E'];
 
 function DeltaText({ delta, unit }: { delta: number; unit: string }) {
   if (delta === 0) return <span style={{ color: '#999' }}>持平</span>;
   const up = delta > 0;
-  const color = unit === '%' && delta > 0 ? '#f5222d' : up ? '#52c41a' : '#f5222d';
+  const color = unit === '%' && delta > 0 ? '#DC2F3C' : up ? '#0E9F6E' : '#DC2F3C';
   return (
     <span style={{ color, fontSize: 13 }}>
       {up ? <ArrowUpOutlined /> : <ArrowDownOutlined />} {formatPercent(Math.abs(delta))}
@@ -75,11 +75,11 @@ export function DashboardPage() {
 
   const cards = overviewQ.data?.cards ?? [];
   const cardColor = (key: string) => {
-    if (key === 'misreportRate') return '#f5222d';
-    if (key === 'dau') return '#1677ff';
-    if (key === 'mau') return '#722ed1';
-    if (key === 'newUsers') return '#52c41a';
-    return '#faad14';
+    if (key === 'misreportRate') return '#DC2F3C';
+    if (key === 'dau') return '#0B7C6E';
+    if (key === 'mau') return '#2E6BFF';
+    if (key === 'newUsers') return '#0E9F6E';
+    return '#E8930C';
   };
 
   const trendData = trendQ.data?.series ?? [];
@@ -92,8 +92,21 @@ export function DashboardPage() {
     value: r.count,
   }));
 
+  const exportReport = () => {
+    const rows = [['指标', '数值', '环比'], ...cards.map((card) => [card.label, card.unit === '%' ? `${(card.value * 100).toFixed(2)}%` : `${formatNumber(card.value)}${card.unit}`, formatPercent(card.delta)])];
+    const csv = `\uFEFF${rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n')}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `数据看板_${dayjs().format('YYYYMMDD_HHmmss')}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <div>
+      <div className="page-heading"><div><h1>数据看板</h1><p>DAU / MAU · 模型调用 · 误报率 · T+0 准实时数据</p></div><Space><Button type="primary" icon={<DownloadOutlined />} onClick={exportReport}>导出报表</Button></Space></div>
+      <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {/* 筛选栏 */}
       <Card size="small">
         <Space wrap>
@@ -154,8 +167,8 @@ export function DashboardPage() {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="dau" name="DAU" stroke="#1677ff" dot={false} />
-                  <Line type="monotone" dataKey="newUsers" name="新增用户" stroke="#52c41a" dot={false} />
+                  <Line type="monotone" dataKey="dau" name="DAU" stroke="#0B7C6E" dot={false} />
+                  <Line type="monotone" dataKey="newUsers" name="新增用户" stroke="#2E6BFF" dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </Card>
@@ -169,8 +182,8 @@ export function DashboardPage() {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="modelCalls" name="模型调用" stroke="#faad14" dot={false} />
-                  <Line type="monotone" dataKey="triggers" name="触发量" stroke="#f5222d" dot={false} />
+                  <Line type="monotone" dataKey="modelCalls" name="模型调用" stroke="#E8930C" dot={false} />
+                  <Line type="monotone" dataKey="triggers" name="触发量" stroke="#DC2F3C" dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </Card>
@@ -228,7 +241,7 @@ export function DashboardPage() {
                     <XAxis type="number" />
                     <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11 }} />
                     <Tooltip />
-                    <Bar dataKey="value" name="数量" fill="#f5222d" />
+                    <Bar dataKey="value" name="数量" fill="#DC2F3C" />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -266,6 +279,7 @@ export function DashboardPage() {
           </Col>
         </Row>
       </Spin>
-    </Space>
+      </Space>
+    </div>
   );
 }

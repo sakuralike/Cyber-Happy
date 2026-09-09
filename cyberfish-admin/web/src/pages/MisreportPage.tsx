@@ -202,17 +202,18 @@ export function MisreportPage() {
   );
 
   return (
-    <Card
-      title="用户误报管理"
+    <div>
+      <div className="page-heading">
+        <div><h1>用户误报复核</h1><p>待处理 → 复核中 → 已确认 / 已驳回 → 已解决 · 可批量流转</p></div>
+        <Space><Button type="primary" onClick={() => setBatchModal({ action: 'REVIEW' })} disabled={selectedIds.length === 0 || !hasPerm('misreport:review')}>批量确认</Button><Button onClick={doExport} disabled={!hasPerm('misreport:export')} icon={<DownloadOutlined />}>导出 CSV</Button></Space>
+      </div>
+      <Card
       extra={
         <Space>
-          <Button icon={<DownloadOutlined />} onClick={doExport} disabled={!hasPerm('misreport:export')}>
-            导出 CSV
-          </Button>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()} />
         </Space>
       }
-    >
+      >
       <Space style={{ marginBottom: 16 }} wrap>
         <Input.Search
           placeholder="搜索单号 / 用户 / 设备 / 描述"
@@ -394,7 +395,8 @@ export function MisreportPage() {
           )}
         </Form>
       </Modal>
-    </Card>
+      </Card>
+    </div>
   );
 }
 

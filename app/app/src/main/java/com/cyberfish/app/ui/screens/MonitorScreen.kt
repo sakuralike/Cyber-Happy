@@ -73,7 +73,7 @@ fun MonitorScreen(
         monitoring = granted
     }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ScreenTitle("实时监控", Icons.Filled.Settings, "打开设置", onOpenSettings) }
+        item { ScreenTitle("实时监控", "漂浮稳定  ·  已运行 12:04", actionIcon = Icons.Filled.Settings, actionDescription = "打开设置", onAction = onOpenSettings) }
         item {
             CameraPreviewCard(
                 monitoring = monitoring,
@@ -129,8 +129,8 @@ fun MonitorScreen(
                     else permissionLauncher.launch(Manifest.permission.CAMERA)
                 },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).height(56.dp).testTag("monitor-control"),
-                shape = RoundedCornerShape(18.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (monitoring && permissionGranted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface, contentColor = MaterialTheme.colorScheme.surface),
             ) {
                 Icon(if (monitoring && permissionGranted) Icons.Filled.Close else Icons.Filled.PlayArrow, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
