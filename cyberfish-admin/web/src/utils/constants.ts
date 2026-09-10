@@ -156,6 +156,7 @@ export const AUDIT_MODULE_MAP: ColorMap<AuditModule> = {
   MODEL: { label: '模型', color: COLORS.purple },
   MISREPORT: { label: '误报', color: COLORS.danger },
   DASHBOARD: { label: '看板', color: COLORS.default },
+  SITE_CONFIG: { label: '系统设置', color: COLORS.primary },
 };
 
 export const AUDIT_ACTION_MAP: ColorMap<AuditAction> = {

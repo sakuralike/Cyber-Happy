@@ -10,8 +10,8 @@ import { MisreportPage } from './pages/MisreportPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { AdminPage } from './pages/AdminPage';
 import { HomePage } from './pages/HomePage';
-import { SiteConfigPage } from './pages/SiteConfigPage';
 import { AccountPage } from './pages/AccountPage';
+import { SystemSettingsPage } from './pages/system-settings/SystemSettingsPage';
 
 export default function App() {
   return (
@@ -76,14 +76,9 @@ export default function App() {
                 </RequirePerm>
               }
             />
-            <Route
-              path="/site-config"
-              element={
-                <RequirePerm perm="siteConfig:write">
-                  <SiteConfigPage />
-                </RequirePerm>
-              }
-            />
+            <Route path="/site-config" element={<Navigate to="/settings/site" replace />} />
+            <Route path="/settings" element={<RequirePerm perm="siteConfig:read"><SystemSettingsPage /></RequirePerm>} />
+            <Route path="/settings/:section" element={<RequirePerm perm="siteConfig:read"><SystemSettingsPage /></RequirePerm>} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Routes>

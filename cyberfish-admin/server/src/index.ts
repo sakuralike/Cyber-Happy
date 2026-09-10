@@ -2,6 +2,7 @@ import { buildApp } from './app';
 import { config } from './config';
 import { logger } from './lib/logger';
 import { startDispatchWorker, stopDispatchWorker } from './jobs/dispatch-worker';
+import { startConfigPublisher, stopConfigPublisher } from './jobs/config-publisher';
 import { prisma } from './lib/prisma';
 
 async function main(): Promise<void> {
@@ -18,10 +19,12 @@ async function main(): Promise<void> {
 
   // 模型下发调度器
   startDispatchWorker();
+  startConfigPublisher();
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`收到 ${signal}，正在优雅退出...`);
     stopDispatchWorker();
+    stopConfigPublisher();
     try {
       await app.close();
       await prisma.$disconnect();

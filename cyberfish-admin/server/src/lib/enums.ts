@@ -144,6 +144,7 @@ export const AuditModule = {
   MODEL: 'MODEL',
   MISREPORT: 'MISREPORT',
   DASHBOARD: 'DASHBOARD',
+  SITE_CONFIG: 'SITE_CONFIG',
 } as const;
 export type AuditModule = (typeof AuditModule)[keyof typeof AuditModule];
 
@@ -192,3 +193,38 @@ export const EventType = {
   CRASH: 'CRASH',
 } as const;
 export type EventType = (typeof EventType)[keyof typeof EventType];
+
+export const ConfigScope = {
+  SITE: 'SITE',
+  DOWNLOAD: 'DOWNLOAD',
+  BANNER: 'BANNER',
+  LANDING: 'LANDING',
+  USER_PAGE: 'USER_PAGE',
+} as const;
+export type ConfigScope = (typeof ConfigScope)[keyof typeof ConfigScope];
+
+export const DownloadMode = { UPLOAD: 'UPLOAD', URL: 'URL' } as const;
+export type DownloadMode = (typeof DownloadMode)[keyof typeof DownloadMode];
+
+export const LinkType = { INTERNAL: 'INTERNAL', EXTERNAL: 'EXTERNAL', NONE: 'NONE' } as const;
+export type LinkType = (typeof LinkType)[keyof typeof LinkType];
+
+export const RevisionStatus = {
+  DRAFT: 'DRAFT',
+  PENDING: 'PENDING',
+  PUBLISHED: 'PUBLISHED',
+  ROLLED_BACK: 'ROLLED_BACK',
+} as const;
+export type RevisionStatus = (typeof RevisionStatus)[keyof typeof RevisionStatus];
+
+export const ModuleType = {
+  HERO: 'HERO',
+  FEATURE_GRID: 'FEATURE_GRID',
+  SCENE_STATS: 'SCENE_STATS',
+  TESTIMONIAL: 'TESTIMONIAL',
+  FAQ: 'FAQ',
+  CTA: 'CTA',
+  FOOTER: 'FOOTER',
+  CUSTOM: 'CUSTOM',
+} as const;
+export type ModuleType = (typeof ModuleType)[keyof typeof ModuleType];

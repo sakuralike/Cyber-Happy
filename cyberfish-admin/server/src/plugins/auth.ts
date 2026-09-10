@@ -12,16 +12,16 @@ const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
     'appVersion:read', 'appVersion:write', 'appVersion:publish', 'appVersion:delete',
     'model:read', 'model:write', 'model:dispatch', 'model:rollback',
     'misreport:read', 'misreport:review', 'misreport:assign', 'misreport:export',
-    'dashboard:read', 'auditLog:read', 'admin:read', 'admin:write', 'siteConfig:write', 'file:read', 'file:upload',
+    'dashboard:read', 'auditLog:read', 'admin:read', 'admin:write', 'siteConfig:read', 'siteConfig:write', 'siteConfig:publish', 'file:read', 'file:upload',
   ],
   OPERATOR: [
     'appVersion:read', 'appVersion:write', 'appVersion:publish',
     'model:read', 'model:write', 'model:dispatch',
     'misreport:read', 'misreport:review', 'misreport:assign', 'misreport:export',
-    'dashboard:read', 'auditLog:read', 'file:read', 'file:upload',
+    'dashboard:read', 'auditLog:read', 'siteConfig:read', 'siteConfig:write', 'file:read', 'file:upload',
   ],
-  REVIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'misreport:review', 'dashboard:read', 'file:read'],
-  VIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'dashboard:read', 'file:read'],
+  REVIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'misreport:review', 'dashboard:read', 'siteConfig:read', 'siteConfig:publish', 'file:read'],
+  VIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'dashboard:read', 'siteConfig:read', 'file:read'],
 };
 
 export function permissionsOf(role: AdminRole): string[] {
@@ -39,7 +39,7 @@ const PUBLIC_PATHS = [
 
 function isPublic(url: string): boolean {
   const path = url.split('?')[0] ?? url;
-  return PUBLIC_PATHS.includes(path);
+  return PUBLIC_PATHS.includes(path) || path.startsWith('/api/v1/public/');
 }
 
 const authPlugin: FastifyPluginAsync = async (app) => {

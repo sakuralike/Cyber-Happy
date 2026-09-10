@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { getToken, setToken, setUser, getUser, clearAuth } from '../api/client';
 import * as authApi from '../api/auth';
 import type { AdminRole } from '../api/types';
@@ -31,6 +31,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = getUser();
     return u && typeof u.id === 'string' ? (u as unknown as AuthUser) : null;
   });
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    void authApi.fetchMe().then((nextUser) => {
+      if (cancelled) return;
+      setUser(nextUser);
+      setUserState(nextUser);
+    }).catch(() => {
+      if (cancelled) return;
+      clearAuth();
+      setTokenState(null);
+      setUserState(null);
+    });
+    return () => { cancelled = true; };
+  }, [token]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

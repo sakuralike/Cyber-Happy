@@ -2,13 +2,24 @@ import { useState } from 'react';
 import { Checkbox, Form, Input, Button, Typography, message } from 'antd';
 import { CheckCircleFilled, LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../store/auth';
-import { BrandMark } from '../components/BrandMark';
+import { SiteBrandMark } from '../components/SiteBrandMark';
+import { getPublicConfigAll } from '../api/systemSettings';
+import { useConfigStream } from '../hooks/useConfigStream';
 
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const { data: publicConfig } = useQuery({ queryKey: ['public-config'], queryFn: getPublicConfigAll });
+  useConfigStream(['USER_PAGE', 'SITE']);
+  const userPage = publicConfig?.scopes.USER_PAGE ?? {};
+  const site = publicConfig?.scopes.SITE ?? {};
+  const brandTitle = String(userPage['auth.brandTitle'] ?? '鱼漂识别的运营与技术中枢');
+  const brandSubtitle = String(userPage['auth.brandSubtitle'] ?? '一个后台，管住 APP 发版、YOLO 模型下发、误报闭环与数据观测。');
+  const brandFooter = String(userPage['auth.footer'] ?? '2026 赛博鱼乐 · 仅限授权账号访问');
+  const backgroundFileId = userPage['auth.bgImageFileId'];
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true);
@@ -25,18 +36,18 @@ export function LoginPage() {
 
   return (
     <main className="login-page">
-      <section className="login-brand-panel">
-        <div className="landing-brand"><BrandMark size={25} />赛博鱼乐</div>
+      <section className="login-brand-panel" style={backgroundFileId ? { backgroundImage: `linear-gradient(rgba(7,94,84,.82), rgba(7,94,84,.9)), url(/api/v1/public/assets/${backgroundFileId})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}>
+        <div className="landing-brand"><SiteBrandMark fileId={site['site.logoFileId']} size={25} />{String(site['site.name'] ?? '赛博鱼乐')}</div>
         <div>
-          <h1>鱼漂识别的<br />运营与技术中枢</h1>
-          <p>一个后台，管住 APP 发版、YOLO 模型下发、误报闭环与数据观测。</p>
+          <h1>{brandTitle}</h1>
+          <p>{brandSubtitle}</p>
           <div className="login-benefits">
             <div className="login-benefit"><CheckCircleFilled />APP 版本自动发版与灰度上架</div>
             <div className="login-benefit"><CheckCircleFilled />YOLO 模型灰度下发与一键回滚</div>
             <div className="login-benefit"><CheckCircleFilled />误报复核闭环，沉淀增量训练集</div>
           </div>
         </div>
-        <div className="login-copyright">2026 赛博鱼乐 · 仅限内网 / VPN 访问</div>
+        <div className="login-copyright">{brandFooter}</div>
       </section>
       <section className="login-form-panel">
         <div className="login-form-wrap">
