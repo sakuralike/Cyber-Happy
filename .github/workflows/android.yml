@@ -40,5 +40,6 @@ jobs:
           cache: npm
           cache-dependency-path: cyberfish-admin/package-lock.json
       - run: npm ci
+      - run: npm run db:generate --workspace server
       - run: npm run typecheck
       - run: npm run build
