@@ -39,6 +39,6 @@ class MainActivityTest {
         activityRule.onNodeWithText("未配置服务地址或 APP 令牌").performScrollTo().assertIsDisplayed()
 
         activityRule.onNodeWithContentDescription("我的").performClick()
-        activityRule.onNodeWithText("暂无内容").assertIsDisplayed()
+        activityRule.onNodeWithText("数据导出").assertIsDisplayed()
     }
 }

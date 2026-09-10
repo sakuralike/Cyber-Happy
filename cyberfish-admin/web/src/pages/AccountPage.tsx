@@ -1,9 +1,13 @@
-import { useState } from 'react';
-import { Avatar, Button, Input, Switch } from 'antd';
+import { useEffect, useState } from 'react';
+import { Avatar, Button, Input, Switch, message, Spin } from 'antd';
 import { CheckCircleOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../store/auth';
 import { BrandMark } from '../components/BrandMark';
+import { useAuth } from '../store/auth';
+import * as authApi from '../api/auth';
+import * as misreportApi from '../api/misreport';
+import type { Misreport, MisreportStatus } from '../api/types';
 
 type AccountSection = 'overview' | 'profile' | 'reports' | 'notifications' | 'security';
 
@@ -15,33 +19,29 @@ const nav: Array<{ key: AccountSection; label: string; icon: React.ReactNode }> 
   { key: 'security', label: '安全设置', icon: <LockOutlined /> },
 ];
 
-const reports = [
-  ['MR20260909001', '误报', '复核中', '09-09 08:41', '预计 48 小时内完成', 'info'],
-  ['MR20260908047', '漏报', '已确认', '09-08 21:16', '已采纳 · 纳入 v4 训练集', 'success'],
-  ['MR20260907098', '误识别', '已驳回', '09-07 19:38', '画面模糊无法判定', 'muted'],
-  ['MR20260906033', '误报', '已解决', '09-06 22:47', '已采纳 · v3 模型已修复该场景', 'success'],
-];
+const statusText: Record<MisreportStatus, string> = {
+  PENDING: '待处理', REVIEWING: '复核中', CONFIRMED: '已确认', REJECTED: '已驳回', RESOLVED: '已解决', CLOSED: '已关闭',
+};
 
 export function AccountPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const navigate = useNavigate();
   const [section, setSection] = useState<AccountSection>('overview');
-  const [nickname, setNickname] = useState('陈钓友');
-  const [email, setEmail] = useState('chen@example.com');
-  const [methods, setMethods] = useState(['野钓']);
+  const meQuery = useQuery({ queryKey: ['auth', 'me'], queryFn: authApi.fetchMe, enabled: !!user });
+  const reportsQuery = useQuery({ queryKey: ['account', 'misreports'], queryFn: () => misreportApi.listMisreports({ page: 1, pageSize: 20 }), enabled: !!user });
+  const currentUser = meQuery.data ?? user;
+  const reports = reportsQuery.data?.list ?? [];
 
   return (
     <div className="account-page">
-      <header className="account-topbar"><a className="landing-brand" href="#/"><BrandMark size={22} />赛博鱼乐</a><nav><a href="#/">返回官网</a><a href="#/">使用帮助</a><a href="#/">意见反馈</a><strong style={{ color: '#0b7c6e' }}>{user?.displayName ?? '陈钓友'}</strong><Button type="primary" onClick={async () => { await logout(); navigate('/'); }}>退出登录</Button></nav></header>
+      <header className="account-topbar"><a className="landing-brand" href="#/"><BrandMark size={22} />赛博鱼乐</a><nav><a href="#/">返回官网</a><a href="#/">使用帮助</a><a href="#/">意见反馈</a><strong style={{ color: '#0b7c6e' }}>{currentUser?.displayName ?? '当前用户'}</strong><Button type="primary" onClick={async () => { await logout(); navigate('/'); }}>退出登录</Button></nav></header>
       <div className="account-layout">
-        <aside>
-          <div className="account-sidebar-card"><div className="account-avatar"><Avatar size={54}>陈</Avatar><div><strong>陈钓友</strong><small>138****6688</small></div></div><div className="account-nav">{nav.map((item) => <button key={item.key} className={section === item.key ? 'active' : ''} onClick={() => setSection(item.key)}>{item.icon}{item.label}</button>)}<button disabled><LockOutlined />设备管理</button></div></div>
-        </aside>
+        <aside><div className="account-sidebar-card"><div className="account-avatar"><Avatar size={54}>{(currentUser?.displayName ?? '用').slice(0, 1)}</Avatar><div><strong>{currentUser?.displayName ?? '当前用户'}</strong><small>{currentUser?.email ?? currentUser?.username ?? '-'}</small></div></div><div className="account-nav">{nav.map((item) => <button key={item.key} className={section === item.key ? 'active' : ''} onClick={() => setSection(item.key)}>{item.icon}{item.label}</button>)}<button disabled><LockOutlined />设备管理</button></div></div></aside>
         <main className="account-main">
-          {section === 'overview' && <Overview onProfile={() => setSection('profile')} />}
-          {section === 'profile' && <Profile nickname={nickname} setNickname={setNickname} email={email} setEmail={setEmail} methods={methods} setMethods={setMethods} />}
-          {section === 'reports' && <Reports />}
-          {section === 'notifications' && <Notifications />}
+          {section === 'overview' && <Overview user={currentUser} reports={reports} onProfile={() => setSection('profile')} />}
+          {section === 'profile' && <Profile user={currentUser} onSaved={(nextUser) => { updateUser(nextUser); void meQuery.refetch(); }} />}
+          {section === 'reports' && <Reports reports={reports} loading={reportsQuery.isLoading} />}
+          {section === 'notifications' && <Notifications reports={reports} />}
           {section === 'security' && <Security />}
         </main>
       </div>
@@ -51,18 +51,27 @@ export function AccountPage() {
 
 function AccountHeader({ title, detail }: { title: string; detail: string }) { return <header><h1>{title}</h1><p>{detail}</p></header>; }
 
-function Overview({ onProfile }: { onProfile: () => void }) {
-  return <><AccountHeader title="账号概览" detail="下午好，陈钓友 · 上次出钓 3 天前 · 模型已是最新 v3" /><div className="account-banner"><div><strong>本周已识别 1,284 次漂相</strong><p>比上周多 18%，其中顿口占比 46%</p></div><Button onClick={onProfile}>查看出钓档案</Button></div><div className="account-stat-grid"><div className="account-stat"><span>累计出钓</span><strong>36 次</strong><small>近 30 天 6 次</small></div><div className="account-stat"><span>累计识别</span><strong>12,846 次</strong><small className="account-status">+18% 本周</small></div><div className="account-stat"><span>提交误报</span><strong>17 条</strong><small className="account-status">14 条已采纳</small></div><div className="account-stat"><span>当前模型</span><strong>v3 · INT8</strong><small>已是最新版本</small></div></div><div className="account-panel"><h2>最近动态</h2><div className="activity-row"><span>出钓记录已同步 · 塘口模式 · 识别 84 次</span><time>09-08 17:20</time></div><div className="activity-row"><span>误报 MR20260908047 复核完成 · 已确认为漏报</span><time>09-08 21:16</time></div><div className="activity-row"><span>新模型 v3 已自动下载 · 识别准确率提升 1.2%</span><time>09-06 09:02</time></div></div></>;
+function Overview({ user, reports, onProfile }: { user: ReturnType<typeof useAuth>['user']; reports: Misreport[]; onProfile: () => void }) {
+  const confirmed = reports.filter((report) => ['CONFIRMED', 'RESOLVED', 'CLOSED'].includes(report.status)).length;
+  return <><AccountHeader title="账号概览" detail={`下午好，${user?.displayName ?? '当前用户'} · 角色 ${user?.role ?? '-'}`} /><div className="account-banner"><div><strong>本地误报复核闭环</strong><p>当前账号可查看提交记录、复核状态与处理结果</p></div><Button onClick={onProfile}>编辑资料</Button></div><div className="account-stat-grid"><div className="account-stat"><span>账号</span><strong>{user?.username ?? '-'}</strong><small>{user?.role ?? '-'}</small></div><div className="account-stat"><span>提交误报</span><strong>{reports.length} 条</strong><small>当前可见记录</small></div><div className="account-stat"><span>已处理</span><strong>{confirmed} 条</strong><small className="account-status">已确认 / 已解决</small></div><div className="account-stat"><span>邮箱</span><strong>{user?.email ? '已填写' : '未填写'}</strong><small>{user?.email ?? '可在个人资料中补充'}</small></div></div><div className="account-panel"><h2>最近误报动态</h2>{reports.slice(0, 3).map((report) => <div className="activity-row" key={report.id}><span>{report.reportNo} · {report.userNote || '用户反馈'} · {statusText[report.status]}</span><time>{new Date(report.reportedAt).toLocaleString('zh-CN')}</time></div>)}{reports.length === 0 && <div className="empty-state">暂无误报记录</div>}</div></>;
 }
 
-function Profile({ nickname, setNickname, email, setEmail, methods, setMethods }: { nickname: string; setNickname: (value: string) => void; email: string; setEmail: (value: string) => void; methods: string[]; setMethods: (value: string[]) => void }) {
-  const allMethods = ['野钓', '夜钓', '塘口'];
-  const toggleMethod = (method: string) => setMethods(methods.includes(method) ? methods.filter((value) => value !== method) : [...methods, method]);
-  return <><AccountHeader title="个人资料" detail="资料仅用于账号识别与找回，不会公开展示" /><div className="account-panel"><div className="account-form"><label>昵称</label><Input value={nickname} onChange={(event) => setNickname(event.target.value)} /><span className="hint">2-12 个字符，修改后 30 天内不可再次修改</span><label>手机号</label><Input value="138****6688" readOnly style={{ background: '#f7f8fa' }} /><span className="hint">已验证 · 更换手机号需重新验证</span><label>邮箱</label><Input value={email} onChange={(event) => setEmail(event.target.value)} /><span className="hint">用于接收重要通知，未验证</span><label>常用钓法</label><div className="account-chips">{allMethods.map((method) => <button type="button" key={method} className={`account-chip ${methods.includes(method) ? 'active' : ''}`} onClick={() => toggleMethod(method)}>{method}</button>)}</div><span className="hint" /><div><Button type="primary">保存修改</Button><Button type="text" style={{ marginLeft: 12 }}>重置</Button></div></div></div><div className="account-panel" style={{ marginTop: 20 }}><h2>误报记录 <span style={{ float: 'right', color: '#0b7c6e', fontSize: 13 }}>共 17 条 · 查看全部</span></h2><div style={{ overflowX: 'auto' }}><table className="account-table"><thead><tr><th>单号</th><th>类型</th><th>状态</th><th>提交时间</th><th>复核结果</th></tr></thead><tbody>{reports.map((row) => <tr key={row[0]}>{row.slice(0, 2).map((value) => <td key={value}>{value}</td>)}<td className={`account-status ${row[5]}`}>{row[2]}</td><td>{row[3]}</td><td>{row[4]}</td></tr>)}</tbody></table></div></div></>;
+function Profile({ user, onSaved }: { user: ReturnType<typeof useAuth>['user']; onSaved: (user: NonNullable<ReturnType<typeof useAuth>['user']>) => void }) {
+  const [displayName, setDisplayName] = useState(user?.displayName ?? '');
+  const [email, setEmail] = useState(user?.email ?? '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDisplayName(user?.displayName ?? ''); setEmail(user?.email ?? ''); }, [user]);
+  const save = async () => {
+    setSaving(true);
+    try { const updated = await authApi.updateMe({ displayName, email: email || null }); message.success('资料已保存'); onSaved(updated); }
+    catch (error) { message.error((error as Error).message); }
+    finally { setSaving(false); }
+  };
+  return <><AccountHeader title="个人资料" detail="资料仅用于账号识别与找回，不会公开展示" /><div className="account-panel"><div className="account-form"><label>昵称</label><Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /><span className="hint">当前登录账号显示名</span><label>用户名</label><Input value={user?.username ?? ''} readOnly style={{ background: '#f7f8fa' }} /><span className="hint">用户名不可修改</span><label>邮箱</label><Input value={email} onChange={(event) => setEmail(event.target.value)} /><span className="hint">用于账号通知，留空表示未填写</span><span /><span /><div><Button type="primary" loading={saving} onClick={save}>保存修改</Button></div></div></div></>;
 }
 
-function Reports() { return <><AccountHeader title="误报记录" detail="查看每次反馈的复核进度与结果" /><div className="account-panel"><div style={{ overflowX: 'auto' }}><table className="account-table"><thead><tr><th>单号</th><th>类型</th><th>状态</th><th>提交时间</th><th>复核结果</th></tr></thead><tbody>{reports.map((row) => <tr key={row[0]}>{row.slice(0, 2).map((value) => <td key={value}>{value}</td>)}<td className={`account-status ${row[5]}`}>{row[2]}</td><td>{row[3]}</td><td>{row[4]}</td></tr>)}</tbody></table></div></div></>; }
+function Reports({ reports, loading }: { reports: Misreport[]; loading: boolean }) { return <><AccountHeader title="误报记录" detail="查看每次反馈的复核进度与结果" /><div className="account-panel">{loading ? <Spin /> : <div style={{ overflowX: 'auto' }}><table className="account-table"><thead><tr><th>单号</th><th>类型</th><th>状态</th><th>提交时间</th><th>复核结果</th></tr></thead><tbody>{reports.map((report) => <tr key={report.id}><td>{report.reportNo}</td><td>{report.reportType}</td><td className="account-status">{statusText[report.status]}</td><td>{new Date(report.reportedAt).toLocaleString('zh-CN')}</td><td>{report.resolution || report.reviewerNote || '等待复核'}</td></tr>)}</tbody></table>{reports.length === 0 && <div className="empty-state">暂无误报记录</div>}</div>}</div></>; }
 
-function Notifications() { const notices = [['误报复核结果已更新', '你提交的 MR20260909001 已确认为误触发，感谢反馈', '2 小时前'], ['新模型 v4 可用', '识别准确率提升 1.2%，建议在 Wi-Fi 下下载（68MB）', '昨天 20:14'], ['登录提醒', '你的账号于 09-07 19:22 在华为 Mate60 上登录', '09-07 19:22'], ['出钓周报已生成', '上周出钓 2 次，识别 326 次，顿口占比 51%', '09-06 08:00']]; return <><AccountHeader title="消息通知" detail="误报复核结果、模型更新与账号安全提醒 · 未读 2 条" /><div className="account-panel"><h2>全部通知 <Button type="link" style={{ float: 'right' }}>全部已读</Button></h2>{notices.map(([title, detail, time], index) => <div className="notification-row" key={title}><div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>{index < 2 && <span style={{ width: 8, height: 8, marginTop: 7, borderRadius: '50%', background: '#0b7c6e' }} />}<div><strong style={{ color: '#2c2c34' }}>{title}</strong><div style={{ color: '#8e91a0', fontSize: 13, marginTop: 4 }}>{detail}</div></div></div><time>{time}</time></div>)}</div><div className="account-panel" style={{ marginTop: 20 }}><h2>状态规范 · 空状态与加载状态</h2><div className="empty-state">暂无误报记录<br /><Button style={{ marginTop: 16 }}>提交误报</Button></div></div></>; }
+function Notifications({ reports }: { reports: Misreport[] }) { return <><AccountHeader title="消息通知" detail="误报复核结果、模型更新与账号安全提醒" /><div className="account-panel"><h2>全部通知</h2>{reports.slice(0, 4).map((report) => <div className="notification-row" key={report.id}><div><strong>{report.reportNo} 复核状态更新</strong><div className="hint">当前状态：{statusText[report.status]}</div></div><time>{new Date(report.reportedAt).toLocaleString('zh-CN')}</time></div>)}{reports.length === 0 && <div className="empty-state">暂无通知</div>}</div></>; }
 
-function Security() { return <><AccountHeader title="安全设置" detail="管理登录保护与数据共享偏好" /><div className="account-panel"><h2>安全设置</h2><div className="security-row"><div><strong>两步验证</strong><div className="hint">登录新设备时需输入短信验证码，建议开启</div></div><Switch defaultChecked /></div><div className="security-row"><div><strong>帮助改进识别</strong><div className="hint">误报片段在 Wi-Fi 下匿名上传，用于模型迭代</div></div><Switch /></div><div className="security-row"><div><strong>匿名使用统计</strong><div className="hint">分享匿名使用数据（不含画面），帮助我们改进产品</div></div><Switch defaultChecked /></div><div className="security-row"><div><strong>修改密码</strong><div className="hint">上次修改于 2026-06-12 · 建议每 6 个月更换一次</div></div><Button>修改</Button></div></div></>; }
+function Security() { return <><AccountHeader title="安全设置" detail="管理当前账号的登录保护与通知偏好" /><div className="account-panel"><h2>安全设置</h2><div className="security-row"><div><strong>登录提醒</strong><div className="hint">账号登录行为会写入审计日志</div></div><Switch defaultChecked /></div><div className="security-row"><div><strong>修改密码</strong><div className="hint">请联系管理员执行密码重置</div></div><Button disabled>联系管理员</Button></div></div></>; }

@@ -10,6 +10,8 @@ export interface LoginResult {
     displayName: string;
     role: AdminRole;
     permissions: string[];
+    email?: string | null;
+    status?: string;
   };
 }
 
@@ -23,4 +25,8 @@ export async function logout(): Promise<{ loggedOut: boolean }> {
 
 export async function fetchMe(): Promise<LoginResult['user']> {
   return http.get('/auth/me') as Promise<LoginResult['user']>;
+}
+
+export async function updateMe(input: { displayName: string; email?: string | null }): Promise<LoginResult['user']> {
+  return http.patch('/auth/me', input) as Promise<LoginResult['user']>;
 }

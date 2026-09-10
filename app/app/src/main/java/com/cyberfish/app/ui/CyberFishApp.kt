@@ -22,6 +22,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import android.content.Intent
 import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.data.CyberFishRepository
 import com.cyberfish.app.data.model.FishRecord
@@ -69,6 +71,7 @@ fun CyberFishApp() {
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     val selectedTab = AppTab.valueOf(selectedTabName)
     LaunchedEffect(repository) {
+        repository.scheduleModelUpdates()
         withContext(Dispatchers.IO) { repository.reportEvent(AppEventType.LAUNCH) }
     }
     val darkTheme = resolveDarkTheme(
@@ -157,7 +160,23 @@ fun CyberFishApp() {
                                 coroutineScope.launch(Dispatchers.IO) { repository.rollbackModel() }
                             },
                         )
-                        AppTab.Profile -> ProfileScreen()
+                        AppTab.Profile -> ProfileScreen(
+                            records = records.orEmpty(),
+                            favoriteSpots = preferences.favoriteSpots,
+                            onFavoriteSpotsChange = { spots -> coroutineScope.launch(Dispatchers.IO) { repository.savePreferences(preferences.copy(favoriteSpots = spots)) } },
+                            onExportRecords = {
+                                coroutineScope.launch {
+                                    val file = withContext(Dispatchers.IO) { repository.exportRecords(records.orEmpty()) }
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                    val share = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/csv"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(Intent.createChooser(share, "导出记录").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                }
+                            },
+                        )
                     }
                 }
             }

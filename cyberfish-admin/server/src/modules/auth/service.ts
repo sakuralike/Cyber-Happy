@@ -6,7 +6,7 @@ import { verifyPassword } from '../../lib/hash';
 import { clientIp } from '../../lib/logger';
 import { writeAudit } from '../../plugins/audit';
 import { permissionsOf } from '../../plugins/auth';
-import type { LoginInput } from './schema';
+import type { LoginInput, UpdateMeInput } from './schema';
 
 const MAX_FAIL = 5;
 const LOCK_MINUTES = 10;
@@ -141,4 +141,15 @@ export async function me(userId: string) {
   });
   if (!user) throw AppError.notFound('账号不存在');
   return { ...user, permissions: permissionsOf(user.role as AdminRole) };
+}
+
+export async function updateMe(userId: string, input: UpdateMeInput) {
+  const found = await prisma.adminUser.findUnique({ where: { id: userId } });
+  if (!found) throw AppError.notFound('账号不存在');
+  const updated = await prisma.adminUser.update({
+    where: { id: userId },
+    data: { displayName: input.displayName, ...(input.email !== undefined ? { email: input.email || null } : {}) },
+    select: { id: true, username: true, displayName: true, role: true, status: true, email: true, lastLoginAt: true, createdAt: true },
+  });
+  return { ...updated, permissions: permissionsOf(updated.role as AdminRole) };
 }

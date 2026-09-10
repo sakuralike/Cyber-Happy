@@ -9,6 +9,8 @@ export interface AuthUser {
   displayName: string;
   role: AdminRole;
   permissions: string[];
+  email?: string | null;
+  status?: string;
 }
 
 interface AuthContextValue {
@@ -16,6 +18,7 @@ interface AuthContextValue {
   token: string | null;
   isAuthed: boolean;
   hasPerm: (perm: string) => boolean;
+  updateUser: (user: AuthUser) => void;
   login: (username: string, password: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
 }
@@ -35,6 +38,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token,
       isAuthed: !!token && !!user,
       hasPerm: (perm) => !!user?.permissions.includes(perm),
+      updateUser: (nextUser) => {
+        setUser(nextUser);
+        setUserState(nextUser);
+      },
       login: async (username, password) => {
         const res = await authApi.login(username, password);
         setToken(res.token);

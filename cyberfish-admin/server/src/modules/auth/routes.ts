@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { parseOrThrow } from '../../lib/zod';
 import { sendOk } from '../../lib/response';
 import { clientIp } from '../../lib/logger';
-import { loginSchema } from './schema';
+import { loginSchema, updateMeSchema } from './schema';
 import * as service from './service';
 
 const routes: FastifyPluginAsync = async (app) => {
@@ -33,6 +33,12 @@ const routes: FastifyPluginAsync = async (app) => {
   /** 当前用户 */
   app.get('/me', { onRequest: [app.authenticate] }, async (request, reply) => {
     const data = await service.me(request.currentUser!.id);
+    return sendOk(reply, data);
+  });
+  app.patch('/me', { onRequest: [app.authenticate] }, async (request, reply) => {
+    const input = parseOrThrow(updateMeSchema, request.body);
+    const data = await service.updateMe(request.currentUser!.id, input);
+    request.auditExtra = { module: 'AUTH', action: 'UPDATE', targetType: 'AdminUser', targetId: data.id, targetName: `${data.username}(${data.displayName})`, after: { displayName: data.displayName, email: data.email } };
     return sendOk(reply, data);
   });
 };

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -25,6 +26,7 @@ data class AppPreferences(
     val confidenceThreshold: Float = 0.62f,
     val inferenceBackend: String = "NNAPI",
     val performanceMode: String = "标准",
+    val favoriteSpots: Set<String> = emptySet(),
 )
 
 private val Context.cyberFishDataStore by preferencesDataStore(name = "cyberfish_preferences")
@@ -49,6 +51,7 @@ class AppPreferencesStore(private val context: Context) {
                 confidenceThreshold = values[Keys.confidenceThreshold] ?: 0.62f,
                 inferenceBackend = values[Keys.inferenceBackend] ?: "NNAPI",
                 performanceMode = values[Keys.performanceMode] ?: "标准",
+                favoriteSpots = values[Keys.favoriteSpots] ?: emptySet(),
             )
         }
 
@@ -67,6 +70,7 @@ class AppPreferencesStore(private val context: Context) {
             values[Keys.confidenceThreshold] = preferences.confidenceThreshold
             values[Keys.inferenceBackend] = preferences.inferenceBackend
             values[Keys.performanceMode] = preferences.performanceMode
+            values[Keys.favoriteSpots] = preferences.favoriteSpots
         }
     }
 
@@ -84,5 +88,6 @@ class AppPreferencesStore(private val context: Context) {
         val confidenceThreshold = floatPreferencesKey("confidence_threshold")
         val inferenceBackend = stringPreferencesKey("inference_backend")
         val performanceMode = stringPreferencesKey("performance_mode")
+        val favoriteSpots = stringSetPreferencesKey("favorite_spots")
     }
 }
