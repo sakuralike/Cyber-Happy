@@ -23,6 +23,8 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.awaitClose
 import androidx.lifecycle.Observer
 import org.json.JSONObject
@@ -79,4 +81,22 @@ class CyberFishRepository(context: Context) {
     suspend fun rollbackModel() = modelRepository.rollback()
 
     fun enqueueModelUpdate() = ModelUpdateWorker.enqueue(appContext)
+
+    fun scheduleModelUpdates() = ModelUpdateWorker.schedule(appContext)
+
+    suspend fun exportRecords(records: List<FishRecord>): java.io.File = withContext(Dispatchers.IO) {
+        val directory = java.io.File(appContext.filesDir, "exports").apply { mkdirs() }
+        val file = java.io.File(directory, "cyberfish-records-${System.currentTimeMillis()}.csv")
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        file.outputStream().bufferedWriter(Charsets.UTF_8).use { writer ->
+            writer.write("id,occurred_at,vertical_displacement_px,jitter_hz,confidence,model_version,is_false_positive,misreport_state")
+            writer.newLine()
+            records.forEach { record ->
+                val values = listOf(record.id.toString(), formatter.format(java.util.Date(record.occurredAtMillis)), record.verticalDisplacementPx.toString(), record.jitterHz.toString(), record.confidence.toString(), record.modelVersion, record.isFalsePositive.toString(), record.misreportState.name)
+                writer.write(values.joinToString(",") { value -> "\"${value.replace("\"", "\"\"")}\"" })
+                writer.newLine()
+            }
+        }
+        file
+    }
 }

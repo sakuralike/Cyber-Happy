@@ -106,7 +106,7 @@ function actionFromMethod(method: string, url: string): AuditAction | null {
 }
 
 /** 不记录审计的路径 */
-const SKIP_AUDIT = ['/health', '/api/v1/health', '/api/v1/auth/me', '/api/v1/audit-logs', '/files/'];
+const SKIP_AUDIT = ['/health', '/api/v1/health', '/api/v1/audit-logs', '/files/'];
 
 /**
  * 自动操作日志：

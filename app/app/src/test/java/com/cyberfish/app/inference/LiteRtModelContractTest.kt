@@ -22,6 +22,17 @@ class LiteRtModelContractTest {
         assertTrue(result.errors.any { it.contains("签名算法") })
     }
 
+    @Test
+    fun `expired signature is rejected`() {
+        val result = LiteRtModelContract.validate(
+            descriptor().copy(signatureExpiresAtMillis = 1_000L),
+            nowMillis = 1_001L,
+        )
+
+        assertFalse(result.isValid)
+        assertTrue(result.errors.any { it.contains("过期") })
+    }
+
     private fun descriptor(framework: String = "LiteRT", signatureAlgorithm: String = "ECDSA_P256_SHA256") = LiteRtModelDescriptor(
         modelVersion = "yolo26n-w8a32-v1",
         architecture = "YOLO26n",

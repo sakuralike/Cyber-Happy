@@ -8,8 +8,9 @@ val needsAsciiBuildDirectory = System.getProperty("os.name").startsWith("Windows
     project.projectDir.path.any { it.code > 127 }
 val appApiBaseUrl = providers.gradleProperty("appApiBaseUrl").orElse("").get()
 val appApiToken = providers.gradleProperty("appApiToken").orElse("").get()
+val modelPublicKeys = providers.gradleProperty("modelPublicKeys").orElse("{}").get()
 
-fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\""
 
 if (needsAsciiBuildDirectory) {
     layout.buildDirectory.set(file("E:/cyberfish-build/${project.name}"))
@@ -35,6 +36,7 @@ android {
         buildConfigField("int", "PLANNED_TARGET_SDK", "34")
         buildConfigField("String", "APP_API_BASE_URL", buildConfigString(appApiBaseUrl))
         buildConfigField("String", "APP_API_TOKEN", buildConfigString(appApiToken))
+        buildConfigField("String", "MODEL_PUBLIC_KEYS", buildConfigString(modelPublicKeys))
         vectorDrawables { useSupportLibrary = true }
     }
 

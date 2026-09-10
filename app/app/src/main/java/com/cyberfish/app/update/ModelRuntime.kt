@@ -15,6 +15,7 @@ object ModelRuntime {
             repository ?: ModelRepository(
                 modelApi = modelApi,
                 storageDir = File(context.applicationContext.filesDir, "models"),
+                signatureVerifier = PublicKeyModelSignatureVerifier(ModelPublicKeys.fromBuildConfig()),
                 allowInsecureHttp = BuildConfig.DEBUG,
             ).also { repository = it }
         }

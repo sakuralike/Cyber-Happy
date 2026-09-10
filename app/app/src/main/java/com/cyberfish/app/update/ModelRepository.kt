@@ -12,6 +12,8 @@ import com.cyberfish.app.network.ModelUpdateInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -22,6 +24,7 @@ import java.security.KeyFactory
 import java.security.PublicKey
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
+import java.security.interfaces.ECPublicKey
 import java.util.Base64
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
@@ -50,17 +53,23 @@ fun interface ModelSignatureVerifier {
 }
 
 class PublicKeyModelSignatureVerifier(
-    private val publicKeys: Map<String, String>,
+    publicKeys: Map<String, String>,
 ) : ModelSignatureVerifier {
+    private val publicKeys = publicKeys.toMap()
+
     override fun verify(file: File, descriptor: LiteRtModelDescriptor): Boolean {
+        if (!file.isFile) return false
         val signatureText = descriptor.signature ?: return false
         val keyText = publicKeys[descriptor.publicKeyId] ?: return false
         val signatureAlgorithm = descriptor.signatureAlgorithm ?: return false
         if (signatureAlgorithm != ECDSA_P256_SHA256) return false
+        if (descriptor.signatureExpiresAtMillis?.let { it <= System.currentTimeMillis() } == true) return false
         return try {
-            val keyBytes = Base64.getDecoder().decode(keyText)
+            val keyBytes = decodeBase64(keyText)
             val publicKey: PublicKey = KeyFactory.getInstance("EC")
                 .generatePublic(X509EncodedKeySpec(keyBytes))
+            val ecKey = publicKey as? ECPublicKey ?: return false
+            if (ecKey.params.order.bitLength() != P256_BIT_LENGTH || ecKey.params.curve.field.fieldSize != P256_BIT_LENGTH) return false
             val verifier = Signature.getInstance("SHA256withECDSA")
             verifier.initVerify(publicKey)
             FileInputStream(file).use { input ->
@@ -71,14 +80,21 @@ class PublicKeyModelSignatureVerifier(
                     if (count > 0) verifier.update(buffer, 0, count)
                 }
             }
-            verifier.verify(Base64.getDecoder().decode(signatureText))
+            verifier.verify(decodeBase64(signatureText))
         } catch (_: Exception) {
             false
         }
     }
 
+    private fun decodeBase64(value: String): ByteArray = Base64.getDecoder().decode(
+        value.replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace(Regex("\\s"), ""),
+    )
+
     private companion object {
         const val ECDSA_P256_SHA256 = "ECDSA_P256_SHA256"
+        const val P256_BIT_LENGTH = 256
         const val HASH_BUFFER_SIZE = 32 * 1024
     }
 }
@@ -92,6 +108,7 @@ class ModelRepository(
     private val allowInsecureHttp: Boolean = false,
 ) {
     private val stateFlow = MutableStateFlow(readState())
+    private val mutationMutex = Mutex()
     private val lastProgressReport = AtomicLong(0L)
     val state: StateFlow<ModelState> = stateFlow.asStateFlow()
 
@@ -122,7 +139,11 @@ class ModelRepository(
         }
     }
 
-    suspend fun install(update: ModelUpdateInfo): ModelInstallResult {
+    suspend fun install(update: ModelUpdateInfo): ModelInstallResult = mutationMutex.withLock {
+        installUnlocked(update)
+    }
+
+    private suspend fun installUnlocked(update: ModelUpdateInfo): ModelInstallResult {
         val descriptor = update.descriptor
         val contract = LiteRtModelContract.validate(descriptor)
         if (!contract.isValid) return fail("CONTRACT_INVALID", contract.errors.joinToString("；"), false)
@@ -198,7 +219,11 @@ class ModelRepository(
         }
     }
 
-    suspend fun rollback(dispatchId: String? = null): ModelInstallResult {
+    suspend fun rollback(dispatchId: String? = null): ModelInstallResult = mutationMutex.withLock {
+        rollbackUnlocked(dispatchId)
+    }
+
+    private suspend fun rollbackUnlocked(dispatchId: String?): ModelInstallResult {
         val activeFile = File(storageDir, "active.tflite")
         val previousFile = File(storageDir, "previous.tflite")
         val activeMetadata = File(storageDir, "active.json")

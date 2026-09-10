@@ -8,6 +8,8 @@ import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.cyberfish.app.data.CyberFishRepository
@@ -48,6 +50,7 @@ class ModelUpdateWorker(
 
     companion object {
         private const val UNIQUE_WORK_NAME = "cyberfish-model-update"
+        private const val PERIODIC_WORK_NAME = "cyberfish-model-update-periodic"
         const val KEY_STATUS = "status"
         const val KEY_MODEL_VERSION = "model_version"
         const val KEY_PROGRESS = "progress"
@@ -64,6 +67,22 @@ class ModelUpdateWorker(
                 ExistingWorkPolicy.KEEP,
                 request,
             )
+        }
+
+        fun schedule(context: Context) {
+            val workManager = WorkManager.getInstance(context.applicationContext)
+            val startupRequest = OneTimeWorkRequestBuilder<ModelUpdateWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setInitialDelay(15, TimeUnit.SECONDS)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
+            workManager.enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, startupRequest)
+
+            val periodicRequest = PeriodicWorkRequestBuilder<ModelUpdateWorker>(6, TimeUnit.HOURS)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
+            workManager.enqueueUniquePeriodicWork(PERIODIC_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, periodicRequest)
         }
     }
 }
