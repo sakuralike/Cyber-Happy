@@ -55,7 +55,7 @@ export function LoginPage() {
             </div>
             <Button type="primary" htmlType="submit" block loading={loading}>登录</Button>
           </Form>
-          <div className="login-demo">演示账号：admin / cyberfish2026 · 复核员：reviewer</div>
+          <div className="login-demo">演示账号：admin / admin123 · 复核员：reviewer / reviewer123</div>
         </div>
       </section>
     </main>
