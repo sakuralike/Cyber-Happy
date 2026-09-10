@@ -40,6 +40,10 @@ model AdminUser {
   reviewedReports  Misreport[]       @relation("ReportReviewer")
   statusLogs       MisreportStatusLog[]
   files            FileAsset[]
+  siteSettings     SiteSetting[]      @relation("SiteSettingUpdater")
+  landingModules   LandingModule[]    @relation("LandingModuleUpdater")
+  publishedConfigRevisions ConfigRevision[] @relation("ConfigRevisionPublisher")
+  rolledBackConfigRevisions ConfigRevision[] @relation("ConfigRevisionRoller")
 
   @@index([role])
   @@index([status])
@@ -402,6 +406,10 @@ model FileAsset {
   uploadedBy   AdminUser? @relation(fields: [uploadedById], references: [id])
   createdAt    DateTime   @default(now())
 
+  downloadLinks   DownloadLink[] @relation("DownloadLinkFile")
+  downloadQrLinks DownloadLink[] @relation("DownloadLinkQR")
+  bannerImages    Banner[]       @relation("BannerImage")
+
   @@index([bizType])
   @@index([sha256])
 }
@@ -419,4 +427,112 @@ model SiteConfig {
   updatedById String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model SiteSetting {
+  id          String   @id
+  scope       String
+  key         String
+  value       String
+  draftValue  String?
+  updatedById String?
+  updatedBy   AdminUser? @relation("SiteSettingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([scope, key])
+  @@index([scope])
+}
+
+model DownloadLink {
+  id          String   @id @default(cuid())
+  platform    String
+  channel     String   @default("official")
+  versionName String?
+  minVersion  Int?
+  mode        String
+  url         String?
+  fileId      String?
+  file        FileAsset? @relation("DownloadLinkFile", fields: [fileId], references: [id], onDelete: SetNull)
+  qrFileId    String?
+  qrFile      FileAsset? @relation("DownloadLinkQR", fields: [qrFileId], references: [id], onDelete: SetNull)
+  enabled     Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  remark      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([platform, channel])
+  @@index([platform, enabled])
+  @@index([sortOrder])
+}
+
+model Banner {
+  id          String   @id @default(cuid())
+  title       String
+  subtitle    String?
+  imageFileId String?
+  imageFile   FileAsset? @relation("BannerImage", fields: [imageFileId], references: [id], onDelete: SetNull)
+  imageUrl    String?
+  linkType    String   @default("INTERNAL")
+  linkUrl     String?
+  platform    String   @default("ALL")
+  enabled     Boolean  @default(true)
+  startAt     DateTime?
+  endAt       DateTime?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled, startAt, endAt])
+  @@index([platform, enabled])
+  @@index([sortOrder])
+}
+
+model LandingModule {
+  id               String   @id @default(cuid())
+  type             String
+  enabled          Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  contentJson      String
+  draftContentJson String?
+  draftSortOrder   Int?
+  updatedById      String?
+  updatedBy        AdminUser? @relation("LandingModuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([type, enabled])
+  @@index([sortOrder])
+}
+
+model ConfigRevision {
+  id             String   @id @default(cuid())
+  version        Int      @unique
+  scopes         String
+  snapshotJson   String
+  changesJson    String?
+  status         String   @default("PUBLISHED")
+  effectiveAt    DateTime?
+  publishedById  String?
+  publishedBy    AdminUser? @relation("ConfigRevisionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
+  rolledBackById String?
+  rolledBackBy   AdminUser? @relation("ConfigRevisionRoller", fields: [rolledBackById], references: [id], onDelete: SetNull)
+  rolledBackAt   DateTime?
+  note           String?
+  createdAt      DateTime @default(now())
+  publishedAt    DateTime?
+
+  @@index([status, effectiveAt])
+  @@index([publishedAt])
+}
+
+model ConfigSubscriber {
+  id         String   @id @default(cuid())
+  clientId   String   @unique
+  lastSeenAt DateTime @default(now())
+  scopes     String   @default("ALL")
+  createdAt  DateTime @default(now())
+
+  @@index([lastSeenAt])
 }

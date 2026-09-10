@@ -68,6 +68,7 @@ function moduleFromUrl(url: string): AuditModule | null {
   if (p.includes('/models')) return AuditModule.MODEL;
   if (p.includes('/misreports')) return AuditModule.MISREPORT;
   if (p.includes('/dashboard')) return AuditModule.DASHBOARD;
+  if (p.includes('/admin/settings') || p.includes('/admin/download-links') || p.includes('/admin/banners') || p.includes('/admin/landing-modules')) return AuditModule.SITE_CONFIG;
   return null;
 }
 

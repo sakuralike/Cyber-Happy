@@ -10,6 +10,11 @@ import {
   LogoutOutlined,
   SettingOutlined,
   SearchOutlined,
+  CloudUploadOutlined,
+  DownloadOutlined,
+  PictureOutlined,
+  AppstoreOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/auth';
@@ -33,7 +38,13 @@ export function AppLayout() {
     const system = [
       hasPerm('auditLog:read') && { key: '/audit-logs', icon: <FileSearchOutlined />, label: '操作日志' },
       hasPerm('admin:read') && { key: '/admins', icon: <TeamOutlined />, label: '账号管理' },
-      hasPerm('siteConfig:write') && { key: '/site-config', icon: <SettingOutlined />, label: '首页配置' },
+      hasPerm('siteConfig:read') && { key: '/settings', icon: <SettingOutlined />, label: '配置域总览' },
+      hasPerm('siteConfig:read') && { key: '/settings/site', icon: <SearchOutlined />, label: '站点与 SEO' },
+      hasPerm('siteConfig:read') && { key: '/settings/downloads', icon: <DownloadOutlined />, label: '应用下载管理' },
+      hasPerm('siteConfig:read') && { key: '/settings/banners', icon: <PictureOutlined />, label: '首页轮播图' },
+      hasPerm('siteConfig:read') && { key: '/settings/landing', icon: <AppstoreOutlined />, label: '落地页内容编排' },
+      hasPerm('siteConfig:read') && { key: '/settings/user-page', icon: <UserOutlined />, label: '用户页面设置' },
+      hasPerm('siteConfig:read') && { key: '/settings/publish', icon: <CloudUploadOutlined />, label: '配置发布' },
     ].filter(Boolean);
     return [
       { type: 'group', label: '运营', children: operations },
@@ -41,8 +52,8 @@ export function AppLayout() {
     ];
   }, [hasPerm]);
 
-  const selectedKey = ['/dashboard', '/app-versions', '/models', '/misreports', '/audit-logs', '/admins', '/site-config']
-    .find((key) => location.pathname.startsWith(key)) ?? '/dashboard';
+  const selectedKey = ['/dashboard', '/app-versions', '/models', '/misreports', '/audit-logs', '/admins', '/settings/site', '/settings/downloads', '/settings/banners', '/settings/landing', '/settings/user-page', '/settings/publish', '/settings']
+    .find((key) => location.pathname === key || location.pathname.startsWith(`${key}/`)) ?? '/dashboard';
   const roleMeta = user ? ROLE_MAP[user.role] : null;
 
   const signOut = async () => {
@@ -81,7 +92,7 @@ export function AppLayout() {
       <Layout>
         <Header className="admin-topbar">
           <Typography.Text className="admin-breadcrumb">
-            运营 / {items.flatMap((group) => (group as { children?: { key: string; label: string }[] }).children ?? []).find((item) => item.key === selectedKey)?.label ?? '数据看板'}
+            {selectedKey.startsWith('/settings') ? '系统设置' : '运营'} / {items.flatMap((group) => (group as { children?: { key: string; label: string }[] }).children ?? []).find((item) => item.key === selectedKey)?.label ?? '数据看板'}
           </Typography.Text>
           <Space size={18}>
             <Input className="admin-search" prefix={<SearchOutlined />} placeholder="搜索版本号 / 单号 / 模型" />

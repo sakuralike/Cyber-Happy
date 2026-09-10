@@ -230,7 +230,7 @@ export interface MisreportStatusLog {
 }
 
 // ============ 审计日志 ============
-export type AuditModule = 'AUTH' | 'ADMIN' | 'FILE' | 'APP_VERSION' | 'MODEL' | 'MISREPORT' | 'DASHBOARD';
+export type AuditModule = 'AUTH' | 'ADMIN' | 'FILE' | 'APP_VERSION' | 'MODEL' | 'MISREPORT' | 'DASHBOARD' | 'SITE_CONFIG';
 export type AuditAction =
   | 'LOGIN' | 'LOGIN_FAIL' | 'LOGOUT' | 'CREATE' | 'UPDATE' | 'DELETE'
   | 'PUBLISH' | 'PUBLISH_GRAY' | 'PUBLISH_ONLINE' | 'OFFLINE' | 'DISPATCH'
