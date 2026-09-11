@@ -55,6 +55,7 @@ model UserAccount {
   passwordHash String
   displayName  String
   email        String?
+  avatarFileId String?
   status       String   @default("ACTIVE")
   lastLoginAt  DateTime?
   createdAt    DateTime @default(now())
