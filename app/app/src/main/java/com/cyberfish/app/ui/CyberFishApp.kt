@@ -30,10 +30,12 @@ import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.AppEventType
+import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.update.installApk
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.PillTabBar
+import com.cyberfish.app.ui.screens.FishingSpotMapScreen
 import com.cyberfish.app.ui.screens.MonitorScreen
 import com.cyberfish.app.ui.screens.ProfileScreen
 import com.cyberfish.app.ui.screens.RecordsScreen
@@ -59,7 +61,7 @@ enum class ThemeMode(val label: String) {
 }
 
 @Composable
-fun CyberFishApp() {
+fun CyberFishApp(permissionRevision: Int = 0) {
     val context = LocalContext.current.applicationContext
     val repository = remember(context) { CyberFishRepository(context) }
     val coroutineScope = rememberCoroutineScope()
@@ -67,12 +69,19 @@ fun CyberFishApp() {
     val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
     val modelState by repository.modelState.collectAsState()
     val appUpdateWorkInfo by repository.appUpdateWorkInfo.collectAsState(initial = null)
+    val userSession by repository.userSession.collectAsState(initial = null)
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
+    var showingFishingSpots by rememberSaveable { mutableStateOf(false) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
+    var supportContent by remember { mutableStateOf(SupportContent()) }
     val selectedTab = AppTab.valueOf(selectedTabName)
     LaunchedEffect(repository) {
         repository.scheduleModelUpdates()
-        withContext(Dispatchers.IO) { repository.reportEvent(AppEventType.LAUNCH) }
+        val supportResult = withContext(Dispatchers.IO) {
+            repository.reportEvent(AppEventType.LAUNCH)
+            repository.loadSupportContent()
+        }
+        if (supportResult is ApiResult.Success) supportContent = supportResult.value
     }
     val darkTheme = resolveDarkTheme(
         preferences = preferences,
@@ -81,7 +90,17 @@ fun CyberFishApp() {
     )
 
     CyberFishTheme(darkTheme = darkTheme) {
-        Scaffold(
+        if (showingFishingSpots) {
+            FishingSpotMapScreen(
+                favoriteSpots = preferences.favoriteFishingSpots,
+                onFavoriteSpotsChange = { spots ->
+                    coroutineScope.launch(Dispatchers.IO) {
+                        repository.savePreferences(preferences.copy(favoriteFishingSpots = spots))
+                    }
+                },
+                onBack = { showingFishingSpots = false },
+            )
+        } else Scaffold(
             bottomBar = {
                 PillTabBar(
                     selectedTab = selectedTab,
@@ -93,6 +112,7 @@ fun CyberFishApp() {
                 Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
                     when (selectedTab) {
                         AppTab.Monitor -> MonitorScreen(
+                            permissionRevision = permissionRevision,
                             onOpenSettings = { selectedTabName = AppTab.Settings.name },
                             triggerConfig = preferences.toTriggerConfig(),
                             alertPreferences = AlertPreferences(
@@ -163,7 +183,9 @@ fun CyberFishApp() {
                         AppTab.Profile -> ProfileScreen(
                             records = records.orEmpty(),
                             favoriteSpots = preferences.favoriteSpots,
-                            onFavoriteSpotsChange = { spots -> coroutineScope.launch(Dispatchers.IO) { repository.savePreferences(preferences.copy(favoriteSpots = spots)) } },
+                            userSession = userSession,
+                            supportContent = supportContent,
+                            onOpenFishingSpots = { showingFishingSpots = true },
                             onExportRecords = {
                                 coroutineScope.launch {
                                     val file = withContext(Dispatchers.IO) { repository.exportRecords(records.orEmpty()) }
@@ -176,6 +198,10 @@ fun CyberFishApp() {
                                     context.startActivity(Intent.createChooser(share, "导出记录").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
                             },
+                            onLogin = repository::login,
+                            onRegister = repository::register,
+                            onLogout = repository::logout,
+                            onSubmitFeedback = repository::submitFeedback,
                         )
                     }
                 }

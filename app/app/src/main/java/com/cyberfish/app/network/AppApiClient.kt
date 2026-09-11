@@ -39,6 +39,17 @@ data class AppUpdateInfo(
     val apkSha256: String? = null,
 )
 
+data class SupportContent(
+    val feedbackTitle: String = "意见反馈",
+    val feedbackPlaceholder: String = "请描述遇到的问题或建议",
+    val feedbackContactHint: String = "可留下邮箱或手机号，方便我们联系你",
+    val helpTitle: String = "使用帮助",
+    val helpContent: String = "误报请在记录详情中直接标记，系统会附带必要的识别信息供复核。",
+    val aboutTitle: String = "关于赛博鱼乐",
+    val aboutContent: String = "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。",
+    val privacyContent: String = "只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。",
+)
+
 enum class AppEventType { LAUNCH, TRIGGER, MODEL_CALL, MISREPORT, CRASH }
 
 data class ModelCheckInfo(
@@ -83,8 +94,81 @@ sealed interface VersionCheckState {
 class AppApiClient(
     private val config: ApiConfig,
     private val identityStore: DeviceIdentityProvider,
+    private val userSessionProvider: UserSessionProvider = EmptyUserSessionProvider,
     private val httpClient: OkHttpClient = defaultHttpClient(),
 ) : ModelApi {
+    suspend fun login(username: String, password: String): ApiResult<UserSession> = authenticate("login", JSONObject().put("username", username).put("password", password))
+
+    suspend fun register(
+        username: String,
+        password: String,
+        displayName: String,
+        email: String,
+    ): ApiResult<UserSession> = authenticate(
+        "register",
+        JSONObject()
+            .put("username", username)
+            .put("password", password)
+            .put("displayName", displayName)
+            .put("email", email),
+    )
+
+    suspend fun fetchSupportContent(): ApiResult<SupportContent> = withContext(Dispatchers.IO) {
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val requestUrl = config.endpoint("api/v1/public/config/all").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()) { data ->
+            val userPage = data.optJSONObject("scopes")?.optJSONObject("USER_PAGE") ?: JSONObject()
+            SupportContent(
+                feedbackTitle = userPage.optString("support.feedback.title", "意见反馈"),
+                feedbackPlaceholder = userPage.optString("support.feedback.placeholder", "请描述遇到的问题或建议"),
+                feedbackContactHint = userPage.optString("support.feedback.contactHint", "可留下邮箱或手机号，方便我们联系你"),
+                helpTitle = userPage.optString("support.help.title", "使用帮助"),
+                helpContent = userPage.optString("support.help.content", "误报请在记录详情中直接标记，系统会附带必要的识别信息供复核。"),
+                aboutTitle = userPage.optString("about.title", "关于赛博鱼乐"),
+                aboutContent = userPage.optString("about.content", "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。"),
+                privacyContent = userPage.optString("about.privacy", "只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。"),
+            )
+        }
+    }
+
+    suspend fun submitFeedback(content: String, contact: String): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        val requestUrl = config.endpoint("api/v1/users/feedback").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder()
+                .url(requestUrl)
+                .post(JSONObject().put("content", content).put("contact", contact).toString().toRequestBody(JSON_MEDIA_TYPE))
+                .appToken(config.appToken)
+                .userToken(session.token)
+                .build(),
+        ) { Unit }
+    }
+
+    private suspend fun authenticate(action: String, body: JSONObject): ApiResult<UserSession> = withContext(Dispatchers.IO) {
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val requestUrl = config.endpoint("api/v1/users/$action").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder().url(requestUrl).post(body.toString().toRequestBody(JSON_MEDIA_TYPE)).appToken(config.appToken).build(),
+        ) { data ->
+            val token = data.optString("token").takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("登录响应缺少 token")
+            val user = data.optJSONObject("user") ?: throw IllegalArgumentException("登录响应缺少 user")
+            UserSession(
+                token = token,
+                user = UserAccount(
+                    id = user.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("登录响应缺少用户 ID"),
+                    username = user.optString("username").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("登录响应缺少用户名"),
+                    displayName = user.optString("displayName").takeIf { it.isNotBlank() } ?: user.optString("username"),
+                    email = user.optString("email").takeIf { it.isNotBlank() },
+                ),
+            )
+        }
+    }
+
     suspend fun checkForUpdate(): ApiResult<AppUpdateInfo> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
         val identity = identityStore.get()
@@ -117,6 +201,7 @@ class AppApiClient(
     suspend fun submitMisreport(record: FishRecordEntity): ApiResult<String> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
         val identity = identityStore.get()
+        val session = userSessionProvider.get()
         val rawData = JSONObject()
             .put("triggerTimestampMillis", record.triggerTimestampMillis)
             .put("verticalDisplacementPx", record.verticalDisplacementPx)
@@ -141,7 +226,7 @@ class AppApiClient(
         }
         val body = JSONObject()
             .put("deviceId", identity.deviceId)
-            .put("userId", identity.userId)
+            .put("userId", session?.user?.id ?: identity.userId)
             .put("deviceModel", identity.deviceModel)
             .put("osVersion", identity.osVersion)
             .put("appVersionName", BuildConfig.VERSION_NAME)
@@ -161,6 +246,7 @@ class AppApiClient(
             .url(requestUrl)
             .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
             .appToken(config.appToken)
+            .userToken(session?.token)
             .build()
         executeJson(request) { data -> data.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("上报响应缺少 id") }
     }
@@ -173,9 +259,10 @@ class AppApiClient(
     ): ApiResult<Unit> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
         val identity = identityStore.get()
+        val session = userSessionProvider.get()
         val body = JSONObject()
             .put("deviceId", identity.deviceId)
-            .put("userId", identity.userId)
+            .put("userId", session?.user?.id ?: identity.userId)
             .put("channel", "official")
             .put("deviceModel", identity.deviceModel)
             .put("appVersionCode", BuildConfig.VERSION_CODE)
@@ -190,6 +277,7 @@ class AppApiClient(
                 .url(requestUrl)
                 .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
                 .appToken(config.appToken)
+                .userToken(session?.token)
                 .build(),
         ) { Unit }
     }
@@ -346,6 +434,11 @@ class AppApiClient(
     }
 
     private fun Request.Builder.appToken(token: String) = header("X-App-Token", token)
+
+    private fun Request.Builder.userToken(token: String?) = token
+        ?.takeIf { it.isNotBlank() }
+        ?.let { header("Authorization", "Bearer $it") }
+        ?: this
 
     private suspend fun uploadMedia(file: File, bizType: String): ApiResult<String> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured

@@ -7,9 +7,12 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.cyberfish.app.data.model.FishingSpot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 
 data class AppPreferences(
@@ -27,6 +30,7 @@ data class AppPreferences(
     val inferenceBackend: String = "NNAPI",
     val performanceMode: String = "标准",
     val favoriteSpots: Set<String> = emptySet(),
+    val favoriteFishingSpots: List<FishingSpot> = emptyList(),
 )
 
 private val Context.cyberFishDataStore by preferencesDataStore(name = "cyberfish_preferences")
@@ -37,6 +41,8 @@ class AppPreferencesStore(private val context: Context) {
             if (error is IOException) emit(androidx.datastore.preferences.core.emptyPreferences()) else throw error
         }
         .map { values ->
+            val legacyFavorites = values[Keys.favoriteSpots] ?: emptySet()
+            val storedFishingSpots = decodeFishingSpots(values[Keys.favoriteFishingSpots])
             AppPreferences(
                 themeMode = values[Keys.themeMode] ?: "Dark",
                 autoTheme = values[Keys.autoTheme] ?: true,
@@ -51,7 +57,10 @@ class AppPreferencesStore(private val context: Context) {
                 confidenceThreshold = values[Keys.confidenceThreshold] ?: 0.62f,
                 inferenceBackend = values[Keys.inferenceBackend] ?: "NNAPI",
                 performanceMode = values[Keys.performanceMode] ?: "标准",
-                favoriteSpots = values[Keys.favoriteSpots] ?: emptySet(),
+                favoriteSpots = legacyFavorites,
+                favoriteFishingSpots = storedFishingSpots.ifEmpty {
+                    legacyFavorites.map(FishingSpot::legacy)
+                },
             )
         }
 
@@ -70,7 +79,8 @@ class AppPreferencesStore(private val context: Context) {
             values[Keys.confidenceThreshold] = preferences.confidenceThreshold
             values[Keys.inferenceBackend] = preferences.inferenceBackend
             values[Keys.performanceMode] = preferences.performanceMode
-            values[Keys.favoriteSpots] = preferences.favoriteSpots
+            values[Keys.favoriteSpots] = preferences.favoriteFishingSpots.map { it.name }.toSet()
+            values[Keys.favoriteFishingSpots] = encodeFishingSpots(preferences.favoriteFishingSpots)
         }
     }
 
@@ -89,5 +99,49 @@ class AppPreferencesStore(private val context: Context) {
         val inferenceBackend = stringPreferencesKey("inference_backend")
         val performanceMode = stringPreferencesKey("performance_mode")
         val favoriteSpots = stringSetPreferencesKey("favorite_spots")
+        val favoriteFishingSpots = stringPreferencesKey("favorite_fishing_spots")
     }
+}
+
+private fun encodeFishingSpots(spots: List<FishingSpot>): String {
+    val array = JSONArray()
+    spots.forEach { spot ->
+        val item = JSONObject()
+            .put("id", spot.id)
+            .put("name", spot.name)
+            .put("source", spot.source)
+        spot.latitude?.let { item.put("lat", it) }
+        spot.longitude?.let { item.put("lon", it) }
+        spot.address?.let { item.put("address", it) }
+        spot.poiId?.let { item.put("poiId", it) }
+        array.put(item)
+    }
+    return array.toString()
+}
+
+private fun decodeFishingSpots(raw: String?): List<FishingSpot> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val name = item.optString("name").trim()
+                if (name.isBlank()) continue
+                val latitude = item.optDouble("lat", Double.NaN).takeUnless(Double::isNaN)
+                val longitude = item.optDouble("lon", Double.NaN).takeUnless(Double::isNaN)
+                add(
+                    FishingSpot(
+                        id = item.optString("id").ifBlank { "legacy:$name" },
+                        name = name,
+                        latitude = latitude,
+                        longitude = longitude,
+                        address = item.optString("address").ifBlank { null },
+                        poiId = item.optString("poiId").ifBlank { null },
+                        source = item.optString("source").ifBlank { FishingSpot.SOURCE_LEGACY },
+                    ),
+                )
+            }
+        }
+    }.getOrDefault(emptyList())
 }

@@ -65,8 +65,9 @@ const routes: FastifyPluginAsync = async (app) => {
 
   /** APP 端上报 */
   app.post('/', async (request, reply) => {
+    const appUser = await app.resolveAppUser(request);
     const input = parseOrThrow(createMisreportSchema, request.body);
-    return sendCreated(reply, await service.create(input));
+    return sendCreated(reply, await service.create({ ...input, userId: appUser?.id ?? input.userId }));
   });
 
   /** 详情 */

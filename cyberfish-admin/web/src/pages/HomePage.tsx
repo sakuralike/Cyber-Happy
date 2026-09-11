@@ -275,7 +275,7 @@ export function HomePage() {
           <a href="#faq" onClick={sectionLink("faq")}>
             常见问题
           </a>
-          <a href="#/login" className="brand-link">
+          <a href="#/account/login" className="brand-link">
             登录
           </a>
         </nav>
@@ -333,7 +333,7 @@ export function HomePage() {
             >
               常见问题
             </a>
-            <a href="#/login">登录</a>
+            <a href="#/account/login">登录</a>
           </nav>
         )}
       </header>
@@ -573,7 +573,7 @@ function renderModule(
           <div>
             <h4>关于</h4>
             <a href="#/account">用户中心</a>
-            <a href="#/login">登录</a>
+            <a href="#/account/login">登录</a>
           </div>
         </div>
         <div className="footer-bottom">

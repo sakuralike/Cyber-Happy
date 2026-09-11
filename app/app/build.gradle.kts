@@ -1,13 +1,35 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     kotlin("kapt")
 }
 
+val amapKeyFile = rootProject.file("../sdk/key.txt")
+val amapKeyFromFile = if (amapKeyFile.isFile) {
+    amapKeyFile.useLines { lines ->
+        lines.map(String::trim).firstOrNull { it.matches(Regex("[A-Za-z0-9_-]{32}")) }.orEmpty()
+    }
+} else {
+    ""
+}
+val amapApiKey = providers.gradleProperty("amapKey").orNull?.trim().orEmpty()
+    .ifBlank { System.getenv("AMAP_KEY")?.trim().orEmpty() }
+    .ifBlank { amapKeyFromFile }
+
 val needsAsciiBuildDirectory = System.getProperty("os.name").startsWith("Windows") &&
     project.projectDir.path.any { it.code > 127 }
-val appApiBaseUrl = providers.gradleProperty("appApiBaseUrl").orElse("").get()
-val appApiToken = providers.gradleProperty("appApiToken").orElse("").get()
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.isFile) localPropertiesFile.inputStream().use(::load)
+}
+val appApiBaseUrl = providers.gradleProperty("appApiBaseUrl").orNull?.trim().orEmpty()
+    .ifBlank { System.getenv("APP_API_BASE_URL")?.trim().orEmpty() }
+    .ifBlank { localProperties.getProperty("appApiBaseUrl")?.trim().orEmpty() }
+val appApiToken = providers.gradleProperty("appApiToken").orNull?.trim().orEmpty()
+    .ifBlank { System.getenv("APP_API_TOKEN")?.trim().orEmpty() }
+    .ifBlank { localProperties.getProperty("appApiToken")?.trim().orEmpty() }
 val modelPublicKeys = providers.gradleProperty("modelPublicKeys").orElse("{}").get()
 
 fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\""
@@ -37,6 +59,8 @@ android {
         buildConfigField("String", "APP_API_BASE_URL", buildConfigString(appApiBaseUrl))
         buildConfigField("String", "APP_API_TOKEN", buildConfigString(appApiToken))
         buildConfigField("String", "MODEL_PUBLIC_KEYS", buildConfigString(modelPublicKeys))
+        buildConfigField("String", "AMAP_API_KEY", buildConfigString(amapApiKey))
+        manifestPlaceholders["amapApiKey"] = amapApiKey
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -79,6 +103,7 @@ android {
 }
 
 dependencies {
+    implementation(files("libs/amap-map-search-location-11.2.100.aar"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))

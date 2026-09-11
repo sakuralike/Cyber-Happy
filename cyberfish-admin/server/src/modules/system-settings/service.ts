@@ -75,6 +75,14 @@ export const USER_PAGE_DEFAULTS: Record<string, unknown> = {
   "auth.privacyRequired": true,
   "auth.bgImageFileId": null,
   "auth.footer": "2026 赛博鱼乐 · 仅限授权账号访问",
+  "support.feedback.title": "意见反馈",
+  "support.feedback.placeholder": "请描述遇到的问题或建议",
+  "support.feedback.contactHint": "可留下邮箱或手机号，方便我们联系你",
+  "support.help.title": "使用帮助",
+  "support.help.content": "误报请在记录详情中直接标记，系统会附带必要的识别信息供复核。钓场收藏可在“我的”页统一查看和导航。",
+  "about.title": "关于赛博鱼乐",
+  "about.content": "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。",
+  "about.privacy": "只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。记录导出文件保存在应用私有目录，由你选择分享目标。",
 };
 
 const DEFAULT_LANDING_MODULES: Array<{
@@ -1361,7 +1369,10 @@ export async function publicConfig(scope: ConfigScopeValue) {
   const snapshot = revision
     ? parseJson<Partial<Snapshot>>(revision.snapshotJson, {})
     : {};
-  const value = snapshot[scope] ?? (await scopeSnapshot(scope, false));
+  const value = withSettingDefaults(
+    scope,
+    snapshot[scope] ?? (await scopeSnapshot(scope, false)),
+  );
   return scope === ConfigScope.SITE || scope === ConfigScope.USER_PAGE
     ? {
         scope,
@@ -1384,12 +1395,23 @@ export async function publicConfigAll() {
     : {};
   const scopes = {} as Snapshot;
   for (const scope of Object.values(ConfigScope))
-    scopes[scope] = snapshot[scope] ?? (await scopeSnapshot(scope, false));
+    scopes[scope] = withSettingDefaults(
+      scope,
+      snapshot[scope] ?? (await scopeSnapshot(scope, false)),
+    ) as never;
   return {
     version: revision?.version ?? 0,
     publishedAt: revision?.publishedAt ?? null,
     scopes,
   };
+}
+
+function withSettingDefaults(scope: ConfigScopeValue, value: unknown): unknown {
+  if (scope !== ConfigScope.SITE && scope !== ConfigScope.USER_PAGE) return value;
+  const published = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return { ...defaultsFor(scope), ...published };
 }
 
 export function etagFor(

@@ -25,7 +25,7 @@ class MisreportUploadWorker(
         val record = dao.findByTriggerTimestamp(triggerTimestampMillis) ?: return Result.success()
         if (!record.isFalsePositive || record.misreportState == MisreportSyncState.Uploaded.name) return Result.success()
 
-        val client = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(applicationContext))
+        val client = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(applicationContext), UserSessionStore(applicationContext))
         return when (val result = client.submitMisreport(record)) {
             is ApiResult.Success -> {
                 dao.markMisreportUploaded(triggerTimestampMillis, MisreportSyncState.Uploaded.name, result.value)

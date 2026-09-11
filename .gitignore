@@ -20,6 +20,7 @@ app/**/build/
 app/local.properties
 app/.idea/
 *.iml
+sdk/key.txt
 
 # Existing remote rules
 .vscode/

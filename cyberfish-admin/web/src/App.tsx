@@ -1,7 +1,8 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './store/auth';
+import { UserAuthProvider } from './store/userAuth';
 import { AppLayout } from './components/AppLayout';
-import { RequireAuth, RequirePerm } from './components/Guards';
+import { RequireAuth, RequirePerm, RequireUserAuth } from './components/Guards';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { AppVersionPage } from './pages/AppVersionPage';
@@ -11,21 +12,24 @@ import { AuditLogPage } from './pages/AuditLogPage';
 import { AdminPage } from './pages/AdminPage';
 import { HomePage } from './pages/HomePage';
 import { AccountPage } from './pages/AccountPage';
+import { AccountLoginPage } from './pages/AccountLoginPage';
 import { SystemSettingsPage } from './pages/system-settings/SystemSettingsPage';
 
 export default function App() {
   return (
     <AuthProvider>
-      <HashRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<HomePage />} />
+      <UserAuthProvider>
+        <HashRouter>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/account/login" element={<AccountLoginPage />} />
+            <Route path="/" element={<HomePage />} />
           <Route
             path="/account"
             element={
-              <RequireAuth>
+              <RequireUserAuth>
                 <AccountPage />
-              </RequireAuth>
+              </RequireUserAuth>
             }
           />
           <Route
@@ -81,8 +85,9 @@ export default function App() {
             <Route path="/settings/:section" element={<RequirePerm perm="siteConfig:read"><SystemSettingsPage /></RequirePerm>} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
-        </Routes>
-      </HashRouter>
+          </Routes>
+        </HashRouter>
+      </UserAuthProvider>
     </AuthProvider>
   );
 }

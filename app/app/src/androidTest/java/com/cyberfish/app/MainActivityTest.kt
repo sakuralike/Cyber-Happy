@@ -34,7 +34,7 @@ class MainActivityTest {
         activityRule.onNodeWithText("白天").performScrollTo().performClick()
         activityRule.onNodeWithTag("settings-list").performScrollToIndex(0)
         activityRule.onNodeWithText("模型与性能").performScrollTo().performClick()
-        activityRule.onNodeWithText("占位模型 MockDetector").assertIsDisplayed()
+        activityRule.onNodeWithText("占位模型 MockDetector").performScrollTo().assertIsDisplayed()
         activityRule.onNodeWithText("检查 APP 更新").performScrollTo().performClick()
         activityRule.onNodeWithText("未配置服务地址或 APP 令牌").performScrollTo().assertIsDisplayed()
 

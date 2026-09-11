@@ -299,6 +299,17 @@ export function UserPageSettingsPage() {
                     }
                   />
                 </section>
+                <section className="settings-panel">
+                  <SectionTitle>反馈、帮助与关于</SectionTitle>
+                  <Form.Item name="support.feedback.title" label="反馈标题" rules={[{ required: true }]}><Input maxLength={40} /></Form.Item>
+                  <Form.Item name="support.feedback.placeholder" label="反馈输入提示" rules={[{ required: true }]}><Input maxLength={120} /></Form.Item>
+                  <Form.Item name="support.feedback.contactHint" label="联系方式提示"><Input maxLength={200} /></Form.Item>
+                  <Form.Item name="support.help.title" label="帮助标题" rules={[{ required: true }]}><Input maxLength={40} /></Form.Item>
+                  <Form.Item name="support.help.content" label="帮助内容" rules={[{ required: true }]}><Input.TextArea rows={5} maxLength={2000} /></Form.Item>
+                  <Form.Item name="about.title" label="关于标题" rules={[{ required: true }]}><Input maxLength={40} /></Form.Item>
+                  <Form.Item name="about.content" label="产品介绍" rules={[{ required: true }]}><Input.TextArea rows={4} maxLength={2000} /></Form.Item>
+                  <Form.Item name="about.privacy" label="隐私说明" rules={[{ required: true }]}><Input.TextArea rows={5} maxLength={2000} /></Form.Item>
+                </section>
               </>
             ) : (
               <>

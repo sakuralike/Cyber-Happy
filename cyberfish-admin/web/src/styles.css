@@ -137,6 +137,7 @@ button, input, textarea { font-family: inherit; }
 .account-page { min-height: 100vh; background: var(--surface); }
 .account-topbar { height: 72px; display: flex; align-items: center; justify-content: space-between; padding: 0 max(24px, calc((100% - 1304px) / 2)); border-bottom: 1px solid var(--hairline); background: #fff; }
 .account-topbar nav { display: flex; align-items: center; gap: 24px; color: var(--slate); font-size: 14px; }
+.account-topbar nav button { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
 .account-layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 44px; max-width: 1304px; min-width: 0; margin: 0 auto; padding: 56px 0 80px; }
 .account-sidebar-card { padding: 18px; border: 1px solid var(--hairline-soft); border-radius: 12px; background: #fff; }
 .account-avatar { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--hairline-soft); }
@@ -158,6 +159,10 @@ button, input, textarea { font-family: inherit; }
 .account-stat strong { display: block; margin-top: 12px; font-size: 26px; }
 .account-panel { min-width: 0; padding: 24px; border: 1px solid var(--hairline-soft); border-radius: 12px; background: #fff; }
 .account-panel h2 { margin: 0 0 20px; font-size: 18px; }
+.account-feedback-form { display: grid; gap: 14px; max-width: 720px; }
+.account-feedback-history { margin-top: 18px; }
+.account-content { max-width: 900px; }
+.account-content p { margin: 0 0 24px; color: var(--slate); line-height: 1.8; white-space: pre-wrap; }
 .activity-row, .notification-row, .security-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--hairline-soft); color: var(--slate); }
 .activity-row:last-child, .notification-row:last-child, .security-row:last-child { border-bottom: 0; }
 .activity-row time, .notification-row time { color: var(--stone); font-size: 12px; }
@@ -190,6 +195,12 @@ button, input, textarea { font-family: inherit; }
 .login-form-wrap > p { margin: 10px 0 32px; color: var(--stone); }
 .login-form-wrap .ant-form-item-label > label { font-weight: 500; }
 .login-demo { margin-top: 16px; padding: 14px 16px; border-radius: 8px; background: var(--surface); color: var(--stone); font-size: 13px; }
+.account-login-page { min-height: 100vh; display: grid; grid-template-columns: 42% 58%; background: #fff; }
+.account-login-brand { display: flex; flex-direction: column; justify-content: space-between; padding: 48px 64px; background: #075e54; color: #fff; }
+.account-login-brand .landing-brand, .account-login-brand > a:last-child { color: #fff; }
+.account-login-brand h1 { margin: 0 0 18px; font-size: 48px; line-height: 1.2; }
+.account-login-brand p { max-width: 430px; color: rgba(255,255,255,.72); font-size: 16px; line-height: 1.8; }
+.account-login-form { display: flex; align-items: center; justify-content: center; padding: 40px 24px; }
 
 .admin-shell .ant-layout-sider-children { display: flex; flex-direction: column; min-height: 100vh; }
 .admin-menu { flex: 1; overflow-y: auto; padding-bottom: 92px; }
@@ -349,8 +360,11 @@ button, input, textarea { font-family: inherit; }
   .account-nav { display: flex; overflow-x: auto; }
   .account-nav button { width: auto; white-space: nowrap; }
   .login-page { grid-template-columns: 1fr; }
+  .account-login-page { grid-template-columns: 1fr; }
   .login-brand-panel { min-height: 360px; padding: 36px 28px; }
+  .account-login-brand { min-height: 280px; padding: 36px 28px; }
   .login-brand-panel h1 { margin-top: 64px; font-size: 36px; }
+  .account-login-brand h1 { font-size: 36px; }
   .settings-domain-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-flow-steps { grid-template-columns: 1fr; gap: 8px; }
   .settings-flow-steps > div:not(:last-child)::after { display: none; }

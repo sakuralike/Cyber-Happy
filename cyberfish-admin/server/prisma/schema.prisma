@@ -49,6 +49,36 @@ model AdminUser {
   @@index([status])
 }
 
+model UserAccount {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String
+  email        String?
+  status       String   @default("ACTIVE")
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  feedbacks UserFeedback[]
+
+  @@index([status])
+}
+
+model UserFeedback {
+  id        String      @id @default(cuid())
+  userId    String
+  user      UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  contact   String?
+  status    String      @default("PENDING")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
 // ============================================================
 // APP 版本管理
 // ============================================================
