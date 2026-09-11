@@ -52,6 +52,14 @@ export const userPageSettingSchemas = {
   "auth.privacyRequired": z.boolean(),
   "auth.bgImageFileId": z.string().trim().min(1).nullable().optional(),
   "auth.footer": z.string().trim().max(200),
+  "support.feedback.title": z.string().trim().min(1).max(40),
+  "support.feedback.placeholder": z.string().trim().min(1).max(120),
+  "support.feedback.contactHint": z.string().trim().max(200),
+  "support.help.title": z.string().trim().min(1).max(40),
+  "support.help.content": z.string().trim().min(1).max(2000),
+  "about.title": z.string().trim().min(1).max(40),
+  "about.content": z.string().trim().min(1).max(2000),
+  "about.privacy": z.string().trim().min(1).max(2000),
 } as const;
 
 export const bulkSettingsSchema = z

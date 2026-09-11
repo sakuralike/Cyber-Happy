@@ -4,7 +4,7 @@ import { AdminRole } from '../lib/enums';
 import { prisma } from '../lib/prisma';
 import { AppError } from '../lib/errors';
 import { config } from '../config';
-import type { CurrentUser } from '../types/fastify';
+import type { CurrentAppUser, CurrentUser } from '../types/fastify';
 
 /** 角色 → 权限点映射 */
 const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
@@ -39,7 +39,7 @@ const PUBLIC_PATHS = [
 
 function isPublic(url: string): boolean {
   const path = url.split('?')[0] ?? url;
-  return PUBLIC_PATHS.includes(path) || path.startsWith('/api/v1/public/');
+  return PUBLIC_PATHS.includes(path) || path.startsWith('/api/v1/public/') || path.startsWith('/api/v1/users/');
 }
 
 const authPlugin: FastifyPluginAsync = async (app) => {
@@ -54,7 +54,8 @@ const authPlugin: FastifyPluginAsync = async (app) => {
     } catch {
       throw AppError.unauthorized('登录已过期，请重新登录');
     }
-    const payload = request.user as { sub?: string };
+    const payload = request.user as { sub?: string; kind?: string };
+    if (payload.kind === 'APP_USER') throw AppError.unauthorized();
     if (!payload?.sub) throw AppError.unauthorized();
 
     const user = await prisma.adminUser.findUnique({ where: { id: payload.sub } });
@@ -70,6 +71,37 @@ const authPlugin: FastifyPluginAsync = async (app) => {
       role: user.role as AdminRole,
     };
     request.currentUser = current;
+  });
+
+  app.decorate('resolveAppUser', async function (request: FastifyRequest): Promise<CurrentAppUser | undefined> {
+    if (!request.headers.authorization) return undefined;
+    try {
+      await request.jwtVerify();
+    } catch {
+      throw AppError.unauthorized('登录已过期，请重新登录');
+    }
+    const payload = request.user as { sub?: string; kind?: string };
+    if (payload.kind !== 'APP_USER' || !payload.sub) throw AppError.unauthorized();
+
+    const user = await prisma.userAccount.findUnique({ where: { id: payload.sub } });
+    if (!user) throw AppError.unauthorized('账号不存在');
+    if (user.status === 'DISABLED') {
+      throw new AppError(40301, '账号已被禁用，请联系管理员', 403);
+    }
+
+    const current: CurrentAppUser = {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      email: user.email,
+    };
+    request.currentAppUser = current;
+    return current;
+  });
+
+  app.decorate('authenticateUser', async function (request: FastifyRequest, _reply: FastifyReply) {
+    const user = await app.resolveAppUser(request);
+    if (!user) throw AppError.unauthorized();
   });
 
   app.decorate('requireRole', (...roles: AdminRole[]) => {

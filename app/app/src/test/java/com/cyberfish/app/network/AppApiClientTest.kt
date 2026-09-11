@@ -89,6 +89,41 @@ class AppApiClientTest {
     }
 
     @Test
+    fun `user login sends app token and parses session`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"token":"user-token","user":{"id":"user-123","username":"angler","displayName":"钓友","email":"angler@example.test"}}}""",
+            ),
+        )
+
+        val result = client().login("angler", "checkpass123")
+
+        val session = (result as ApiResult.Success).value
+        assertEquals("user-token", session.token)
+        assertEquals("user-123", session.user.id)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/users/login", request.requestUrl?.encodedPath)
+        assertEquals("test-app-token", request.getHeader("X-App-Token"))
+    }
+
+    @Test
+    fun `support content reads published user page settings`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"scopes":{"USER_PAGE":{"support.feedback.title":"反馈中心","support.help.title":"帮助中心","support.help.content":"帮助内容","about.title":"关于","about.content":"产品介绍","about.privacy":"隐私内容"}}}}""",
+            ),
+        )
+
+        val result = client().fetchSupportContent()
+
+        val content = (result as ApiResult.Success).value
+        assertEquals("反馈中心", content.feedbackTitle)
+        assertEquals("帮助中心", content.helpTitle)
+        assertEquals("隐私内容", content.privacyContent)
+        assertEquals("/api/v1/public/config/all", server.takeRequest().requestUrl?.encodedPath)
+    }
+
+    @Test
     fun `invalid base url returns parse error without throwing`() = runBlocking {
         val result = AppApiClient(
             config = ApiConfig("not a url", "test-app-token"),

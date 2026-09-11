@@ -13,6 +13,9 @@ import com.cyberfish.app.network.AppApiClient
 import com.cyberfish.app.network.AppEventType
 import com.cyberfish.app.network.AppUpdateInfo
 import com.cyberfish.app.network.DeviceIdentityStore
+import com.cyberfish.app.network.SupportContent
+import com.cyberfish.app.network.UserSession
+import com.cyberfish.app.network.UserSessionStore
 import com.cyberfish.app.network.MisreportUploadWorker
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.update.ModelRuntime
@@ -34,7 +37,8 @@ class CyberFishRepository(context: Context) {
     private val database = CyberFishDatabase.get(appContext)
     private val recordDao: FishRecordDao = database.fishRecordDao()
     private val preferencesStore = AppPreferencesStore(appContext)
-    private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext))
+    private val userSessionStore = UserSessionStore(appContext)
+    private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext), userSessionStore)
     val modelRepository = ModelRuntime.get(appContext, appApiClient)
     val modelState = modelRepository.state
     val appUpdateWorkInfo: Flow<WorkInfo?> = callbackFlow {
@@ -46,6 +50,7 @@ class CyberFishRepository(context: Context) {
 
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
     val preferences: Flow<AppPreferences> = preferencesStore.data
+    val userSession: Flow<UserSession?> = userSessionStore.session
 
     suspend fun saveTrigger(event: TriggerEvent) {
         recordDao.insert(FishRecordEntity.fromEvent(event, System.currentTimeMillis()))
@@ -73,6 +78,24 @@ class CyberFishRepository(context: Context) {
         count: Int = 1,
         payload: JSONObject = JSONObject(),
     ) = appApiClient.reportEvent(eventType, count, modelVersion, payload)
+
+    suspend fun login(username: String, password: String): ApiResult<UserSession> {
+        val result = appApiClient.login(username, password)
+        if (result is ApiResult.Success) userSessionStore.save(result.value)
+        return result
+    }
+
+    suspend fun register(username: String, password: String, displayName: String, email: String): ApiResult<UserSession> {
+        val result = appApiClient.register(username, password, displayName, email)
+        if (result is ApiResult.Success) userSessionStore.save(result.value)
+        return result
+    }
+
+    suspend fun logout() = userSessionStore.clear()
+
+    suspend fun loadSupportContent(): ApiResult<SupportContent> = appApiClient.fetchSupportContent()
+
+    suspend fun submitFeedback(content: String, contact: String): ApiResult<Unit> = appApiClient.submitFeedback(content, contact)
 
     fun enqueueAppUpdate(update: AppUpdateInfo) = AppUpdateWorker.enqueue(appContext, update)
 

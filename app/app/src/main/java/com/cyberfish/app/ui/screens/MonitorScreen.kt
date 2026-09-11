@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ import com.cyberfish.app.inference.MockDetector
 
 @Composable
 fun MonitorScreen(
+    permissionRevision: Int = 0,
     onOpenSettings: () -> Unit,
     triggerConfig: TriggerConfig,
     alertPreferences: AlertPreferences,
@@ -71,6 +73,12 @@ fun MonitorScreen(
         permissionGranted = granted
         permissionDenied = !granted
         monitoring = granted
+    }
+    LaunchedEffect(permissionRevision) {
+        val granted = hasCameraPermission(context)
+        permissionGranted = granted
+        permissionDenied = !granted
+        if (granted) monitoring = true
     }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ScreenTitle("实时监控", "漂浮稳定  ·  已运行 12:04", actionIcon = Icons.Filled.Settings, actionDescription = "打开设置", onAction = onOpenSettings) }
