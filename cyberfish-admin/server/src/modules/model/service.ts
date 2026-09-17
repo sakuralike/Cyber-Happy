@@ -489,6 +489,7 @@ export async function checkModel(q: CheckModelQuery) {
       modelVersion: hit.modelVersion,
       arch: hit.arch,
       quant: hit.quant,
+      framework: hit.framework,
       inputSize: hit.inputSize,
       url: hit.fileUrl,
       size: hit.fileSize ? Number(hit.fileSize) : null,

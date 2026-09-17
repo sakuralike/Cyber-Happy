@@ -58,6 +58,8 @@ fun MonitorScreen(
     alertPreferences: AlertPreferences,
     onTriggerPersist: (TriggerEvent) -> Unit,
     onMarkFalsePositive: (TriggerEvent) -> Unit,
+    isLoggedIn: Boolean = true,
+    onRequireLogin: () -> Unit = {},
     onFrameMetrics: (FrameMetrics) -> Unit = {},
     detector: Detector = MockDetector(),
 ) {
@@ -69,6 +71,7 @@ fun MonitorScreen(
     var triggerEvent by remember { mutableStateOf<TriggerEvent?>(null) }
     var pendingMisreportEvent by remember { mutableStateOf<TriggerEvent?>(null) }
     var falsePositiveMarked by rememberSaveable { mutableStateOf(false) }
+    var showLoginRequired by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionGranted = granted
         permissionDenied = !granted
@@ -104,7 +107,7 @@ fun MonitorScreen(
                     event = event,
                     falsePositiveMarked = falsePositiveMarked,
                     onMarkFalsePositive = {
-                        pendingMisreportEvent = event
+                        if (isLoggedIn) pendingMisreportEvent = event else showLoginRequired = true
                     },
                     onDismiss = { triggerEvent = null },
                 )
@@ -155,6 +158,16 @@ fun MonitorScreen(
                 onMarkFalsePositive(event)
                 pendingMisreportEvent = null
             },
+        )
+    }
+
+    if (showLoginRequired) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showLoginRequired = false },
+            title = { Text("需要登录") },
+            text = { Text("登录后才能上报误报，请先登录账号。") },
+            confirmButton = { Button(onClick = { showLoginRequired = false; onRequireLogin() }) { Text("去登录") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { showLoginRequired = false }) { Text("取消") } },
         )
     }
 }

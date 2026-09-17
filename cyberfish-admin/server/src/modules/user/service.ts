@@ -1,13 +1,21 @@
 import { prisma } from '../../lib/prisma';
 import { AppError, ErrorCode } from '../../lib/errors';
 import { hashPassword, verifyPassword } from '../../lib/hash';
-import type { FeedbackInput, FeedbackListQuery, LoginInput, RegisterInput, UpdateMeInput } from './schema';
+import type {
+  ChangePasswordInput,
+  FeedbackInput,
+  FeedbackListQuery,
+  LoginInput,
+  RegisterInput,
+  UpdateMeInput,
+} from './schema';
 
 type UserRecord = {
   id: string;
   username: string;
   displayName: string;
   email: string | null;
+  avatarFileId: string | null;
   status: string;
   lastLoginAt: Date | null;
   createdAt: Date;
@@ -19,6 +27,7 @@ function publicUser(user: UserRecord) {
     username: user.username,
     displayName: user.displayName,
     email: user.email,
+    avatarUrl: user.avatarFileId ? `/api/v1/public/assets/${user.avatarFileId}` : null,
     status: user.status,
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
@@ -28,7 +37,7 @@ function publicUser(user: UserRecord) {
 function sessionResult(user: UserRecord, signToken: (payload: { sub: string; username: string; kind: 'APP_USER' }) => string) {
   return {
     token: signToken({ sub: user.id, username: user.username, kind: 'APP_USER' }),
-    expiresIn: 7 * 24 * 3600,
+    expiresIn: 30 * 24 * 3600,
     user: publicUser(user),
   };
 }
@@ -52,6 +61,7 @@ export async function register(
       username: true,
       displayName: true,
       email: true,
+      avatarFileId: true,
       status: true,
       lastLoginAt: true,
       createdAt: true,
@@ -80,6 +90,7 @@ export async function login(
       username: true,
       displayName: true,
       email: true,
+      avatarFileId: true,
       status: true,
       lastLoginAt: true,
       createdAt: true,
@@ -96,6 +107,7 @@ export async function me(userId: string) {
       username: true,
       displayName: true,
       email: true,
+      avatarFileId: true,
       status: true,
       lastLoginAt: true,
       createdAt: true,
@@ -117,6 +129,44 @@ export async function updateMe(userId: string, input: UpdateMeInput) {
       username: true,
       displayName: true,
       email: true,
+      avatarFileId: true,
+      status: true,
+      lastLoginAt: true,
+      createdAt: true,
+    },
+  });
+  return publicUser(user);
+}
+
+export async function changePassword(userId: string, input: ChangePasswordInput) {
+  const user = await prisma.userAccount.findUnique({ where: { id: userId } });
+  if (!user) throw AppError.notFound('账号不存在');
+  if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
+    throw new AppError(ErrorCode.BAD_CREDENTIALS, '当前密码错误', 401);
+  }
+  await prisma.userAccount.update({
+    where: { id: userId },
+    data: { passwordHash: await hashPassword(input.newPassword) },
+  });
+  return { changed: true };
+}
+
+export async function updateAvatar(userId: string, fileId: string) {
+  const file = await prisma.fileAsset.findUnique({
+    where: { id: fileId },
+    select: { id: true, bizType: true },
+  });
+  if (!file) throw AppError.notFound('头像文件不存在');
+  if (file.bizType !== 'IMAGE') throw AppError.badRequest('头像必须使用图片文件');
+  const user = await prisma.userAccount.update({
+    where: { id: userId },
+    data: { avatarFileId: file.id },
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      email: true,
+      avatarFileId: true,
       status: true,
       lastLoginAt: true,
       createdAt: true,

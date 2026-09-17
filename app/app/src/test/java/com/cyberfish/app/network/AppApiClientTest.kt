@@ -12,6 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 class AppApiClientTest {
     private lateinit var server: MockWebServer
@@ -52,7 +53,17 @@ class AppApiClientTest {
     fun `misreport upload uses confirmed false positive contract`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(201).setBody("""{"code":0,"message":"ok","data":{"id":"report-123"}}"""))
 
-        val result = client().submitMisreport(
+        val result = client(
+            UserSession(
+                token = "user-token",
+                user = UserAccount(
+                    id = "user-123",
+                    username = "angler",
+                    displayName = "钓友",
+                    email = null,
+                ),
+            ),
+        ).submitMisreport(
             FishRecordEntity(
                 occurredAtMillis = 1_700_000_000_000L,
                 triggerTimestampMillis = 966L,
@@ -71,10 +82,64 @@ class AppApiClientTest {
         assertEquals("test-app-token", request.getHeader("X-App-Token"))
         val payload = JSONObject(request.body.readUtf8())
         assertEquals("device-123", payload.getString("deviceId"))
-        assertEquals("anonymous-device-123", payload.getString("userId"))
+        assertEquals("user-123", payload.getString("userId"))
         assertEquals("FALSE_POSITIVE", payload.getString("reportType"))
         assertEquals(966L, payload.getJSONObject("rawData").getLong("triggerTimestampMillis"))
         assertFalse(payload.has("videoUrl"))
+        assertEquals("Bearer user-token", request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `misreport without an authenticated session is rejected before network`() = runBlocking {
+        val result = client().submitMisreport(
+            FishRecordEntity(
+                occurredAtMillis = 1_700_000_000_000L,
+                triggerTimestampMillis = 966L,
+                confidence = 0.94f,
+                verticalDisplacementPx = 19.2f,
+                jitterHz = 3.6f,
+                trajectoryCsv = "0,5,12,19",
+                isFalsePositive = true,
+            ),
+        )
+
+        val failure = result as ApiResult.HttpError
+        assertEquals(401, failure.statusCode)
+        assertEquals("请先登录后上报误报", failure.message)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `misreport media upload keeps user authorization`() = runBlocking {
+        val snapshot = File.createTempFile("misreport-", ".jpg")
+        snapshot.writeBytes(byteArrayOf(1, 2, 3))
+        try {
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"code":0,"message":"ok","data":{"url":"/files/snapshot.jpg"}}"""))
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"code":0,"message":"ok","data":{"id":"report-123"}}"""))
+
+            val result = client(testSession()).submitMisreport(
+                FishRecordEntity(
+                    occurredAtMillis = 1_700_000_000_000L,
+                    triggerTimestampMillis = 966L,
+                    confidence = 0.94f,
+                    verticalDisplacementPx = 19.2f,
+                    jitterHz = 3.6f,
+                    trajectoryCsv = "0,5,12,19",
+                    snapshotPath = snapshot.absolutePath,
+                    isFalsePositive = true,
+                ),
+            )
+
+            assertEquals("report-123", (result as ApiResult.Success).value)
+            val upload = server.takeRequest()
+            assertEquals("/api/v1/files/upload", upload.requestUrl?.encodedPath)
+            assertEquals("IMAGE", upload.requestUrl?.queryParameter("bizType"))
+            assertEquals("Bearer user-token", upload.getHeader("Authorization"))
+            assertEquals("test-app-token", upload.getHeader("X-App-Token"))
+            assertEquals("Bearer user-token", server.takeRequest().getHeader("Authorization"))
+        } finally {
+            snapshot.delete()
+        }
     }
 
     @Test
@@ -139,7 +204,7 @@ class AppApiClientTest {
     fun `model check parses LiteRT metadata and resolves relative url`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"code":0,"message":"ok","data":{"hasUpdate":true,"model":{"modelVersion":"yolo26n-w8a32-v1","arch":"YOLO26n","quant":"W8A32","framework":"LiteRT","inputSize":640,"url":"/files/models/yolo26n.tflite","size":1234,"sha256":"${"a".repeat(64)}","labels":["fish_float"],"signature":"c2ln","signatureAlgorithm":"ECDSA_P256_SHA256","publicKeyId":"key-1","signatureExpiresAt":"2030-01-01T00:00:00Z"},"dispatchId":"dispatch-1"}}""",
+                """{"code":0,"message":"ok","data":{"hasUpdate":true,"model":{"modelVersion":"yolo26n-w8a32-v1","arch":"YOLO26n","quant":"W8A32","framework":"LiteRT","inputSize":640,"url":"/files/models/yolo26n.tflite","size":1234,"sha256":"${"a".repeat(64)}","labels":["fish_float"],"signature":"c2ln","signatureAlgorithm":"ECDSA_P256_SHA256","publicKeyId":"key-1","signatureExpiresAt":"2030-01-01T00:00:00Z","runtimeSignatureName":null,"inputName":null,"outputName":null},"dispatchId":"dispatch-1"}}""",
             ),
         )
 
@@ -151,6 +216,9 @@ class AppApiClientTest {
         assertEquals("YOLO26n", check.update?.descriptor?.architecture)
         assertEquals("LiteRT", check.update?.descriptor?.framework)
         assertEquals("fish_float", check.update?.descriptor?.labels?.single())
+        assertEquals(null, check.update?.descriptor?.runtimeSignatureName)
+        assertEquals(null, check.update?.descriptor?.inputName)
+        assertEquals(null, check.update?.descriptor?.outputName)
         assertFalse(check.update?.descriptor?.coordinatesNormalized ?: true)
         assertEquals("dispatch-1", check.update?.dispatchId)
         assertTrue(check.update?.downloadUrl?.endsWith("/files/models/yolo26n.tflite") == true)
@@ -188,7 +256,17 @@ class AppApiClientTest {
         assertEquals(listOf(11L), progress)
     }
 
-    private fun client() = AppApiClient(
+    private fun testSession() = UserSession(
+        token = "user-token",
+        user = UserAccount(
+            id = "user-123",
+            username = "angler",
+            displayName = "钓友",
+            email = null,
+        ),
+    )
+
+    private fun client(session: UserSession? = null) = AppApiClient(
         config = ApiConfig(server.url("/").toString(), "test-app-token"),
         identityStore = object : DeviceIdentityProvider {
             override suspend fun get() = DeviceIdentity(
@@ -197,6 +275,9 @@ class AppApiClientTest {
                 deviceModel = "Pixel Test",
                 osVersion = "Android 14",
             )
+        },
+        userSessionProvider = object : UserSessionProvider {
+            override suspend fun get() = session
         },
     )
 }

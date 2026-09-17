@@ -9,6 +9,7 @@ export interface UserAccount {
   username: string;
   displayName: string;
   email: string | null;
+  avatarUrl: string | null;
   status: string;
   lastLoginAt: string | null;
   createdAt: string;
@@ -104,6 +105,17 @@ export const fetchMe = () => userHttp.get('/users/me') as Promise<UserAccount>;
 
 export const updateMe = (input: { displayName: string; email?: string | null }) =>
   userHttp.patch('/users/me', input) as Promise<UserAccount>;
+
+export const changePassword = (input: { currentPassword: string; newPassword: string }) =>
+  userHttp.patch('/users/me/password', input) as Promise<{ changed: boolean }>;
+
+export async function uploadAvatar(file: File): Promise<UserAccount> {
+  const form = new FormData();
+  form.append('file', file);
+  return userHttp.post('/users/me/avatar', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }) as Promise<UserAccount>;
+}
 
 export const listMisreports = (params: { page?: number; pageSize?: number } = {}) =>
   userHttp.get('/users/misreports', { params }) as Promise<PageData<UserMisreport>>;

@@ -9,6 +9,7 @@ class LiteRtDetector(
     private val descriptor: LiteRtModelDescriptor,
 ) : CloseableDetector {
     private val model: CompiledModel
+    private val runtimeSignature: String?
     private val inputBuffers: List<TensorBuffer>
     private val outputBuffers: List<TensorBuffer>
     private val lock = Any()
@@ -18,9 +19,16 @@ class LiteRtDetector(
         val contract = LiteRtModelContract.validate(descriptor)
         require(contract.isValid) { contract.errors.joinToString("；") }
         model = CompiledModel.create(modelFile.absolutePath)
-        val signature = descriptor.runtimeSignatureName.orEmpty()
-        inputBuffers = if (signature.isBlank()) model.createInputBuffers() else model.createInputBuffers(signature)
-        outputBuffers = if (signature.isBlank()) model.createOutputBuffers() else model.createOutputBuffers(signature)
+        val signature = descriptor.runtimeSignatureName.orEmpty().trim()
+        val setup = try {
+            BufferSetup(signature.takeIf { it.isNotBlank() }, createBuffers(signature))
+        } catch (firstError: Exception) {
+            if (signature.isNotBlank()) throw firstError
+            BufferSetup(DEFAULT_RUNTIME_SIGNATURE, runCatching { createBuffers(DEFAULT_RUNTIME_SIGNATURE) }.getOrElse { throw firstError })
+        }
+        runtimeSignature = setup.signature
+        inputBuffers = setup.buffers.first
+        outputBuffers = setup.buffers.second
         require(inputBuffers.size == 1) { "LiteRT 模型必须有一个输入 buffer" }
         require(outputBuffers.size == 1) { "LiteRT 模型必须有一个输出 buffer" }
     }
@@ -42,8 +50,8 @@ class LiteRtDetector(
         return synchronized(lock) {
             try {
                 inputBuffers[0].writeFloat(input)
-                val signature = descriptor.runtimeSignatureName.orEmpty()
-                if (signature.isBlank()) model.run(inputBuffers, outputBuffers) else model.run(inputBuffers, outputBuffers, signature)
+                runtimeSignature?.let { model.run(inputBuffers, outputBuffers, it) }
+                    ?: model.run(inputBuffers, outputBuffers)
                 parseDetection(outputBuffers[0].readFloat())
             } catch (_: Exception) {
                 null
@@ -68,6 +76,22 @@ class LiteRtDetector(
             model.close()
         }
     }
+
+    private fun createBuffers(signature: String): Pair<List<TensorBuffer>, List<TensorBuffer>> {
+        val inputs = if (signature.isBlank()) model.createInputBuffers() else model.createInputBuffers(signature)
+        return try {
+            val outputs = if (signature.isBlank()) model.createOutputBuffers() else model.createOutputBuffers(signature)
+            inputs to outputs
+        } catch (error: Exception) {
+            inputs.forEach(TensorBuffer::close)
+            throw error
+        }
+    }
+
+    private data class BufferSetup(
+        val signature: String?,
+        val buffers: Pair<List<TensorBuffer>, List<TensorBuffer>>,
+    )
 
     private fun parseDetection(values: FloatArray): Detection? {
         var best: Detection? = null
@@ -106,6 +130,7 @@ class LiteRtDetector(
     )
 
     private companion object {
+        const val DEFAULT_RUNTIME_SIGNATURE = "serving_default"
         const val CONFIDENCE_INDEX = 4
         const val CLASS_ID_INDEX = 5
     }

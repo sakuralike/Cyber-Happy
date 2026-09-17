@@ -30,7 +30,9 @@ val appApiBaseUrl = providers.gradleProperty("appApiBaseUrl").orNull?.trim().orE
 val appApiToken = providers.gradleProperty("appApiToken").orNull?.trim().orEmpty()
     .ifBlank { System.getenv("APP_API_TOKEN")?.trim().orEmpty() }
     .ifBlank { localProperties.getProperty("appApiToken")?.trim().orEmpty() }
-val modelPublicKeys = providers.gradleProperty("modelPublicKeys").orElse("{}").get()
+val modelPublicKeys = providers.gradleProperty("modelPublicKeys").orNull?.trim()
+    ?.takeIf { it.isNotBlank() }
+    ?: localProperties.getProperty("modelPublicKeys")?.trim().orEmpty()
 
 fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\""
 
@@ -50,8 +52,8 @@ android {
         applicationId = "com.cyberfish.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 132
-        versionName = "1.3.2"
+        versionCode = 134
+        versionName = "1.3.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("int", "PLANNED_MIN_SDK", "28")

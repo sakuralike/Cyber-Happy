@@ -22,6 +22,17 @@ export const updateMeSchema = z.object({
   email: emailSchema.optional(),
 });
 
+export const changePasswordSchema = z
+  .object({
+    currentPassword: passwordSchema,
+    newPassword: passwordSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (value.currentPassword === value.newPassword) {
+      ctx.addIssue({ code: 'custom', path: ['newPassword'], message: '新密码不能与当前密码相同' });
+    }
+  });
+
 export const feedbackSchema = z.object({
   content: z.string().trim().min(1, '反馈内容不能为空').max(2000),
   contact: z.string().trim().max(160).optional(),
@@ -32,5 +43,6 @@ export const feedbackListSchema = listQuerySchema;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;
 export type FeedbackListQuery = z.infer<typeof feedbackListSchema>;
