@@ -16,12 +16,12 @@ import * as service from './service';
 
 const routes: FastifyPluginAsync = async (app) => {
   app.post('/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const data = await service.register(parseOrThrow(registerSchema, request.body), (payload) => app.jwt.sign(payload));
+    const data = await service.register(parseOrThrow(registerSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }));
     return sendCreated(reply, data);
   });
 
   app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const data = await service.login(parseOrThrow(loginSchema, request.body), (payload) => app.jwt.sign(payload));
+    const data = await service.login(parseOrThrow(loginSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }));
     return sendOk(reply, data);
   });
 

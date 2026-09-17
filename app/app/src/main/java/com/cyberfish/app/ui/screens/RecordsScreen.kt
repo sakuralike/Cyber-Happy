@@ -16,8 +16,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -45,10 +47,18 @@ import com.cyberfish.app.ui.theme.CyberFishType
 fun RecordsScreen(
     records: List<FishRecord>?,
     onMarkFalsePositive: (FishRecord) -> Unit,
+    onDeleteRecord: (FishRecord) -> Unit = {},
+    onDeleteAllRecords: () -> Unit = {},
+    isLoggedIn: Boolean = true,
+    onRequireLogin: () -> Unit = {},
 ) {
     var selectedRecord by remember { mutableStateOf<FishRecord?>(null) }
     var pendingMisreportRecord by remember { mutableStateOf<FishRecord?>(null) }
+    var showLoginRequired by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(RecordFilter.All) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedRecordIds by remember { mutableStateOf(emptySet<Long>()) }
+    var pendingDelete by remember { mutableStateOf<DeleteRequest?>(null) }
     val loadedRecords = records.orEmpty()
     val visibleRecords = when (filter) {
         RecordFilter.All -> loadedRecords
@@ -62,7 +72,30 @@ fun RecordsScreen(
         contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item { ScreenTitle("中鱼记录", "今日 ${loadedRecords.count { it.occurredAtMillis >= todayStart() }} 条  ·  有效 ${loadedRecords.count { it.occurredAtMillis >= todayStart() && !it.isFalsePositive }} 条") }
+        item {
+            RecordHeader(
+                records = visibleRecords,
+                selectionMode = selectionMode,
+                selectedCount = selectedRecordIds.size,
+                onToggleSelectionMode = {
+                    selectionMode = !selectionMode
+                    selectedRecordIds = emptySet()
+                },
+                onToggleSelectAll = {
+                    selectedRecordIds = if (selectedRecordIds.size == visibleRecords.size) emptySet() else visibleRecords.mapTo(linkedSetOf()) { it.id }
+                },
+                onDeleteSelected = {
+                    pendingDelete = if (
+                        selectedRecordIds.size == loadedRecords.size &&
+                        loadedRecords.all { it.id in selectedRecordIds }
+                    ) {
+                        DeleteRequest.All
+                    } else {
+                        DeleteRequest.Selected(selectedRecordIds)
+                    }
+                },
+            )
+        }
         item { TodayStats(loadedRecords) }
         item { RecordFilterRow(filter) { filter = it } }
         if (records == null) {
@@ -71,7 +104,18 @@ fun RecordsScreen(
             item { EmptyState("暂无记录", "开始监控后，触发事件会显示在这里") }
         } else {
             items(visibleRecords, key = { it.id }) { record ->
-                RecordRow(record) { selectedRecord = record }
+                RecordRow(
+                    record = record,
+                    selected = record.id in selectedRecordIds,
+                    selectionMode = selectionMode,
+                    onClick = {
+                        if (selectionMode) {
+                            selectedRecordIds = selectedRecordIds.toMutableSet().apply {
+                                if (!add(record.id)) remove(record.id)
+                            }
+                        } else selectedRecord = record
+                    },
+                )
             }
         }
     }
@@ -81,8 +125,9 @@ fun RecordsScreen(
             record = record,
             onDismiss = { selectedRecord = null },
             onMarkFalsePositive = {
-                pendingMisreportRecord = record
+                if (isLoggedIn) pendingMisreportRecord = record else showLoginRequired = true
             },
+            onDelete = { pendingDelete = DeleteRequest.Selected(setOf(record.id)) },
         )
     }
 
@@ -96,6 +141,46 @@ fun RecordsScreen(
             },
         )
     }
+
+    if (showLoginRequired) {
+        AlertDialog(
+            onDismissRequest = { showLoginRequired = false },
+            title = { Text("需要登录") },
+            text = { Text("登录后才能上报误报，请先登录账号。") },
+            confirmButton = { Button(onClick = { showLoginRequired = false; onRequireLogin() }) { Text("去登录") } },
+            dismissButton = { TextButton(onClick = { showLoginRequired = false }) { Text("取消") } },
+        )
+    }
+
+    pendingDelete?.let { request ->
+        val count = when (request) {
+            DeleteRequest.All -> loadedRecords.size
+            is DeleteRequest.Selected -> request.ids.size
+        }
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除记录") },
+            text = { Text("确定删除 $count 条记录吗？此操作无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    when (request) {
+                        DeleteRequest.All -> onDeleteAllRecords()
+                        is DeleteRequest.Selected -> request.ids.forEach { id -> loadedRecords.firstOrNull { it.id == id }?.let(onDeleteRecord) }
+                    }
+                    selectedRecord = null
+                    selectedRecordIds = emptySet()
+                    selectionMode = false
+                    pendingDelete = null
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
+        )
+    }
+}
+
+private sealed interface DeleteRequest {
+    data object All : DeleteRequest
+    data class Selected(val ids: Set<Long>) : DeleteRequest
 }
 
 private enum class RecordFilter(val label: String) {
@@ -144,7 +229,32 @@ private fun StatCell(value: String, label: String, color: Color, modifier: Modif
 }
 
 @Composable
-private fun RecordRow(record: FishRecord, onClick: () -> Unit) {
+private fun RecordHeader(
+    records: List<FishRecord>,
+    selectionMode: Boolean,
+    selectedCount: Int,
+    onToggleSelectionMode: () -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onDeleteSelected: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("中鱼记录", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            Text("今日 ${records.count { it.occurredAtMillis >= todayStart() }} 条", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
+        }
+        if (selectionMode) {
+            TextButton(onClick = onToggleSelectAll, enabled = records.isNotEmpty()) { Text(if (selectedCount == records.size) "取消全选" else "全选") }
+            TextButton(onClick = onDeleteSelected, enabled = selectedCount > 0) { Text("删除($selectedCount)", color = MaterialTheme.colorScheme.error) }
+        }
+        TextButton(onClick = onToggleSelectionMode, enabled = records.isNotEmpty()) { Text(if (selectionMode) "完成" else "管理") }
+    }
+}
+
+@Composable
+private fun RecordRow(record: FishRecord, selected: Boolean, selectionMode: Boolean, onClick: () -> Unit) {
     Card(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp).clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -152,6 +262,7 @@ private fun RecordRow(record: FishRecord, onClick: () -> Unit) {
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (selectionMode) Checkbox(checked = selected, onCheckedChange = { onClick() })
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(formatRecordTime(record.occurredAtMillis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -181,6 +292,7 @@ private fun RecordDetailDialog(
     record: FishRecord,
     onDismiss: () -> Unit,
     onMarkFalsePositive: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -200,11 +312,9 @@ private fun RecordDetailDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
+            TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
         },
-        dismissButton = if (record.isFalsePositive) null else {
-            { TextButton(onClick = onMarkFalsePositive) { Text("标记误报") } }
-        },
+        dismissButton = { if (!record.isFalsePositive) TextButton(onClick = onMarkFalsePositive) { Text("标记误报") } else TextButton(onClick = onDismiss) { Text("关闭") } },
     )
 }
 

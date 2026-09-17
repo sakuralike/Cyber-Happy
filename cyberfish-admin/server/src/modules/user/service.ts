@@ -37,7 +37,7 @@ function publicUser(user: UserRecord) {
 function sessionResult(user: UserRecord, signToken: (payload: { sub: string; username: string; kind: 'APP_USER' }) => string) {
   return {
     token: signToken({ sub: user.id, username: user.username, kind: 'APP_USER' }),
-    expiresIn: 7 * 24 * 3600,
+    expiresIn: 30 * 24 * 3600,
     user: publicUser(user),
   };
 }

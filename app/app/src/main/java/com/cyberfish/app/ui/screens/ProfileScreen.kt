@@ -1,6 +1,7 @@
 package com.cyberfish.app.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,11 +30,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -45,6 +49,11 @@ import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.UserSession
 import com.cyberfish.app.ui.components.ScreenTitle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.URL
+import android.graphics.BitmapFactory
+import android.net.Uri
 
 @Composable
 fun ProfileScreen(
@@ -57,6 +66,9 @@ fun ProfileScreen(
     onLogin: suspend (String, String) -> ApiResult<UserSession>,
     onRegister: suspend (String, String, String, String) -> ApiResult<UserSession>,
     onLogout: suspend () -> Unit,
+    onPickAvatar: () -> Unit = {},
+    onUpdateProfile: suspend (String, String) -> ApiResult<com.cyberfish.app.network.UserAccount> = { _, _ -> ApiResult.NotConfigured },
+    onChangePassword: suspend (String, String) -> ApiResult<Unit> = { _, _ -> ApiResult.NotConfigured },
     onSubmitFeedback: suspend (String, String) -> ApiResult<Unit>,
 ) {
     var action by remember { mutableStateOf(ProfileAction.None) }
@@ -77,47 +89,48 @@ fun ProfileScreen(
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 shape = RoundedCornerShape(20.dp),
             ) {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth().padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    Surface(
-                        modifier = Modifier.size(72.dp),
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
-                        Text(
-                            text = (account?.displayName ?: "赛").take(1),
-                            modifier = Modifier.padding(18.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            account?.displayName ?: "未登录",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            account?.username ?: "登录后同步网站用户中心",
-                            modifier = Modifier.padding(top = 5.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            "本地记录 $validCount 条有效 · ${records.size - validCount} 条误报",
-                            modifier = Modifier.padding(top = 4.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        Surface(
+                            modifier = Modifier.size(72.dp),
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            AvatarContent(account)
+                        }
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            ProfileValueRow("昵称", account?.displayName ?: "未登录")
+                            ProfileValueRow("账号", account?.username ?: "登录后同步网站用户中心")
+                            Text(
+                                "本地记录 $validCount 条有效 · ${records.size - validCount} 条误报",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                     if (account == null) {
-                        Button(onClick = { action = ProfileAction.Login }) { Text("登录") }
+                        Button(
+                            onClick = { action = ProfileAction.Login },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("登录") }
                     } else {
-                        TextButton(onClick = { scope.launch { onLogout() } }) { Text("退出") }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(onClick = onPickAvatar, modifier = Modifier.weight(1f)) { Text("更换头像") }
+                            TextButton(onClick = { action = ProfileAction.EditProfile }, modifier = Modifier.weight(1f)) { Text("编辑资料") }
+                            TextButton(onClick = { action = ProfileAction.ChangePassword }, modifier = Modifier.weight(1f)) { Text("修改密码") }
+                            TextButton(onClick = { scope.launch { onLogout() } }, modifier = Modifier.weight(0.7f)) { Text("退出") }
+                        }
                     }
                 }
             }
@@ -175,6 +188,15 @@ fun ProfileScreen(
             onLogin = onLogin,
             onRegister = onRegister,
         ) { action = ProfileAction.None }
+        ProfileAction.EditProfile -> EditProfileDialog(
+            user = account,
+            onDismiss = { action = ProfileAction.None },
+            onSubmit = onUpdateProfile,
+        ) { action = ProfileAction.None }
+        ProfileAction.ChangePassword -> ChangePasswordDialog(
+            onDismiss = { action = ProfileAction.None },
+            onSubmit = onChangePassword,
+        ) { action = ProfileAction.None }
         ProfileAction.Feedback -> FeedbackDialog(
             session = userSession,
             supportContent = supportContent,
@@ -187,7 +209,117 @@ fun ProfileScreen(
     }
 }
 
-private enum class ProfileAction { None, Login, Export, Favorites, Feedback, About }
+@Composable
+private fun ProfileValueRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            value,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun AvatarContent(account: com.cyberfish.app.network.UserAccount?) {
+    val avatarUrl = account?.avatarUrl
+    val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, avatarUrl) {
+        value = withContext(Dispatchers.IO) {
+            avatarUrl?.let {
+                runCatching {
+                    if (it.startsWith("file:")) BitmapFactory.decodeFile(Uri.parse(it).path)?.asImageBitmap()
+                    else URL(it).openStream().use(BitmapFactory::decodeStream)?.asImageBitmap()
+                }.getOrNull()
+            }
+        }
+    }
+    if (bitmap != null) {
+        Image(bitmap = bitmap!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+    } else {
+        Text(
+            text = (account?.displayName ?: "赛").take(1),
+            modifier = Modifier.padding(18.dp),
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+private enum class ProfileAction { None, Login, EditProfile, ChangePassword, Export, Favorites, Feedback, About }
+
+@Composable
+private fun EditProfileDialog(
+    user: com.cyberfish.app.network.UserAccount?,
+    onDismiss: () -> Unit,
+    onSubmit: suspend (String, String) -> ApiResult<com.cyberfish.app.network.UserAccount>,
+    onSuccess: () -> Unit,
+) {
+    var displayName by remember { mutableStateOf(user?.displayName.orEmpty()) }
+    var email by remember { mutableStateOf(user?.email.orEmpty()) }
+    var submitting by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑资料") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(displayName, { displayName = it }, label = { Text("昵称") }, singleLine = true)
+            OutlinedTextField(email, { email = it }, label = { Text("邮箱（可选）") }, singleLine = true)
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        } },
+        confirmButton = { Button(enabled = !submitting && displayName.trim().isNotEmpty(), onClick = {
+            submitting = true; error = null
+            scope.launch { when (val result = onSubmit(displayName.trim(), email.trim())) {
+                is ApiResult.Success -> onSuccess()
+                else -> error = result.message()
+            }; submitting = false }
+        }) { if (submitting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun ChangePasswordDialog(
+    onDismiss: () -> Unit,
+    onSubmit: suspend (String, String) -> ApiResult<Unit>,
+    onSuccess: () -> Unit,
+) {
+    var current by remember { mutableStateOf("") }
+    var next by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("修改密码") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(current, { current = it }, label = { Text("当前密码") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+            OutlinedTextField(next, { next = it }, label = { Text("新密码") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        } },
+        confirmButton = { Button(enabled = !submitting && current.length >= 6 && next.length >= 6, onClick = {
+            submitting = true; error = null
+            scope.launch { when (val result = onSubmit(current, next)) {
+                is ApiResult.Success -> onSuccess()
+                else -> error = result.message()
+            }; submitting = false }
+        }) { if (submitting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("修改") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
 
 @Composable
 private fun LoginDialog(

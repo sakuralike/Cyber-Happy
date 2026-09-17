@@ -1,6 +1,9 @@
 package com.cyberfish.app.data
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
+import android.graphics.BitmapFactory
 import com.cyberfish.app.data.local.CyberFishDatabase
 import com.cyberfish.app.data.local.FishRecordDao
 import com.cyberfish.app.data.local.FishRecordEntity
@@ -14,6 +17,7 @@ import com.cyberfish.app.network.AppEventType
 import com.cyberfish.app.network.AppUpdateInfo
 import com.cyberfish.app.network.DeviceIdentityStore
 import com.cyberfish.app.network.SupportContent
+import com.cyberfish.app.network.UserAccount
 import com.cyberfish.app.network.UserSession
 import com.cyberfish.app.network.UserSessionStore
 import com.cyberfish.app.network.MisreportUploadWorker
@@ -28,6 +32,8 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.URL
 import kotlinx.coroutines.channels.awaitClose
 import androidx.lifecycle.Observer
 import org.json.JSONObject
@@ -56,6 +62,14 @@ class CyberFishRepository(context: Context) {
         recordDao.insert(FishRecordEntity.fromEvent(event, System.currentTimeMillis()))
     }
 
+    suspend fun deleteRecord(recordId: Long) {
+        recordDao.deleteById(recordId)
+    }
+
+    suspend fun deleteAllRecords() {
+        recordDao.deleteAll()
+    }
+
     suspend fun confirmMisreport(event: TriggerEvent) {
         recordDao.insert(FishRecordEntity.fromEvent(event, System.currentTimeMillis(), isFalsePositive = true))
         confirmMisreport(event.timestampMillis)
@@ -81,17 +95,110 @@ class CyberFishRepository(context: Context) {
 
     suspend fun login(username: String, password: String): ApiResult<UserSession> {
         val result = appApiClient.login(username, password)
-        if (result is ApiResult.Success) userSessionStore.save(result.value)
+        if (result is ApiResult.Success) persistSession(result.value)
         return result
     }
 
     suspend fun register(username: String, password: String, displayName: String, email: String): ApiResult<UserSession> {
         val result = appApiClient.register(username, password, displayName, email)
-        if (result is ApiResult.Success) userSessionStore.save(result.value)
+        if (result is ApiResult.Success) persistSession(result.value)
         return result
     }
 
+    suspend fun updateMe(displayName: String, email: String): ApiResult<UserAccount> {
+        val result = appApiClient.updateMe(displayName, email)
+        if (result is ApiResult.Success) {
+            val current = userSessionStore.get() ?: return result
+            val avatarUrl = current.user.avatarUrl?.takeIf { it.startsWith("file:") } ?: result.value.avatarUrl
+            persistSession(UserSession(current.token, result.value.copy(avatarUrl = avatarUrl)))
+        }
+        return result
+    }
+
+    suspend fun changePassword(currentPassword: String, newPassword: String): ApiResult<Unit> =
+        appApiClient.changePassword(currentPassword, newPassword)
+
+    suspend fun uploadAvatar(uri: Uri): ApiResult<UserAccount> {
+        val resolver = appContext.contentResolver
+        val mimeType = resolver.getType(uri)?.takeIf { it in setOf("image/jpeg", "image/png", "image/webp") }
+            ?: return ApiResult.ParseError("头像格式仅支持 JPG、PNG 或 WebP")
+        val extension = when (mimeType) {
+            "image/png" -> ".png"
+            "image/webp" -> ".webp"
+            else -> ".jpg"
+        }
+        val file = File.createTempFile("avatar-", extension, appContext.cacheDir)
+        try {
+            val input = resolver.openInputStream(uri) ?: return ApiResult.ParseError("无法读取头像文件")
+            input.use { source -> file.outputStream().use { target -> source.copyTo(target) } }
+            val result = appApiClient.uploadAvatar(file, mimeType)
+            if (result is ApiResult.Success) {
+                val session = userSessionStore.get() ?: return result
+                userSessionStore.save(UserSession(session.token, result.value.copy(avatarUrl = cacheAvatar(file, session.user.id))))
+            }
+            return result
+        } finally {
+            file.delete()
+        }
+    }
+
+    suspend fun uploadAvatar(bitmap: Bitmap): ApiResult<UserAccount> {
+        val file = File.createTempFile("avatar-crop-", ".png", appContext.cacheDir)
+        return try {
+            file.outputStream().use { output -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, output) }
+            val result = appApiClient.uploadAvatar(file, "image/png")
+            if (result is ApiResult.Success) {
+                val session = userSessionStore.get() ?: return result
+                userSessionStore.save(UserSession(session.token, result.value.copy(avatarUrl = cacheAvatar(file, session.user.id))))
+            }
+            result
+        } finally {
+            file.delete()
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+    }
+
     suspend fun logout() = userSessionStore.clear()
+
+    suspend fun resumeUserSession(): UserSession? {
+        val session = userSessionStore.resume() ?: return null
+        return persistSession(session)
+    }
+
+    private suspend fun persistSession(session: UserSession): UserSession {
+        val cached = cacheRemoteAvatar(session)
+        userSessionStore.save(cached)
+        return cached
+    }
+
+    private suspend fun cacheRemoteAvatar(session: UserSession): UserSession = withContext(Dispatchers.IO) {
+        val avatarUrl = session.user.avatarUrl ?: return@withContext session
+        if (avatarUrl.startsWith("file:")) return@withContext session
+        val target = avatarCacheFile(session.user.id)
+        if (target.isFile && target.length() > 0L) {
+            return@withContext session.copy(user = session.user.copy(avatarUrl = target.toURI().toString()))
+        }
+        val bitmap = runCatching { URL(avatarUrl).openStream().use(BitmapFactory::decodeStream) }.getOrNull()
+            ?: return@withContext session
+        try {
+            target.parentFile?.mkdirs()
+            target.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            session.copy(user = session.user.copy(avatarUrl = target.toURI().toString()))
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun cacheAvatar(source: File, userId: String): String? = runCatching {
+        val bitmap = BitmapFactory.decodeFile(source.absolutePath) ?: return null
+        val target = avatarCacheFile(userId)
+        target.parentFile?.mkdirs()
+        target.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+        target.toURI().toString()
+    }.getOrNull()
+
+    private fun avatarCacheFile(userId: String) = File(appContext.filesDir, "profile/avatar-${userId.replace(Regex("[^A-Za-z0-9_-]"), "_")}.png")
 
     suspend fun loadSupportContent(): ApiResult<SupportContent> = appApiClient.fetchSupportContent()
 

@@ -20,6 +20,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
@@ -35,6 +37,7 @@ import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.update.installApk
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.PillTabBar
+import com.cyberfish.app.ui.components.AvatarCropDialog
 import com.cyberfish.app.ui.screens.FishingSpotMapScreen
 import com.cyberfish.app.ui.screens.MonitorScreen
 import com.cyberfish.app.ui.screens.ProfileScreen
@@ -45,6 +48,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import android.net.Uri
 import kotlin.math.roundToLong
 
 internal enum class AppTab(val label: String) {
@@ -74,8 +78,13 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     var showingFishingSpots by rememberSaveable { mutableStateOf(false) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     var supportContent by remember { mutableStateOf(SupportContent()) }
+    var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        avatarCropUri = uri
+    }
     val selectedTab = AppTab.valueOf(selectedTabName)
     LaunchedEffect(repository) {
+        repository.resumeUserSession()
         repository.scheduleModelUpdates()
         val supportResult = withContext(Dispatchers.IO) {
             repository.reportEvent(AppEventType.LAUNCH)
@@ -90,6 +99,13 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     )
 
     CyberFishTheme(darkTheme = darkTheme) {
+        avatarCropUri?.let { uri ->
+            AvatarCropDialog(
+                uri = uri,
+                onDismiss = { avatarCropUri = null },
+                onUpload = { bitmap -> withContext(Dispatchers.IO) { repository.uploadAvatar(bitmap) } },
+            )
+        }
         if (showingFishingSpots) {
             FishingSpotMapScreen(
                 favoriteSpots = preferences.favoriteFishingSpots,
@@ -113,6 +129,8 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                     when (selectedTab) {
                         AppTab.Monitor -> MonitorScreen(
                             permissionRevision = permissionRevision,
+                            isLoggedIn = userSession != null,
+                            onRequireLogin = { selectedTabName = AppTab.Profile.name },
                             onOpenSettings = { selectedTabName = AppTab.Settings.name },
                             triggerConfig = preferences.toTriggerConfig(),
                             alertPreferences = AlertPreferences(
@@ -145,8 +163,16 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                         )
                         AppTab.Records -> RecordsScreen(
                             records = records,
+                            isLoggedIn = userSession != null,
+                            onRequireLogin = { selectedTabName = AppTab.Profile.name },
                             onMarkFalsePositive = { record ->
                                 coroutineScope.launch(Dispatchers.IO) { repository.confirmMisreport(record.triggerTimestampMillis) }
+                            },
+                            onDeleteRecord = { record ->
+                                coroutineScope.launch(Dispatchers.IO) { repository.deleteRecord(record.id) }
+                            },
+                            onDeleteAllRecords = {
+                                coroutineScope.launch(Dispatchers.IO) { repository.deleteAllRecords() }
                             },
                         )
                         AppTab.Settings -> SettingsScreen(
@@ -201,6 +227,9 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             onLogin = repository::login,
                             onRegister = repository::register,
                             onLogout = repository::logout,
+                            onPickAvatar = { avatarPicker.launch("image/*") },
+                            onUpdateProfile = repository::updateMe,
+                            onChangePassword = repository::changePassword,
                             onSubmitFeedback = repository::submitFeedback,
                         )
                     }

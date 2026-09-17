@@ -19,16 +19,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +85,8 @@ fun CameraPreviewCard(
     var metrics by remember { mutableStateOf<FrameMetrics?>(null) }
     var lastTelemetryAt by remember { mutableStateOf(0L) }
     var captureStatus by remember { mutableStateOf(CaptureStatus.Idle) }
+    var maxZoomRatio by remember { mutableFloatStateOf(1f) }
+    var selectedZoomRatio by rememberSaveable { mutableFloatStateOf(1f) }
     val notifier = remember(context, alertPreferences) { AndroidAlertNotifier(context.applicationContext, alertPreferences) }
     val triggerPipeline = remember(triggerConfig, notifier, detector) {
         TriggerPipeline(config = triggerConfig) { event ->
@@ -106,7 +112,15 @@ fun CameraPreviewCard(
             onDetection = { detection, timestampMillis -> triggerPipeline.accept(detection, timestampMillis) },
             snapshotDir = snapshotDir,
             onSnapshotReady = { latestSnapshot.set(it) },
+            onZoomCapabilitiesChanged = { maxZoom ->
+                maxZoomRatio = maxZoom.coerceAtLeast(1f)
+                if (selectedZoomRatio > maxZoomRatio) selectedZoomRatio = 1f
+            },
         )
+    }
+
+    LaunchedEffect(captureStatus, selectedZoomRatio, maxZoomRatio, frameSource) {
+        if (captureStatus == CaptureStatus.Running) frameSource.setZoomRatio(selectedZoomRatio)
     }
 
     DisposableEffect(frameSource) {
@@ -148,10 +162,43 @@ fun CameraPreviewCard(
 
             DetectionOverlay(metrics?.detection)
             PreviewHud(metrics, captureStatus, detector.modelVersion)
+            ZoomControls(
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 44.dp),
+                selectedZoomRatio = selectedZoomRatio,
+                maxZoomRatio = maxZoomRatio,
+                enabled = permissionGranted,
+                onZoomSelected = { ratio ->
+                    selectedZoomRatio = ratio.coerceIn(1f, maxZoomRatio)
+                    frameSource.setZoomRatio(selectedZoomRatio)
+                },
+            )
             if (!permissionGranted || !monitoring || captureStatus == CaptureStatus.Failed) {
                 PreviewState(Modifier.align(Alignment.Center), status)
             }
             PreviewStatus(Modifier.align(Alignment.BottomCenter), status, metrics, detector.modelVersion)
+        }
+    }
+}
+
+@Composable
+private fun ZoomControls(
+    modifier: Modifier,
+    selectedZoomRatio: Float,
+    maxZoomRatio: Float,
+    enabled: Boolean,
+    onZoomSelected: (Float) -> Unit,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        listOf(1f, 2f, 3f).forEach { ratio ->
+            FilterChip(
+                selected = selectedZoomRatio == ratio,
+                onClick = { onZoomSelected(ratio) },
+                enabled = enabled && ratio <= maxZoomRatio + 0.001f,
+                label = { Text("${ratio.toInt()}x") },
+            )
         }
     }
 }

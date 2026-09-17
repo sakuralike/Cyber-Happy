@@ -14,6 +14,12 @@ interface FishRecordDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(record: FishRecordEntity): Long
 
+    @Query("DELETE FROM fish_records WHERE id = :id")
+    suspend fun deleteById(id: Long): Int
+
+    @Query("DELETE FROM fish_records")
+    suspend fun deleteAll(): Int
+
     @Query("UPDATE fish_records SET isFalsePositive = 1 WHERE triggerTimestampMillis = :triggerTimestampMillis")
     suspend fun markFalsePositiveByTriggerTimestamp(triggerTimestampMillis: Long): Int
 

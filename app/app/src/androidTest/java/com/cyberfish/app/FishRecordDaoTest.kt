@@ -48,6 +48,19 @@ class FishRecordDaoTest {
         assertTrue(dao.observeAll().first().first().isFalsePositive)
     }
 
+    @Test
+    fun deletesSingleRecordAndAllRecords() = runBlocking {
+        val dao = database.fishRecordDao()
+        val firstId = dao.insert(record(1_000L, 10L))
+        dao.insert(record(2_000L, 20L))
+
+        assertEquals(1, dao.deleteById(firstId))
+        assertEquals(listOf(2_000L), dao.observeAll().first().map { it.occurredAtMillis })
+
+        assertEquals(1, dao.deleteAll())
+        assertTrue(dao.observeAll().first().isEmpty())
+    }
+
     private fun record(occurredAtMillis: Long, triggerTimestampMillis: Long) = FishRecordEntity(
         occurredAtMillis = occurredAtMillis,
         triggerTimestampMillis = triggerTimestampMillis,

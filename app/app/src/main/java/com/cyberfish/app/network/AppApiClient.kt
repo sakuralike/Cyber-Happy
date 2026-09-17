@@ -47,7 +47,7 @@ data class SupportContent(
     val helpContent: String = "误报请在记录详情中直接标记，系统会附带必要的识别信息供复核。",
     val aboutTitle: String = "关于赛博鱼乐",
     val aboutContent: String = "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。",
-    val privacyContent: String = "只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。",
+    val privacyContent: String = "识别默认在设备本地完成。只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。",
 )
 
 enum class AppEventType { LAUNCH, TRIGGER, MODEL_CALL, MISREPORT, CRASH }
@@ -111,7 +111,45 @@ class AppApiClient(
             .put("password", password)
             .put("displayName", displayName)
             .put("email", email),
-    )
+        )
+
+    suspend fun updateMe(displayName: String, email: String): ApiResult<UserAccount> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val url = config.endpoint("api/v1/users/me").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder().url(url)
+                .method("PATCH", JSONObject().put("displayName", displayName).put("email", email).toString().toRequestBody(JSON_MEDIA_TYPE))
+                .appToken(config.appToken).userToken(session.token).build(),
+        ) { data -> parseUserAccount(data) }
+    }
+
+    suspend fun changePassword(currentPassword: String, newPassword: String): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val url = config.endpoint("api/v1/users/me/password").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder().url(url)
+                .method("PATCH", JSONObject().put("currentPassword", currentPassword).put("newPassword", newPassword).toString().toRequestBody(JSON_MEDIA_TYPE))
+                .appToken(config.appToken).userToken(session.token).build(),
+        ) { Unit }
+    }
+
+    suspend fun uploadAvatar(file: File, mimeType: String = "image/jpeg"): ApiResult<UserAccount> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        if (!file.isFile) return@withContext ApiResult.ParseError("头像文件不存在")
+        val requestUrl = config.endpoint("api/v1/users/me/avatar").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("file", file.name, file.asRequestBody(mimeType.toMediaType()))
+            .build()
+        executeJson(
+            Request.Builder().url(requestUrl).post(multipart).appToken(config.appToken).userToken(session.token).build(),
+        ) { data -> parseUserAccount(data) }
+    }
 
     suspend fun fetchSupportContent(): ApiResult<SupportContent> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
@@ -127,7 +165,7 @@ class AppApiClient(
                 helpContent = userPage.optString("support.help.content", "误报请在记录详情中直接标记，系统会附带必要的识别信息供复核。"),
                 aboutTitle = userPage.optString("about.title", "关于赛博鱼乐"),
                 aboutContent = userPage.optString("about.content", "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。"),
-                privacyContent = userPage.optString("about.privacy", "只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。"),
+                privacyContent = userPage.optString("about.privacy", "识别默认在设备本地完成。只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。"),
             )
         }
     }
@@ -159,15 +197,18 @@ class AppApiClient(
             val user = data.optJSONObject("user") ?: throw IllegalArgumentException("登录响应缺少 user")
             UserSession(
                 token = token,
-                user = UserAccount(
-                    id = user.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("登录响应缺少用户 ID"),
-                    username = user.optString("username").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("登录响应缺少用户名"),
-                    displayName = user.optString("displayName").takeIf { it.isNotBlank() } ?: user.optString("username"),
-                    email = user.optString("email").takeIf { it.isNotBlank() },
-                ),
+                user = parseUserAccount(user),
             )
         }
     }
+
+    private fun parseUserAccount(user: JSONObject): UserAccount = UserAccount(
+        id = user.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("登录响应缺少用户 ID"),
+        username = user.optString("username").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("登录响应缺少用户名"),
+        displayName = user.optString("displayName").takeIf { it.isNotBlank() } ?: user.optString("username"),
+        email = user.optString("email").takeUnless { it.isBlank() || it == "null" },
+        avatarUrl = user.optString("avatarUrl").takeUnless { it.isBlank() || it == "null" }?.let(config::resolve),
+    )
 
     suspend fun checkForUpdate(): ApiResult<AppUpdateInfo> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
@@ -199,16 +240,17 @@ class AppApiClient(
     }
 
     suspend fun submitMisreport(record: FishRecordEntity): ApiResult<String> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get()
+            ?: return@withContext ApiResult.HttpError(401, "请先登录后上报误报")
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
         val identity = identityStore.get()
-        val session = userSessionProvider.get()
         val rawData = JSONObject()
             .put("triggerTimestampMillis", record.triggerTimestampMillis)
             .put("verticalDisplacementPx", record.verticalDisplacementPx)
             .put("jitterHz", record.jitterHz)
             .put("confidence", record.confidence)
             .put("trajectoryPx", JSONArray(record.trajectoryCsv.split(',').mapNotNull { it.toDoubleOrNull() }))
-        val snapshotUrls = when (val result = record.snapshotPath?.let { uploadMedia(File(it), "IMAGE") }) {
+        val snapshotUrls = when (val result = record.snapshotPath?.let { uploadMedia(File(it), "IMAGE", session.token) }) {
             null -> emptyList()
             is ApiResult.Success -> listOf(result.value)
             ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
@@ -216,7 +258,7 @@ class AppApiClient(
             is ApiResult.NetworkError -> return@withContext ApiResult.NetworkError(result.message)
             is ApiResult.ParseError -> return@withContext ApiResult.ParseError(result.message)
         }
-        val videoUrl = when (val result = record.videoPath?.let { uploadMedia(File(it), "VIDEO") }) {
+        val videoUrl = when (val result = record.videoPath?.let { uploadMedia(File(it), "VIDEO", session.token) }) {
             null -> null
             is ApiResult.Success -> result.value
             ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
@@ -226,7 +268,7 @@ class AppApiClient(
         }
         val body = JSONObject()
             .put("deviceId", identity.deviceId)
-            .put("userId", session?.user?.id ?: identity.userId)
+            .put("userId", session.user.id)
             .put("deviceModel", identity.deviceModel)
             .put("osVersion", identity.osVersion)
             .put("appVersionName", BuildConfig.VERSION_NAME)
@@ -246,7 +288,7 @@ class AppApiClient(
             .url(requestUrl)
             .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
             .appToken(config.appToken)
-            .userToken(session?.token)
+            .userToken(session.token)
             .build()
         executeJson(request) { data -> data.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("上报响应缺少 id") }
     }
@@ -313,15 +355,15 @@ class AppApiClient(
                     inputSize = model.optInt("inputSize", 0),
                     labels = labels,
                     sha256 = model.optString("sha256"),
-                    signature = model.optString("signature").takeIf { it.isNotBlank() },
-                    signatureAlgorithm = model.optString("signatureAlgorithm").takeIf { it.isNotBlank() },
-                    publicKeyId = model.optString("publicKeyId").takeIf { it.isNotBlank() },
+                    signature = model.optNullableString("signature"),
+                    signatureAlgorithm = model.optNullableString("signatureAlgorithm"),
+                    publicKeyId = model.optNullableString("publicKeyId"),
                     signatureExpiresAtMillis = model.optLong("signatureExpiresAtMillis", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
                         ?: model.optString("signatureExpiresAt").toEpochMillisOrNull(),
-                    runtimeSignatureName = model.optString("runtimeSignatureName").takeIf { it.isNotBlank() },
-                    inputName = model.optString("inputName").takeIf { it.isNotBlank() },
+                    runtimeSignatureName = model.optNullableString("runtimeSignatureName"),
+                    inputName = model.optNullableString("inputName"),
                     inputLayout = model.optString("inputLayout", "NCHW"),
-                    outputName = model.optString("outputName").takeIf { it.isNotBlank() },
+                    outputName = model.optNullableString("outputName"),
                     coordinatesNormalized = model.optBoolean("coordinatesNormalized", false),
                     valuesPerDetection = model.optInt("valuesPerDetection", 6),
                 ),
@@ -378,7 +420,11 @@ class AppApiClient(
     ): ApiResult<Long> = withContext(Dispatchers.IO) {
         val requestUrl = url.toHttpUrlOrNull() ?: return@withContext ApiResult.ParseError("下载地址无效")
         try {
-            httpClient.newCall(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()).execute().use { response ->
+            val downloadClient = httpClient.newBuilder()
+                .readTimeout(MODEL_DOWNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .callTimeout(MODEL_DOWNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .build()
+            downloadClient.newCall(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()).execute().use { response ->
                 if (!response.isSuccessful) return@withContext ApiResult.HttpError(response.code, response.message)
                 val body = response.body ?: return@withContext ApiResult.ParseError("下载响应为空")
                 val total = body.contentLength().takeIf { it >= 0L }
@@ -440,7 +486,7 @@ class AppApiClient(
         ?.let { header("Authorization", "Bearer $it") }
         ?: this
 
-    private suspend fun uploadMedia(file: File, bizType: String): ApiResult<String> = withContext(Dispatchers.IO) {
+    private suspend fun uploadMedia(file: File, bizType: String, userToken: String): ApiResult<String> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
         if (!file.isFile) return@withContext ApiResult.ParseError("媒体文件不存在")
         val mediaType = when (bizType) {
@@ -454,13 +500,14 @@ class AppApiClient(
         val requestUrl = config.endpoint("api/v1/files/upload?bizType=$bizType").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
         executeJson(
-            Request.Builder().url(requestUrl).post(multipart).appToken(config.appToken).build(),
+            Request.Builder().url(requestUrl).post(multipart).appToken(config.appToken).userToken(userToken).build(),
         ) { data -> data.optString("url").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("媒体上传响应缺少 url") }
     }
 
 
     private companion object {
         const val DOWNLOAD_BUFFER_SIZE = 16 * 1024
+        const val MODEL_DOWNLOAD_TIMEOUT_SECONDS = 5 * 60L
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         fun defaultHttpClient() = OkHttpClient.Builder()
@@ -473,4 +520,9 @@ class AppApiClient(
 
 private fun String.toEpochMillisOrNull(): Long? = takeIf { it.isNotBlank() }?.let {
     try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }
+}
+
+private fun JSONObject.optNullableString(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    return optString(name).trim().takeUnless { it.isEmpty() || it.equals("null", ignoreCase = true) }
 }

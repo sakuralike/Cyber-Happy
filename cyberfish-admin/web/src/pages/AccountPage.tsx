@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Avatar, Button, Input, message, Spin } from 'antd';
-import { CheckCircleOutlined, InfoCircleOutlined, MessageOutlined, QuestionCircleOutlined, UserOutlined } from '@ant-design/icons';
+import { Avatar, Button, Input, message, Spin, Upload } from 'antd';
+import { CheckCircleOutlined, InfoCircleOutlined, LoadingOutlined, MessageOutlined, QuestionCircleOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { SiteBrandMark } from '../components/SiteBrandMark';
+import { AvatarCropModal } from '../components/AvatarCropModal';
 import { useUserAuth } from '../store/userAuth';
 import * as userApi from '../api/user';
 import type { UserAccount, UserFeedback, UserMisreport } from '../api/user';
@@ -46,7 +47,7 @@ export function AccountPage() {
     <div className="account-page">
       <header className="account-topbar"><a className="landing-brand" href="#/"><SiteBrandMark fileId={site['site.logoFileId']} size={22} />{String(site['site.name'] ?? '赛博鱼乐')}</a><nav><button type="button" onClick={() => setSection('help')}>使用帮助</button><button type="button" onClick={() => setSection('feedback')}>意见反馈</button><strong className="brand-link">{currentUser?.displayName ?? '当前用户'}</strong><Button type="primary" onClick={() => { logout(); navigate('/'); }}>退出登录</Button></nav></header>
       <div className="account-layout">
-        <aside><div className="account-sidebar-card"><div className="account-avatar"><Avatar size={54} src={typeof userPage['user.avatar.defaultFileId'] === 'string' ? `/api/v1/public/assets/${userPage['user.avatar.defaultFileId']}` : undefined}>{(currentUser?.displayName ?? '用').slice(0, 1)}</Avatar><div><strong>{currentUser?.displayName ?? '当前用户'}</strong><small>{currentUser?.email ?? currentUser?.username ?? '-'}</small></div></div><div className="account-nav">{nav.map((item) => <button key={item.key} className={section === item.key ? 'active' : ''} onClick={() => setSection(item.key)}>{item.icon}{item.label}</button>)}</div></div></aside>
+        <aside><div className="account-sidebar-card"><div className="account-avatar"><Avatar size={54} src={currentUser?.avatarUrl ?? (typeof userPage['user.avatar.defaultFileId'] === 'string' ? `/api/v1/public/assets/${userPage['user.avatar.defaultFileId']}` : undefined)}>{(currentUser?.displayName ?? '用').slice(0, 1)}</Avatar><div><strong>{currentUser?.displayName ?? '当前用户'}</strong><small>{currentUser?.email ?? currentUser?.username ?? '-'}</small></div></div><div className="account-nav">{nav.map((item) => <button key={item.key} className={section === item.key ? 'active' : ''} onClick={() => setSection(item.key)}>{item.icon}{item.label}</button>)}</div></div></aside>
         <main className="account-main">
           {section === 'overview' && <Overview user={currentUser} reports={reports} settings={userPage} onProfile={() => setSection('profile')} />}
           {section === 'profile' && <Profile user={currentUser} onSaved={(nextUser) => { updateUser(nextUser); void meQuery.refetch(); }} />}
@@ -72,9 +73,60 @@ function Profile({ user, onSaved }: { user: UserAccount | null; onSaved: (user: 
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
   const [saving, setSaving] = useState(false);
+  const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '' });
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
   useEffect(() => { setDisplayName(user?.displayName ?? ''); setEmail(user?.email ?? ''); }, [user]);
   const save = async () => { setSaving(true); try { const updated = await userApi.updateMe({ displayName, email: email || null }); message.success('资料已保存'); onSaved(updated); } catch (error) { message.error((error as Error).message); } finally { setSaving(false); } };
-  return <><AccountHeader title="个人资料" detail="资料仅用于账号识别与找回，不会公开展示" /><div className="account-panel"><div className="account-form"><label>昵称</label><Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /><span className="hint">当前登录账号显示名</span><label>用户名</label><Input value={user?.username ?? ''} readOnly style={{ background: '#f7f8fa' }} /><span className="hint">用户名不可修改</span><label>邮箱</label><Input value={email} onChange={(event) => setEmail(event.target.value)} /><span className="hint">用于账号通知，留空表示未填写</span><span /><span /><div><Button type="primary" loading={saving} onClick={save}>保存修改</Button></div></div></div></>;
+  return <>
+    <AccountHeader title="个人资料" detail="资料仅用于账号识别与找回，不会公开展示" />
+    <div className="account-panel">
+      <div className="account-form">
+        <label>头像</label>
+        <div>
+          <Avatar size={72} src={user?.avatarUrl ?? undefined}>{(displayName || '用').slice(0, 1)}</Avatar>
+          <Upload accept="image/png,image/jpeg,image/webp" showUploadList={false} beforeUpload={(file) => { setCropFile(file); return false; }}>
+            <Button icon={uploadingAvatar ? <LoadingOutlined /> : <UploadOutlined />} disabled={uploadingAvatar} style={{ marginLeft: 12 }}>更换头像</Button>
+          </Upload>
+        </div>
+        <span className="hint">支持 JPG、PNG 或 WebP，上传前可圆形裁剪</span>
+        <label>昵称</label>
+        <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+        <span className="hint">当前登录账号显示名</span>
+        <label>用户名</label>
+        <Input value={user?.username ?? ''} readOnly style={{ background: '#f7f8fa' }} />
+        <span className="hint">用户名不可修改</span>
+        <label>邮箱</label>
+        <Input value={email} onChange={(event) => setEmail(event.target.value)} />
+        <span className="hint">用于账号通知，留空表示未填写</span>
+        <span /><span />
+        <div><Button type="primary" loading={saving} onClick={save}>保存修改</Button></div>
+      </div>
+    </div>
+    <div className="account-panel">
+      <AccountHeader title="修改密码" detail="修改后请使用新密码重新登录" />
+      <div className="account-form">
+        <label>当前密码</label>
+        <Input.Password value={passwords.currentPassword} onChange={(event) => setPasswords({ ...passwords, currentPassword: event.target.value })} />
+        <label>新密码</label>
+        <Input.Password value={passwords.newPassword} onChange={(event) => setPasswords({ ...passwords, newPassword: event.target.value })} />
+        <span />
+        <div><Button loading={changingPassword} disabled={passwords.currentPassword.length < 6 || passwords.newPassword.length < 6} onClick={async () => { setChangingPassword(true); try { await userApi.changePassword(passwords); setPasswords({ currentPassword: '', newPassword: '' }); message.success('密码已修改'); } catch (error) { message.error((error as Error).message); } finally { setChangingPassword(false); } }}>修改密码</Button></div>
+      </div>
+    </div>
+    <AvatarCropModal
+      file={cropFile}
+      open={!!cropFile}
+      onCancel={() => setCropFile(null)}
+      onConfirm={async (file) => {
+        setUploadingAvatar(true);
+        try { onSaved(await userApi.uploadAvatar(file)); message.success('头像已更新'); setCropFile(null); }
+        catch (error) { message.error((error as Error).message); throw error; }
+        finally { setUploadingAvatar(false); }
+      }}
+    />
+  </>;
 }
 
 function Reports({ reports, loading, emptyText }: { reports: UserMisreport[]; loading: boolean; emptyText: string }) { return <><AccountHeader title="误报记录" detail="查看每次反馈的复核进度与结果" /><div className="account-panel">{loading ? <Spin /> : <div style={{ overflowX: 'auto' }}><table className="account-table"><thead><tr><th>单号</th><th>类型</th><th>状态</th><th>提交时间</th><th>复核结果</th></tr></thead><tbody>{reports.map((report) => <tr key={report.id}><td>{report.reportNo}</td><td>{report.reportType}</td><td className="account-status">{statusText[report.status] ?? report.status}</td><td>{new Date(report.reportedAt).toLocaleString('zh-CN')}</td><td>{report.resolution || report.reviewerNote || '等待复核'}</td></tr>)}</tbody></table>{reports.length === 0 && <div className="empty-state">{emptyText}</div>}</div>}</div></>; }
