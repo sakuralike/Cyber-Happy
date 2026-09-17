@@ -40,6 +40,10 @@ class MisreportUploadWorker(
                 if (result.statusCode >= 500) {
                     dao.markMisreportRetry(triggerTimestampMillis, MisreportSyncState.Retrying.name, error)
                     Result.retry()
+                } else if (result.statusCode == 401) {
+                    UserSessionStore(applicationContext).clear()
+                    dao.markMisreportFailed(triggerTimestampMillis, MisreportSyncState.Failed.name, "登录已过期，请重新登录后上报")
+                    Result.success()
                 } else {
                     dao.markMisreportFailed(triggerTimestampMillis, MisreportSyncState.Failed.name, error)
                     Result.success()

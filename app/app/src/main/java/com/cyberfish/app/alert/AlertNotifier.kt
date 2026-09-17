@@ -3,17 +3,15 @@ package com.cyberfish.app.alert
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.MediaPlayer
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.cyberfish.app.trigger.TriggerEvent
+import com.cyberfish.app.R
 import java.util.concurrent.atomic.AtomicInteger
 
 data class AlertPreferences(
@@ -46,9 +44,13 @@ class AndroidAlertNotifier(
     }
 
     private fun playSound() {
-        val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
-        tone.startTone(ToneGenerator.TONE_PROP_BEEP, SOUND_DURATION_MILLIS)
-        Handler(Looper.getMainLooper()).postDelayed({ tone.release() }, SOUND_DURATION_MILLIS.toLong())
+        runCatching {
+            MediaPlayer.create(appContext, R.raw.fish_catch)?.apply {
+                setOnCompletionListener { it.release() }
+                setOnErrorListener { player, _, _ -> player.release(); true }
+                start()
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -97,7 +99,6 @@ class AndroidAlertNotifier(
 
     private companion object {
         const val CHANNEL_ID = "fish_trigger"
-        const val SOUND_DURATION_MILLIS = 180
         val VIBRATION_PATTERN = longArrayOf(0L, 200L, 100L, 200L)
     }
 }

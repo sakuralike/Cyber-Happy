@@ -3,6 +3,7 @@ package com.cyberfish.app.capture
 import android.content.Context
 import android.os.SystemClock
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -23,10 +24,15 @@ class CameraFrameSource(
     private val onDetection: (detection: com.cyberfish.app.inference.Detection?, timestampMillis: Long) -> Unit = { _, _ -> },
     private val snapshotDir: File? = null,
     private val onSnapshotReady: (File) -> Unit = {},
+    private val onZoomCapabilitiesChanged: (Float) -> Unit = {},
 ) : FrameSource {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor = ContextCompat.getMainExecutor(context)
     private var cameraProvider: ProcessCameraProvider? = null
+    @Volatile
+    private var camera: Camera? = null
+    @Volatile
+    private var maxZoomRatio = 1f
     @Volatile
     private var generation = 0
     private var framesInWindow = 0
@@ -57,13 +63,18 @@ class CameraFrameSource(
                     .build()
                 analysis.setAnalyzer(analysisExecutor) { image -> analyzeImage(image, currentGeneration) }
                 provider.unbindAll()
-                provider.bindToLifecycle(
+                val boundCamera = provider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_BACK_CAMERA,
                     preview,
                     analysis,
                 )
-                if (currentGeneration == generation) onStatusChanged(CaptureStatus.Running)
+                if (currentGeneration == generation) {
+                    camera = boundCamera
+                    maxZoomRatio = boundCamera.cameraInfo.zoomState.value?.maxZoomRatio?.coerceAtLeast(1f) ?: 1f
+                    onZoomCapabilitiesChanged(maxZoomRatio)
+                    onStatusChanged(CaptureStatus.Running)
+                }
             } catch (_: Exception) {
                 if (currentGeneration == generation) onStatusChanged(CaptureStatus.Failed)
             }
@@ -72,8 +83,18 @@ class CameraFrameSource(
 
     override fun stop() {
         generation += 1
+        camera = null
+        maxZoomRatio = 1f
+        onZoomCapabilitiesChanged(1f)
         cameraProvider?.unbindAll()
         onStatusChanged(CaptureStatus.Idle)
+    }
+
+    fun setZoomRatio(ratio: Float) {
+        val target = ratio.coerceIn(1f, maxZoomRatio.coerceAtLeast(1f))
+        mainExecutor.execute {
+            camera?.cameraControl?.setZoomRatio(target)
+        }
     }
 
     override fun close() {

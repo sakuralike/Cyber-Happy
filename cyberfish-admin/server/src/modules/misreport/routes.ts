@@ -64,10 +64,11 @@ const routes: FastifyPluginAsync = async (app) => {
   });
 
   /** APP 端上报 */
-  app.post('/', async (request, reply) => {
-    const appUser = await app.resolveAppUser(request);
+  app.post('/', { onRequest: [app.authenticateUser] }, async (request, reply) => {
+    const appUser = request.currentAppUser;
+    if (!appUser) throw AppError.unauthorized('请先登录后上报误报');
     const input = parseOrThrow(createMisreportSchema, request.body);
-    return sendCreated(reply, await service.create({ ...input, userId: appUser?.id ?? input.userId }));
+    return sendCreated(reply, await service.create({ ...input, userId: appUser.id }));
   });
 
   /** 详情 */

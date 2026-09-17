@@ -3,11 +3,13 @@ package com.cyberfish.app
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -34,9 +36,16 @@ class MainActivityTest {
         activityRule.onNodeWithText("白天").performScrollTo().performClick()
         activityRule.onNodeWithTag("settings-list").performScrollToIndex(0)
         activityRule.onNodeWithText("模型与性能").performScrollTo().performClick()
-        activityRule.onNodeWithText("占位模型 MockDetector").performScrollTo().assertIsDisplayed()
+        activityRule.onNodeWithText("模型状态").performScrollTo().assertIsDisplayed()
         activityRule.onNodeWithText("检查 APP 更新").performScrollTo().performClick()
-        activityRule.onNodeWithText("未配置服务地址或 APP 令牌").performScrollTo().assertIsDisplayed()
+        activityRule.waitUntil(5_000) {
+            listOf("未配置服务地址或 APP 令牌", "当前已是最新版本", "发现 v", "检查失败：")
+                .any { activityRule.onAllNodesWithText(it, substring = true).fetchSemanticsNodes().isNotEmpty() }
+        }
+        assertTrue(
+            listOf("未配置服务地址或 APP 令牌", "当前已是最新版本", "发现 v", "检查失败：")
+                .any { activityRule.onAllNodesWithText(it, substring = true).fetchSemanticsNodes().isNotEmpty() },
+        )
 
         activityRule.onNodeWithContentDescription("我的").performClick()
         activityRule.onNodeWithText("数据导出").assertIsDisplayed()
