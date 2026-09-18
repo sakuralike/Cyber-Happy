@@ -175,65 +175,64 @@ fun CheckInScreen(
 
         if (userSession == null) {
             LoginRequiredCheckIn(onRequireLogin = onRequireLogin)
-            return@Column
-        }
-
-        TabRow(selectedTabIndex = selectedSection) {
-            Tab(selected = selectedSection == 0, onClick = { selectedSection = 0 }, text = { Text("签到日历") })
-            Tab(selected = selectedSection == 1, onClick = { selectedSection = 1 }, text = { Text("签到记录") })
-        }
-
-        errorMessage?.let { message ->
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                TextButton(
-                    onClick = {
-                        if (message.startsWith("登录状态")) onRequireLogin()
-                        else if (selectedSection == 0) refreshOverview() else refreshHistory()
-                    },
-                ) { Text(if (message.startsWith("登录状态")) "去登录" else "重试") }
-            }
-        }
-
-        if (selectedSection == 0) {
-            CheckInCalendarContent(
-                overview = overview,
-                calendarMonth = calendarMonth,
-                currentMonth = currentMonth,
-                calendarDates = calendarDates,
-                onPreviousMonth = { calendarMonth = calendarMonth.minusMonths(1) },
-                onNextMonth = { if (calendarMonth < currentMonth) calendarMonth = calendarMonth.plusMonths(1) },
-                loading = loading,
-                submitting = submitting,
-                onCheckIn = {
-                    if (!submitting) {
-                        scope.launch {
-                            submitting = true
-                            errorMessage = null
-                            when (val result = submitCheckIn()) {
-                                is ApiResult.Success -> {
-                                    overview = result.value.overview
-                                    calendarDates = result.value.overview.checkedDates
-                                    onOverviewChanged(result.value.overview)
-                                    if (selectedSection == 1) refreshHistory()
-                                }
-                                else -> errorMessage = result.checkInMessage()
-                            }
-                            submitting = false
-                        }
-                    }
-                },
-            )
         } else {
-            CheckInHistoryContent(
-                history = history,
-                loading = historyLoading,
-                onLoadMore = { refreshHistory((history?.page ?: 0) + 1) },
-            )
+            TabRow(selectedTabIndex = selectedSection) {
+                Tab(selected = selectedSection == 0, onClick = { selectedSection = 0 }, text = { Text("签到日历") })
+                Tab(selected = selectedSection == 1, onClick = { selectedSection = 1 }, text = { Text("签到记录") })
+            }
+
+            errorMessage?.let { message ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    TextButton(
+                        onClick = {
+                            if (message.startsWith("登录状态")) onRequireLogin()
+                            else if (selectedSection == 0) refreshOverview() else refreshHistory()
+                        },
+                    ) { Text(if (message.startsWith("登录状态")) "去登录" else "重试") }
+                }
+            }
+
+            if (selectedSection == 0) {
+                CheckInCalendarContent(
+                    overview = overview,
+                    calendarMonth = calendarMonth,
+                    currentMonth = currentMonth,
+                    calendarDates = calendarDates,
+                    onPreviousMonth = { calendarMonth = calendarMonth.minusMonths(1) },
+                    onNextMonth = { if (calendarMonth < currentMonth) calendarMonth = calendarMonth.plusMonths(1) },
+                    loading = loading,
+                    submitting = submitting,
+                    onCheckIn = {
+                        if (!submitting) {
+                            scope.launch {
+                                submitting = true
+                                errorMessage = null
+                                when (val result = submitCheckIn()) {
+                                    is ApiResult.Success -> {
+                                        overview = result.value.overview
+                                        calendarDates = result.value.overview.checkedDates
+                                        onOverviewChanged(result.value.overview)
+                                        if (selectedSection == 1) refreshHistory()
+                                    }
+                                    else -> errorMessage = result.checkInMessage()
+                                }
+                                submitting = false
+                            }
+                        }
+                    },
+                )
+            } else {
+                CheckInHistoryContent(
+                    history = history,
+                    loading = historyLoading,
+                    onLoadMore = { refreshHistory((history?.page ?: 0) + 1) },
+                )
+            }
         }
     }
 }
