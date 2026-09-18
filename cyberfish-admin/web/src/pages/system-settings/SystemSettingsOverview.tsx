@@ -55,6 +55,15 @@ const domains = [
     path: "/admin/settings/USER_PAGE",
     detail: "个人中心与登录页的展示项、文案、默认头像和空态提示。",
   },
+  {
+    key: "check-in",
+    title: "签到设置",
+    scope: "CHECKIN_BASIC / REWARD / RISK",
+    icon: <UserOutlined />,
+    model: "SiteSetting (JSON)",
+    path: "/admin/settings/check-in",
+    detail: "签到开关、开放时段、奖励梯度与风控阈值；支持草稿、发布和回滚。",
+  },
 ];
 
 export function SystemSettingsOverview() {
@@ -63,7 +72,7 @@ export function SystemSettingsOverview() {
     <div className="settings-page">
       <SettingsHeader
         title="配置域总览"
-        description="5 个配置域共用一套草稿、发布、快照、定时生效与回滚链路。"
+        description="签到设置与现有配置域共用一套草稿、发布、快照、定时生效与回滚链路。"
         actions={
           <button
             className="settings-primary-command"

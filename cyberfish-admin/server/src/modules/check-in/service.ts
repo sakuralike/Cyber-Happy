@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import type { HistoryQuery } from './schema';
+import { checkInConfig } from '../system-settings/service';
 
 const TIMEZONE = 'Asia/Shanghai';
 const CYCLE_LENGTH = 7;
@@ -131,13 +132,19 @@ function validateWindow(now: Date, config: typeof DEFAULT_CHECK_IN_CONFIG): void
   }
 }
 
-function readConfig() {
-  return DEFAULT_CHECK_IN_CONFIG;
+async function readConfig() {
+  const configured = await checkInConfig();
+  return {
+    ...DEFAULT_CHECK_IN_CONFIG,
+    ...configured,
+    activityStartAt: configured.activityStartAt == null ? null : String(configured.activityStartAt),
+    activityEndAt: configured.activityEndAt == null ? null : String(configured.activityEndAt),
+  };
 }
 
 export async function overview(userId: string) {
   const now = new Date();
-  const config = readConfig();
+  const config = await readConfig();
   const state = availability(now, config);
   const today = localDateKey(now);
   const yesterday = shiftDateKey(today, -1);
@@ -175,7 +182,7 @@ export async function overview(userId: string) {
 
 export async function checkIn(userId: string) {
   const now = new Date();
-  const config = readConfig();
+  const config = await readConfig();
   validateWindow(now, config);
   const today = localDateKey(now);
   const yesterday = shiftDateKey(today, -1);

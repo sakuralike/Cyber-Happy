@@ -70,7 +70,7 @@ fun CheckInScreen(
     userSession: UserSession?,
     onBack: () -> Unit,
     onRequireLogin: () -> Unit,
-    onOverviewChanged: (CheckInOverview) -> Unit,
+    onOverviewChanged: (CheckInOverview) -> Unit = {},
     loadOverview: suspend () -> ApiResult<CheckInOverview>,
     submitCheckIn: suspend () -> ApiResult<CheckInActionResult>,
     loadHistory: suspend (Int, String?) -> ApiResult<CheckInHistory>,

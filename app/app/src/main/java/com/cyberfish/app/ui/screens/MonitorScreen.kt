@@ -13,18 +13,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.clickable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -64,8 +60,6 @@ fun MonitorScreen(
     onMarkFalsePositive: (TriggerEvent) -> Unit,
     isLoggedIn: Boolean = true,
     onRequireLogin: () -> Unit = {},
-    showCheckInEntry: Boolean = false,
-    onOpenCheckIn: () -> Unit = {},
     onFrameMetrics: (FrameMetrics) -> Unit = {},
     detector: Detector = MockDetector(),
 ) {
@@ -91,25 +85,6 @@ fun MonitorScreen(
     }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { ScreenTitle("实时监控", "漂浮稳定  ·  已运行 12:04", actionIcon = Icons.Filled.Settings, actionDescription = "打开设置", onAction = onOpenSettings) }
-        if (showCheckInEntry) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).clickable(onClick = onOpenCheckIn),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(14.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Icon(Icons.Filled.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text("今日还未签到，点击延续每日连击", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyMedium)
-                        Text("签到", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-        }
         item {
             CameraPreviewCard(
                 monitoring = monitoring,
