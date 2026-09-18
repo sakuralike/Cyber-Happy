@@ -37,6 +37,12 @@ import {
 type Values = Record<string, any>;
 const SCOPES = ["CHECKIN_BASIC", "CHECKIN_REWARD", "CHECKIN_RISK"] as const;
 
+function toTimePickerValue(value: unknown) {
+  if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return value;
+  const [hour, minute] = value.split(":").map(Number);
+  return dayjs().hour(hour).minute(minute).second(0).millisecond(0);
+}
+
 export function CheckinSettingsPage() {
   const queryClient = useQueryClient();
   const { hasPerm } = useAuth();
@@ -110,7 +116,7 @@ function BasicTab({ form, disabled, onSubmit }: { form: any; disabled: boolean; 
     </Card>
     <Card title="开放时间" style={{ marginTop: 16 }}>
       <SettingSwitchRow title="限制每日签到时段" description="超出时段时 APP 按钮置灰并展示时间范围。" control={<Form.Item name="dailyWindowEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>} />
-      <Space align="start"><Form.Item name="dailyWindowStart" label="每日开始"><TimePicker format="HH:mm" onChange={(value) => form.setFieldValue("dailyWindowStart", value?.format("HH:mm"))} /></Form.Item><Form.Item name="dailyWindowEnd" label="每日结束"><TimePicker format="HH:mm" onChange={(value) => form.setFieldValue("dailyWindowEnd", value?.format("HH:mm"))} /></Form.Item></Space>
+      <Space align="start"><Form.Item name="dailyWindowStart" label="每日开始" getValueProps={(value) => ({ value: toTimePickerValue(value) })} getValueFromEvent={(value) => value?.format("HH:mm")}><TimePicker format="HH:mm" /></Form.Item><Form.Item name="dailyWindowEnd" label="每日结束" getValueProps={(value) => ({ value: toTimePickerValue(value) })} getValueFromEvent={(value) => value?.format("HH:mm")}><TimePicker format="HH:mm" /></Form.Item></Space>
       <Form.Item name="timezone" label="自然日时区"><Input disabled /></Form.Item>
       <Form.Item name="activityStartAt" label="活动开始（可选）"><Input placeholder="2026-10-01T00:00:00+08:00" /></Form.Item>
       <Form.Item name="activityEndAt" label="活动结束（可选）"><Input placeholder="2026-12-31T23:59:59+08:00" /></Form.Item>
