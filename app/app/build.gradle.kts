@@ -33,6 +33,16 @@ val appApiToken = providers.gradleProperty("appApiToken").orNull?.trim().orEmpty
 val modelPublicKeys = providers.gradleProperty("modelPublicKeys").orNull?.trim()
     ?.takeIf { it.isNotBlank() }
     ?: localProperties.getProperty("modelPublicKeys")?.trim().orEmpty()
+val signingStoreFile = providers.gradleProperty("signingStoreFile").orNull?.trim().orEmpty()
+    .ifBlank { System.getenv("ANDROID_SIGNING_STORE_FILE")?.trim().orEmpty() }
+val signingStorePassword = providers.gradleProperty("signingStorePassword").orNull?.trim().orEmpty()
+    .ifBlank { System.getenv("ANDROID_SIGNING_STORE_PASSWORD")?.trim().orEmpty() }
+val signingKeyAlias = providers.gradleProperty("signingKeyAlias").orNull?.trim().orEmpty()
+    .ifBlank { System.getenv("ANDROID_SIGNING_KEY_ALIAS")?.trim().orEmpty() }
+val signingKeyPassword = providers.gradleProperty("signingKeyPassword").orNull?.trim().orEmpty()
+    .ifBlank { System.getenv("ANDROID_SIGNING_KEY_PASSWORD")?.trim().orEmpty() }
+val releaseSigningReady = signingStoreFile.isNotBlank() && signingStorePassword.isNotBlank() &&
+    signingKeyAlias.isNotBlank() && signingKeyPassword.isNotBlank()
 
 fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\""
 
@@ -66,8 +76,20 @@ android {
         vectorDrawables { useSupportLibrary = true }
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseSigningReady) {
+                storeFile = file(signingStoreFile)
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigningReady) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
