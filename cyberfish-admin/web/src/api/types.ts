@@ -45,6 +45,17 @@ export interface AdminUser {
   updatedAt?: string;
 }
 
+export interface AppUser {
+  id: string;
+  username: string;
+  displayName: string;
+  status: ActiveStatus;
+  email: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface SiteConfig {
   id: string;
   title: string;

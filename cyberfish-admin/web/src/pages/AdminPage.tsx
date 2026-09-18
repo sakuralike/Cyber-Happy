@@ -16,7 +16,7 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
 import * as adminApi from '../api/admin';
-import type { AdminUser, AdminRole } from '../api/types';
+import type { AdminUser, AdminRole, AppUser } from '../api/types';
 import { EnumTag } from '../components/EnumTag';
 import { ROLE_MAP, ACTIVE_STATUS_MAP, enumOptions } from '../utils/constants';
 import { formatDateTime } from '../utils/format';
@@ -29,11 +29,22 @@ export function AdminPage() {
   const [params, setParams] = useState<Record<string, unknown>>({ page: 1, pageSize: 10 });
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AdminUser | null>(null);
+  const [resettingAppUser, setResettingAppUser] = useState<AppUser | null>(null);
   const [form] = Form.useForm();
+  const [resetForm] = Form.useForm();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['admins', params],
     queryFn: () => adminApi.listAdmins(params),
+  });
+  const appUsersQuery = useQuery({
+    queryKey: ['admin-app-users', params.keyword, params.status],
+    queryFn: () => adminApi.listAppUsers({
+      page: 1,
+      pageSize: 100,
+      keyword: typeof params.keyword === 'string' ? params.keyword : undefined,
+      status: typeof params.status === 'string' ? params.status : undefined,
+    }),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admins'] });
@@ -72,6 +83,16 @@ export function AdminPage() {
     },
     onError: notifyError,
   });
+  const resetAppUserMut = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) => adminApi.resetAppUserPassword(id, password),
+    onSuccess: () => {
+      message.success('用户密码已重置');
+      setResettingAppUser(null);
+      resetForm.resetFields();
+      void appUsersQuery.refetch();
+    },
+    onError: notifyError,
+  });
 
   const openCreate = () => {
     setEditing(null);
@@ -94,6 +115,12 @@ export function AdminPage() {
     } else {
       createMut.mutate(v);
     }
+  };
+
+  const submitAppUserReset = async () => {
+    if (!resettingAppUser) return;
+    const values = await resetForm.validateFields();
+    resetAppUserMut.mutate({ id: resettingAppUser.id, password: values.password });
   };
 
   const columns: ColumnsType<AdminUser> = useMemo(
@@ -188,6 +215,29 @@ export function AdminPage() {
         }}
       />
 
+      <Card title="用户账号" style={{ marginTop: 16 }} loading={appUsersQuery.isLoading}>
+        <Table<AppUser>
+          rowKey="id"
+          size="small"
+          dataSource={appUsersQuery.data?.list ?? []}
+          pagination={false}
+          columns={[
+            { title: '用户名', dataIndex: 'username', width: 150 },
+            { title: '显示名', dataIndex: 'displayName', width: 150 },
+            { title: '状态', dataIndex: 'status', width: 90, render: (v) => <EnumTag value={v} map={ACTIVE_STATUS_MAP} /> },
+            { title: '邮箱', dataIndex: 'email', render: (v) => v || '-' },
+            { title: '最近登录', dataIndex: 'lastLoginAt', width: 170, render: (v) => formatDateTime(v) },
+            { title: '创建时间', dataIndex: 'createdAt', width: 170, render: (v) => formatDateTime(v) },
+            {
+              title: '操作',
+              width: 120,
+              render: (_, row) => <Button size="small" onClick={() => { setResettingAppUser(row); resetForm.resetFields(); }}>重置密码</Button>,
+            },
+          ]}
+          scroll={{ x: 900 }}
+        />
+      </Card>
+
       <Modal
         title={editing ? `编辑 ${editing.username}` : '新建账号'}
         open={modalOpen}
@@ -231,6 +281,21 @@ export function AdminPage() {
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           角色权限：管理员=全部 · 运营=版本/模型/误报读写 · 复核员=误报复核 · 只读=仅查看
         </Typography.Text>
+      </Modal>
+      <Modal
+        title={resettingAppUser ? `重置 ${resettingAppUser.username} 密码` : '重置密码'}
+        open={!!resettingAppUser}
+        onOk={submitAppUserReset}
+        onCancel={() => { setResettingAppUser(null); resetForm.resetFields(); }}
+        confirmLoading={resetAppUserMut.isPending}
+        destroyOnClose
+        width={420}
+      >
+        <Form form={resetForm} layout="vertical">
+          <Form.Item name="password" label="新密码" rules={[{ required: true, min: 6, message: '至少 6 位' }]}>
+            <Input.Password autoFocus />
+          </Form.Item>
+        </Form>
       </Modal>
       </Card>
     </div>

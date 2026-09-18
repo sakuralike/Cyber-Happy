@@ -62,6 +62,7 @@ fun ProfileScreen(
     userSession: UserSession?,
     supportContent: SupportContent,
     onOpenFishingSpots: () -> Unit,
+    onOpenCheckIn: () -> Unit = {},
     onExportRecords: () -> Unit,
     onLogin: suspend (String, String) -> ApiResult<UserSession>,
     onRegister: suspend (String, String, String, String) -> ApiResult<UserSession>,
@@ -143,6 +144,7 @@ fun ProfileScreen(
                 shape = RoundedCornerShape(20.dp),
             ) {
                 val entries = listOf(
+                    "每日签到" to ProfileAction.CheckIn,
                     "数据导出" to ProfileAction.Export,
                     "钓场收藏" to ProfileAction.Favorites,
                     "反馈与帮助" to ProfileAction.Feedback,
@@ -153,7 +155,8 @@ fun ProfileScreen(
                         Row(
                             modifier = Modifier.fillMaxWidth()
                                 .clickable {
-                                    if (target == ProfileAction.Export) onExportRecords()
+                                    if (target == ProfileAction.CheckIn) onOpenCheckIn()
+                                    else if (target == ProfileAction.Export) onExportRecords()
                                     else if (target == ProfileAction.Favorites) onOpenFishingSpots()
                                     else action = target
                                 }
@@ -205,7 +208,7 @@ fun ProfileScreen(
             onSubmitFeedback = onSubmitFeedback,
         )
         ProfileAction.About -> AboutDialog(supportContent) { action = ProfileAction.None }
-        ProfileAction.Export, ProfileAction.Favorites, ProfileAction.None -> Unit
+        ProfileAction.CheckIn, ProfileAction.Export, ProfileAction.Favorites, ProfileAction.None -> Unit
     }
 }
 
@@ -258,7 +261,7 @@ private fun AvatarContent(account: com.cyberfish.app.network.UserAccount?) {
     }
 }
 
-private enum class ProfileAction { None, Login, EditProfile, ChangePassword, Export, Favorites, Feedback, About }
+private enum class ProfileAction { None, Login, EditProfile, ChangePassword, CheckIn, Export, Favorites, Feedback, About }
 
 @Composable
 private fun EditProfileDialog(

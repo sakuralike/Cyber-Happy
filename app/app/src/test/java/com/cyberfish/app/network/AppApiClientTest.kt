@@ -172,6 +172,65 @@ class AppApiClientTest {
     }
 
     @Test
+    fun `check in overview sends user token and parses calendar state`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"config":{"enabled":true},"todayCheckedIn":true,"currentStreak":12,"longestStreak":23,"cycleDay":5,"cycleLength":7,"checkedDates":["2026-09-17","2026-09-18"],"canCheckIn":true}}""",
+            ),
+        )
+
+        val result = client(testSession()).fetchCheckInOverview()
+
+        val overview = (result as ApiResult.Success).value
+        assertEquals(12, overview.currentStreak)
+        assertTrue(overview.checkedInToday)
+        assertEquals(setOf("2026-09-17", "2026-09-18"), overview.checkedDates)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/check-in/overview", request.requestUrl?.encodedPath)
+        assertEquals("Bearer user-token", request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `check in posts idempotent action and parses returned status`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"alreadyCheckedIn":false,"overview":{"config":{"enabled":true},"todayCheckedIn":true,"currentStreak":13,"cycleDay":6,"cycleLength":7,"checkedDates":["2026-09-18"],"canCheckIn":true},"record":{"date":"2026-09-18","streak":13}}}""",
+            ),
+        )
+
+        val result = client(testSession()).checkIn()
+
+        val action = (result as ApiResult.Success).value
+        assertTrue(action.overview.checkedInToday)
+        assertEquals("2026-09-18", action.record?.date)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/check-in", request.requestUrl?.encodedPath)
+        assertEquals("Bearer user-token", request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `check in history sends pagination query`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"page":2,"pageSize":20,"total":41,"records":[{"date":"2026-09-17","occurredAt":"2026-09-17T08:11:00+08:00","streak":12}]}}""",
+            ),
+        )
+
+        val result = client(testSession()).fetchCheckInHistory(page = 2, pageSize = 20, month = "2026-09")
+
+        val history = (result as ApiResult.Success).value
+        assertEquals(2, history.page)
+        assertEquals(1, history.records.size)
+        assertTrue(history.hasMore)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/check-in/history", request.requestUrl?.encodedPath)
+        assertEquals("2", request.requestUrl?.queryParameter("page"))
+        assertEquals("20", request.requestUrl?.queryParameter("pageSize"))
+        assertEquals("2026-09", request.requestUrl?.queryParameter("month"))
+    }
+
+    @Test
     fun `support content reads published user page settings`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(

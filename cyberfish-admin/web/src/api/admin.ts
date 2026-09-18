@@ -1,10 +1,18 @@
 import { http } from './client';
-import type { AdminUser, AdminRole, PageData, ListParams } from './types';
+import type { AdminUser, AdminRole, AppUser, PageData, ListParams } from './types';
 
 export interface AdminListResult extends PageData<AdminUser> {}
 
 export async function listAdmins(params: ListParams): Promise<AdminListResult> {
   return http.get('/admins', { params }) as Promise<AdminListResult>;
+}
+
+export async function listAppUsers(params: ListParams): Promise<PageData<AppUser>> {
+  return http.get('/admins/app-users', { params }) as Promise<PageData<AppUser>>;
+}
+
+export async function resetAppUserPassword(id: string, password: string): Promise<AppUser> {
+  return http.patch(`/admins/app-users/${id}/password`, { password }) as Promise<AppUser>;
 }
 
 export async function createAdmin(input: {

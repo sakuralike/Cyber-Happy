@@ -2,7 +2,13 @@ import type { FastifyPluginAsync } from 'fastify';
 import { AdminRole } from '../../lib/enums';
 import { parseOrThrow, idParamSchema } from '../../lib/zod';
 import { sendOk, sendCreated, sendPage } from '../../lib/response';
-import { adminListSchema, createAdminSchema, updateAdminSchema } from './schema';
+import {
+  adminListSchema,
+  appUserListSchema,
+  createAdminSchema,
+  resetAppUserPasswordSchema,
+  updateAdminSchema,
+} from './schema';
 import * as service from './service';
 
 const routes: FastifyPluginAsync = async (app) => {
@@ -12,6 +18,26 @@ const routes: FastifyPluginAsync = async (app) => {
     const q = parseOrThrow(adminListSchema, request.query);
     const { list, total, page, pageSize } = await service.list(q);
     return sendPage(reply, list, total, page, pageSize);
+  });
+
+  app.get('/app-users', { onRequest: [app.authenticate, guard] }, async (request, reply) => {
+    const q = parseOrThrow(appUserListSchema, request.query);
+    const { list, total, page, pageSize } = await service.listAppUsers(q);
+    return sendPage(reply, list, total, page, pageSize);
+  });
+
+  app.patch('/app-users/:id/password', { onRequest: [app.authenticate, guard] }, async (request, reply) => {
+    const { id } = parseOrThrow(idParamSchema, request.params);
+    const input = parseOrThrow(resetAppUserPasswordSchema, request.body);
+    const { before, after } = await service.resetAppUserPassword(id, input);
+    request.auditExtra = {
+      targetType: 'UserAccount',
+      targetId: id,
+      targetName: `${after.username}(${after.displayName})`,
+      before: { username: before.username },
+      after: { passwordReset: true },
+    };
+    return sendOk(reply, after);
   });
 
   app.get('/:id', { onRequest: [app.authenticate, guard] }, async (request, reply) => {

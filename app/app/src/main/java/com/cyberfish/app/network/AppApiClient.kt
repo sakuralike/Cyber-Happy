@@ -50,6 +50,39 @@ data class SupportContent(
     val privacyContent: String = "识别默认在设备本地完成。只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。",
 )
 
+data class CheckInRecord(
+    val date: String,
+    val occurredAt: String? = null,
+    val streak: Int = 0,
+)
+
+data class CheckInOverview(
+    val enabled: Boolean = true,
+    val checkedInToday: Boolean = false,
+    val currentStreak: Int = 0,
+    val longestStreak: Int = 0,
+    val cycleDay: Int = 0,
+    val cycleLength: Int = 7,
+    val checkedDates: Set<String> = emptySet(),
+    val canCheckIn: Boolean = true,
+    val windowLabel: String? = null,
+    val notice: String? = null,
+)
+
+data class CheckInActionResult(
+    val overview: CheckInOverview,
+    val record: CheckInRecord? = null,
+    val alreadyCheckedIn: Boolean = false,
+)
+
+data class CheckInHistory(
+    val records: List<CheckInRecord> = emptyList(),
+    val page: Int = 1,
+    val pageSize: Int = 20,
+    val total: Int? = null,
+    val hasMore: Boolean = false,
+)
+
 enum class AppEventType { LAUNCH, TRIGGER, MODEL_CALL, MISREPORT, CRASH }
 
 data class ModelCheckInfo(
@@ -183,6 +216,138 @@ class AppApiClient(
                 .userToken(session.token)
                 .build(),
         ) { Unit }
+    }
+
+    suspend fun fetchCheckInOverview(): ApiResult<CheckInOverview> = withContext(Dispatchers.IO) {
+        authenticatedCheckInRequest("api/v1/check-in/overview") { data -> parseCheckInOverview(data) }
+    }
+
+    suspend fun checkIn(): ApiResult<CheckInActionResult> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val requestUrl = config.endpoint("api/v1/check-in").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder()
+                .url(requestUrl)
+                .post(JSONObject().toString().toRequestBody(JSON_MEDIA_TYPE))
+                .appToken(config.appToken)
+                .userToken(session.token)
+                .build(),
+        ) { data ->
+            val overview = parseCheckInOverview(data)
+            CheckInActionResult(
+                overview = overview.copy(
+                    checkedInToday = overview.checkedInToday || data.optBoolean("alreadyCheckedIn", false),
+                ),
+                record = parseCheckInRecord(data.optJSONObject("record") ?: data.optJSONObject("checkIn")),
+                alreadyCheckedIn = data.optBoolean("alreadyCheckedIn", false),
+            )
+        }
+    }
+
+    suspend fun fetchCheckInHistory(
+        page: Int = 1,
+        pageSize: Int = 20,
+        month: String? = null,
+    ): ApiResult<CheckInHistory> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val baseUrl = config.endpoint("api/v1/check-in/history").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        val url = baseUrl.newBuilder()
+            .addQueryParameter("page", page.coerceAtLeast(1).toString())
+            .addQueryParameter("pageSize", pageSize.coerceIn(1, 100).toString())
+            .apply { month?.takeIf { it.isNotBlank() }?.let { addQueryParameter("month", it) } }
+            .build()
+        executeJson(
+            Request.Builder().url(url).get().appToken(config.appToken).userToken(session.token).build(),
+        ) { data -> parseCheckInHistory(data, page, pageSize) }
+    }
+
+    private suspend fun <T> authenticatedCheckInRequest(
+        path: String,
+        transform: (JSONObject) -> T,
+    ): ApiResult<T> {
+        val session = userSessionProvider.get() ?: return ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return ApiResult.NotConfigured
+        val requestUrl = config.endpoint(path).toHttpUrlOrNull()
+            ?: return ApiResult.ParseError("服务地址无效")
+        return executeJson(Request.Builder().url(requestUrl).get().appToken(config.appToken).userToken(session.token).build(), transform)
+    }
+
+    private fun parseCheckInOverview(data: JSONObject): CheckInOverview {
+        val source = data.optJSONObject("overview") ?: data.optJSONObject("status") ?: data
+        val config = source.optJSONObject("config")
+        val checkedDates = mutableSetOf<String>()
+        val dates = source.optJSONArray("checkedDates")
+            ?: source.optJSONArray("checkInDates")
+            ?: source.optJSONArray("signedDates")
+            ?: source.optJSONArray("dates")
+        if (dates != null) {
+            for (index in 0 until dates.length()) {
+                val item = dates.opt(index)
+                val date = when (item) {
+                    is JSONObject -> item.optString("date").takeIf { it.isNotBlank() }
+                        ?: item.optString("day").takeIf { it.isNotBlank() }
+                    else -> item?.toString()?.takeIf { it.isNotBlank() }
+                }
+                date?.take(10)?.let(checkedDates::add)
+            }
+        }
+        val cycleLength = source.optInt("cycleLength", source.optInt("periodLength", 7)).coerceAtLeast(1)
+        val currentStreak = source.optInt("currentStreak", source.optInt("streak", 0)).coerceAtLeast(0)
+        return CheckInOverview(
+            enabled = source.optBoolean("enabled", source.optBoolean("active", config?.optBoolean("enabled", true) ?: true)),
+            checkedInToday = source.optBoolean(
+                "checkedInToday",
+                source.optBoolean("todayCheckedIn", source.optBoolean("todayChecked", source.optBoolean("hasCheckedIn", source.optBoolean("checkedIn", false)))),
+            ),
+            currentStreak = currentStreak,
+            longestStreak = source.optInt("longestStreak", source.optInt("maxStreak", 0)).coerceAtLeast(0),
+            cycleDay = source.optInt("cycleDay", source.optInt("cycleProgress", currentStreak % cycleLength)).coerceIn(0, cycleLength),
+            cycleLength = cycleLength,
+            checkedDates = checkedDates,
+            canCheckIn = source.optBoolean("canCheckIn", source.optBoolean("withinWindow", true)),
+            windowLabel = source.optString("windowLabel").takeIf { it.isNotBlank() }
+                ?: source.optString("checkInWindow").takeIf { it.isNotBlank() }
+                ?: config?.optString("windowLabel")?.takeIf { it.isNotBlank() },
+            notice = source.optString("notice").takeIf { it.isNotBlank() }
+                ?: source.optString("message").takeIf { it.isNotBlank() }
+                ?: config?.optString("announcement")?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    private fun parseCheckInRecord(value: JSONObject?): CheckInRecord? {
+        value ?: return null
+        val date = value.optString("date").takeIf { it.isNotBlank() }
+            ?: value.optString("day").takeIf { it.isNotBlank() }
+            ?: return null
+        return CheckInRecord(
+            date = date.take(10),
+            occurredAt = value.optString("occurredAt").takeIf { it.isNotBlank() }
+                ?: value.optString("createdAt").takeIf { it.isNotBlank() },
+            streak = value.optInt("streak", value.optInt("currentStreak", 0)).coerceAtLeast(0),
+        )
+    }
+
+    private fun parseCheckInHistory(data: JSONObject, fallbackPage: Int, fallbackPageSize: Int): CheckInHistory {
+        val source = data.optJSONObject("history") ?: data
+        val array = source.optJSONArray("records")
+            ?: source.optJSONArray("items")
+            ?: source.optJSONArray("list")
+        val records = if (array == null) emptyList() else buildList {
+            for (index in 0 until array.length()) parseCheckInRecord(array.optJSONObject(index))?.let(::add)
+        }
+        val pagination = source.optJSONObject("pagination")
+        val page = (pagination?.optInt("page", source.optInt("page", fallbackPage))
+            ?: source.optInt("page", fallbackPage)).coerceAtLeast(1)
+        val pageSize = (pagination?.optInt("pageSize", source.optInt("pageSize", fallbackPageSize))
+            ?: source.optInt("pageSize", fallbackPageSize)).coerceAtLeast(1)
+        val total = (pagination?.optInt("total", source.optInt("total", -1))
+            ?: source.optInt("total", -1)).takeIf { it >= 0 }
+        val hasMore = source.optBoolean("hasMore", total?.let { page * pageSize < it } ?: (records.size >= pageSize))
+        return CheckInHistory(records, page, pageSize, total, hasMore)
     }
 
     private suspend fun authenticate(action: String, body: JSONObject): ApiResult<UserSession> = withContext(Dispatchers.IO) {

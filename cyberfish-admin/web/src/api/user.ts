@@ -98,6 +98,9 @@ userHttp.interceptors.response.use(
 export const login = (username: string, password: string) =>
   userHttp.post('/users/login', { username, password }) as Promise<UserSession>;
 
+export const forgotPassword = (input: { username: string; email: string; newPassword: string }) =>
+  userHttp.post('/users/forgot-password', input) as Promise<{ reset: boolean }>;
+
 export const register = (input: { username: string; password: string; displayName?: string; email?: string }) =>
   userHttp.post('/users/register', input) as Promise<UserSession>;
 

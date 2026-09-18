@@ -5,6 +5,7 @@ import type {
   ChangePasswordInput,
   FeedbackInput,
   FeedbackListQuery,
+  ForgotPasswordInput,
   LoginInput,
   RegisterInput,
   UpdateMeInput,
@@ -97,6 +98,21 @@ export async function login(
     },
   });
   return sessionResult(updated, signToken);
+}
+
+export async function forgotPassword(input: ForgotPasswordInput) {
+  const user = await prisma.userAccount.findUnique({ where: { username: input.username } });
+  if (!user || !user.email || user.email.toLowerCase() !== input.email.toLowerCase()) {
+    throw new AppError(ErrorCode.BAD_CREDENTIALS, '用户名或邮箱不匹配', 401);
+  }
+  if (user.status === 'DISABLED') {
+    throw new AppError(ErrorCode.ACCOUNT_DISABLED, '账号已被禁用，请联系管理员', 403);
+  }
+  await prisma.userAccount.update({
+    where: { id: user.id },
+    data: { passwordHash: await hashPassword(input.newPassword) },
+  });
+  return { reset: true };
 }
 
 export async function me(userId: string) {

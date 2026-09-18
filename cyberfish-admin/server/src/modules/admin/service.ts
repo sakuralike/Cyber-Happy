@@ -3,7 +3,13 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { buildListQuery, type RawListQuery } from '../../lib/query';
 import { hashPassword } from '../../lib/hash';
-import type { AdminListQuery, CreateAdminInput, UpdateAdminInput } from './schema';
+import type {
+  AdminListQuery,
+  AppUserListQuery,
+  CreateAdminInput,
+  ResetAppUserPasswordInput,
+  UpdateAdminInput,
+} from './schema';
 
 const SAFE_SELECT = {
   id: true,
@@ -17,6 +23,17 @@ const SAFE_SELECT = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.AdminUserSelect;
+
+const SAFE_APP_USER_SELECT = {
+  id: true,
+  username: true,
+  displayName: true,
+  status: true,
+  email: true,
+  lastLoginAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.UserAccountSelect;
 
 export async function list(q: AdminListQuery & RawListQuery) {
   const built = buildListQuery(q, {
@@ -36,6 +53,37 @@ export async function list(q: AdminListQuery & RawListQuery) {
     prisma.adminUser.count({ where: built.where }),
   ]);
   return { list, total, page: built.page, pageSize: built.pageSize };
+}
+
+export async function listAppUsers(q: AppUserListQuery & RawListQuery) {
+  const built = buildListQuery(q, {
+    keywordFields: ['username', 'displayName'],
+    enumFilters: ['status'],
+    sortWhitelist: ['createdAt', 'username', 'lastLoginAt'],
+    defaultSort: { createdAt: 'desc' },
+  });
+  const [list, total] = await prisma.$transaction([
+    prisma.userAccount.findMany({
+      where: built.where,
+      orderBy: built.orderBy,
+      skip: built.skip,
+      take: built.take,
+      select: SAFE_APP_USER_SELECT,
+    }),
+    prisma.userAccount.count({ where: built.where }),
+  ]);
+  return { list, total, page: built.page, pageSize: built.pageSize };
+}
+
+export async function resetAppUserPassword(id: string, input: ResetAppUserPasswordInput) {
+  const found = await prisma.userAccount.findUnique({ where: { id }, select: SAFE_APP_USER_SELECT });
+  if (!found) throw AppError.notFound('用户账号不存在');
+  const updated = await prisma.userAccount.update({
+    where: { id },
+    data: { passwordHash: await hashPassword(input.password) },
+    select: SAFE_APP_USER_SELECT,
+  });
+  return { before: found, after: updated };
 }
 
 export async function detail(id: string) {

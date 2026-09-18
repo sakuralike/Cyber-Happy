@@ -32,13 +32,16 @@ import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.AppEventType
+import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.VersionCheckState
+import com.cyberfish.app.update.ApkInstallPreparation
 import com.cyberfish.app.update.installApk
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.PillTabBar
 import com.cyberfish.app.ui.components.AvatarCropDialog
 import com.cyberfish.app.ui.screens.FishingSpotMapScreen
+import com.cyberfish.app.ui.screens.CheckInScreen
 import com.cyberfish.app.ui.screens.MonitorScreen
 import com.cyberfish.app.ui.screens.ProfileScreen
 import com.cyberfish.app.ui.screens.RecordsScreen
@@ -76,8 +79,12 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     val userSession by repository.userSession.collectAsState(initial = null)
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
     var showingFishingSpots by rememberSaveable { mutableStateOf(false) }
+    var showingCheckIn by rememberSaveable { mutableStateOf(false) }
+    var returnToCheckInAfterLogin by rememberSaveable { mutableStateOf(false) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
+    var appInstallMessage by remember { mutableStateOf<String?>(null) }
     var supportContent by remember { mutableStateOf(SupportContent()) }
+    var checkInOverview by remember { mutableStateOf<CheckInOverview?>(null) }
     var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         avatarCropUri = uri
@@ -91,6 +98,16 @@ fun CyberFishApp(permissionRevision: Int = 0) {
             repository.loadSupportContent()
         }
         if (supportResult is ApiResult.Success) supportContent = supportResult.value
+    }
+    LaunchedEffect(userSession?.token) {
+        if (userSession != null && returnToCheckInAfterLogin) {
+            showingCheckIn = true
+            returnToCheckInAfterLogin = false
+        }
+        checkInOverview = null
+        if (userSession != null) {
+            checkInOverview = (repository.fetchCheckInOverview() as? ApiResult.Success)?.value
+        }
     }
     val darkTheme = resolveDarkTheme(
         preferences = preferences,
@@ -106,7 +123,21 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                 onUpload = { bitmap -> withContext(Dispatchers.IO) { repository.uploadAvatar(bitmap) } },
             )
         }
-        if (showingFishingSpots) {
+        if (showingCheckIn) {
+            CheckInScreen(
+                userSession = userSession,
+                onBack = { showingCheckIn = false },
+                onRequireLogin = {
+                    returnToCheckInAfterLogin = true
+                    showingCheckIn = false
+                    selectedTabName = AppTab.Profile.name
+                },
+                onOverviewChanged = { checkInOverview = it },
+                loadOverview = repository::fetchCheckInOverview,
+                submitCheckIn = repository::checkIn,
+                loadHistory = { page, month -> repository.fetchCheckInHistory(page = page, month = month) },
+            )
+        } else if (showingFishingSpots) {
             FishingSpotMapScreen(
                 favoriteSpots = preferences.favoriteFishingSpots,
                 onFavoriteSpotsChange = { spots ->
@@ -131,6 +162,8 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             permissionRevision = permissionRevision,
                             isLoggedIn = userSession != null,
                             onRequireLogin = { selectedTabName = AppTab.Profile.name },
+                            showCheckInEntry = userSession == null || checkInOverview?.checkedInToday != true,
+                            onOpenCheckIn = { showingCheckIn = true },
                             onOpenSettings = { selectedTabName = AppTab.Settings.name },
                             triggerConfig = preferences.toTriggerConfig(),
                             alertPreferences = AlertPreferences(
@@ -183,6 +216,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             versionCheckState = versionCheckState,
                             modelState = modelState,
                             appUpdateWorkInfo = appUpdateWorkInfo,
+                            appInstallMessage = appInstallMessage,
                             onCheckForUpdate = {
                                 coroutineScope.launch {
                                     versionCheckState = VersionCheckState.Checking
@@ -198,7 +232,17 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             onDownloadAppUpdate = {
                                 (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.let(repository::enqueueAppUpdate)
                             },
-                            onInstallAppUpdate = { path -> installApk(context, path) },
+                            onInstallAppUpdate = { path ->
+                                appInstallMessage = when (val result = installApk(context, path)) {
+                                    is ApkInstallPreparation.Ready -> "已打开系统安装器"
+                                    ApkInstallPreparation.PermissionRequired -> "请允许安装未知应用后再次点击安装更新"
+                                    ApkInstallPreparation.FileMissing -> "安装包不存在，请重新下载"
+                                    ApkInstallPreparation.InvalidPackage -> "安装包无效，请重新下载"
+                                    ApkInstallPreparation.VersionNotNewer -> "安装包版本不高于当前版本"
+                                    ApkInstallPreparation.SignatureMismatch -> "安装包签名与当前 APP 不一致"
+                                    is ApkInstallPreparation.Failed -> result.message
+                                }
+                            },
                             onCheckModel = {
                                 coroutineScope.launch(Dispatchers.IO) { repository.checkForModelUpdate() }
                             },
@@ -212,6 +256,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             userSession = userSession,
                             supportContent = supportContent,
                             onOpenFishingSpots = { showingFishingSpots = true },
+                            onOpenCheckIn = { showingCheckIn = true },
                             onExportRecords = {
                                 coroutineScope.launch {
                                     val file = withContext(Dispatchers.IO) { repository.exportRecords(records.orEmpty()) }

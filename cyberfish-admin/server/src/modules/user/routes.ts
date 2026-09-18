@@ -8,6 +8,7 @@ import {
   changePasswordSchema,
   feedbackListSchema,
   feedbackSchema,
+  forgotPasswordSchema,
   loginSchema,
   registerSchema,
   updateMeSchema,
@@ -22,6 +23,11 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const data = await service.login(parseOrThrow(loginSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }));
+    return sendOk(reply, data);
+  });
+
+  app.post('/forgot-password', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const data = await service.forgotPassword(parseOrThrow(forgotPasswordSchema, request.body));
     return sendOk(reply, data);
   });
 
