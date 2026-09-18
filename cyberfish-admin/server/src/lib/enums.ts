@@ -200,6 +200,9 @@ export const ConfigScope = {
   BANNER: 'BANNER',
   LANDING: 'LANDING',
   USER_PAGE: 'USER_PAGE',
+  CHECKIN_BASIC: 'CHECKIN_BASIC',
+  CHECKIN_REWARD: 'CHECKIN_REWARD',
+  CHECKIN_RISK: 'CHECKIN_RISK',
 } as const;
 export type ConfigScope = (typeof ConfigScope)[keyof typeof ConfigScope];
 

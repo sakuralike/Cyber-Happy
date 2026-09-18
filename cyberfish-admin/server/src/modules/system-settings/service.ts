@@ -20,6 +20,9 @@ import {
   landingContentSchemas,
   siteSettingSchemas,
   userPageSettingSchemas,
+  checkInBasicSettingSchemas,
+  checkInRewardSettingSchemas,
+  checkInRiskSettingSchemas,
   type BannerInput,
   type BulkSettingsInput,
   type DownloadLinkInput,
@@ -83,6 +86,37 @@ export const USER_PAGE_DEFAULTS: Record<string, unknown> = {
   "about.title": "关于赛博鱼乐",
   "about.content": "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。",
   "about.privacy": "只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。记录导出文件保存在应用私有目录，由你选择分享目标。",
+};
+
+export const CHECKIN_BASIC_DEFAULTS: Record<string, unknown> = {
+  enabled: true,
+  activityTitle: "每日签到",
+  timezone: "Asia/Shanghai",
+  dailyWindowEnabled: false,
+  dailyWindowStart: "00:00",
+  dailyWindowEnd: "23:59",
+  activityStartAt: null,
+  activityEndAt: null,
+  announcement: "",
+};
+
+export const CHECKIN_REWARD_DEFAULTS: Record<string, unknown> = {
+  rewardMode: "BADGE",
+  cycleLength: 7,
+  cycleStrategy: "LOOP",
+  rewards: [
+    { day: 1, type: "STAMP", name: "初竿", iconKey: "stamp_rod", milestone: false },
+    { day: 3, type: "STAMP", name: "常客", iconKey: "stamp_regular", milestone: false },
+    { day: 7, type: "MEDAL", name: "铜钩钓士", iconKey: "medal_bronze", milestone: true },
+  ],
+};
+
+export const CHECKIN_RISK_DEFAULTS: Record<string, unknown> = {
+  maxDevicePerUser: 3,
+  ipRateLimitPerMin: 10,
+  suspiciousThreshold: 5,
+  auditReplayEnabled: true,
+  backfillEnabled: false,
 };
 
 const DEFAULT_LANDING_MODULES: Array<{
@@ -267,6 +301,9 @@ function json(value: unknown): string {
 function defaultsFor(scope: ConfigScopeValue): Record<string, unknown> {
   if (scope === ConfigScope.SITE) return SITE_DEFAULTS;
   if (scope === ConfigScope.USER_PAGE) return USER_PAGE_DEFAULTS;
+  if (scope === ConfigScope.CHECKIN_BASIC) return CHECKIN_BASIC_DEFAULTS;
+  if (scope === ConfigScope.CHECKIN_REWARD) return CHECKIN_REWARD_DEFAULTS;
+  if (scope === ConfigScope.CHECKIN_RISK) return CHECKIN_RISK_DEFAULTS;
   return {};
 }
 
@@ -323,6 +360,27 @@ async function ensureDefaultsInner(): Promise<void> {
           key,
           value: json(value),
         },
+        update: {},
+      }),
+    ),
+    ...Object.entries(CHECKIN_BASIC_DEFAULTS).map(([key, value]) =>
+      prisma.siteSetting.upsert({
+        where: { scope_key: { scope: ConfigScope.CHECKIN_BASIC, key } },
+        create: { id: `${ConfigScope.CHECKIN_BASIC}:${key}`, scope: ConfigScope.CHECKIN_BASIC, key, value: json(value) },
+        update: {},
+      }),
+    ),
+    ...Object.entries(CHECKIN_REWARD_DEFAULTS).map(([key, value]) =>
+      prisma.siteSetting.upsert({
+        where: { scope_key: { scope: ConfigScope.CHECKIN_REWARD, key } },
+        create: { id: `${ConfigScope.CHECKIN_REWARD}:${key}`, scope: ConfigScope.CHECKIN_REWARD, key, value: json(value) },
+        update: {},
+      }),
+    ),
+    ...Object.entries(CHECKIN_RISK_DEFAULTS).map(([key, value]) =>
+      prisma.siteSetting.upsert({
+        where: { scope_key: { scope: ConfigScope.CHECKIN_RISK, key } },
+        create: { id: `${ConfigScope.CHECKIN_RISK}:${key}`, scope: ConfigScope.CHECKIN_RISK, key, value: json(value) },
         update: {},
       }),
     ),
@@ -384,6 +442,9 @@ async function ensureDefaultsInner(): Promise<void> {
     const snapshot: Snapshot = {
       SITE: settingValues(ConfigScope.SITE),
       USER_PAGE: settingValues(ConfigScope.USER_PAGE),
+      CHECKIN_BASIC: settingValues(ConfigScope.CHECKIN_BASIC),
+      CHECKIN_REWARD: settingValues(ConfigScope.CHECKIN_REWARD),
+      CHECKIN_RISK: settingValues(ConfigScope.CHECKIN_RISK),
       DOWNLOAD: downloads.map(
         ({
           createdAt: _createdAt,
@@ -422,9 +483,18 @@ async function ensureDefaultsInner(): Promise<void> {
 function settingValidators(
   scope: ConfigScopeValue,
 ): Record<string, { parse: (value: unknown) => unknown }> {
-  return scope === ConfigScope.SITE
-    ? siteSettingSchemas
-    : userPageSettingSchemas;
+  if (scope === ConfigScope.SITE) return siteSettingSchemas;
+  if (scope === ConfigScope.USER_PAGE) return userPageSettingSchemas;
+  if (scope === ConfigScope.CHECKIN_BASIC) return checkInBasicSettingSchemas;
+  if (scope === ConfigScope.CHECKIN_REWARD) return checkInRewardSettingSchemas;
+  if (scope === ConfigScope.CHECKIN_RISK) return checkInRiskSettingSchemas;
+  throw AppError.badRequest("不支持的配置域");
+}
+
+function isSettingScope(scope: ConfigScopeValue): boolean {
+  return scope === ConfigScope.SITE || scope === ConfigScope.USER_PAGE ||
+    scope === ConfigScope.CHECKIN_BASIC || scope === ConfigScope.CHECKIN_REWARD ||
+    scope === ConfigScope.CHECKIN_RISK;
 }
 
 async function validateImageFile(value: unknown): Promise<void> {
@@ -908,7 +978,7 @@ async function scopeSnapshot(
   scope: ConfigScopeValue,
   useDraft: boolean,
 ): Promise<unknown> {
-  if (scope === ConfigScope.SITE || scope === ConfigScope.USER_PAGE)
+  if (isSettingScope(scope))
     return settingsSnapshot(scope, useDraft);
   if (scope === ConfigScope.DOWNLOAD)
     return (await listDownloadLinks()).map(
@@ -1074,7 +1144,8 @@ async function applySnapshot(
 ): Promise<void> {
   for (const scope of scopes) {
     const value = snapshot[scope];
-    if (scope === ConfigScope.SITE || scope === ConfigScope.USER_PAGE) {
+    if (isSettingScope(scope)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       for (const [key, item] of Object.entries(
         value as Record<string, unknown>,
       )) {
@@ -1373,7 +1444,7 @@ export async function publicConfig(scope: ConfigScopeValue) {
     scope,
     snapshot[scope] ?? (await scopeSnapshot(scope, false)),
   );
-  return scope === ConfigScope.SITE || scope === ConfigScope.USER_PAGE
+  return isSettingScope(scope)
     ? {
         scope,
         version: revision?.version ?? 0,
@@ -1407,11 +1478,16 @@ export async function publicConfigAll() {
 }
 
 function withSettingDefaults(scope: ConfigScopeValue, value: unknown): unknown {
-  if (scope !== ConfigScope.SITE && scope !== ConfigScope.USER_PAGE) return value;
+  if (!isSettingScope(scope)) return value;
   const published = value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
   return { ...defaultsFor(scope), ...published };
+}
+
+export async function checkInConfig() {
+  const result = await publicConfig(ConfigScope.CHECKIN_BASIC);
+  return ("data" in result ? result.data : {}) as Record<string, unknown>;
 }
 
 export function etagFor(

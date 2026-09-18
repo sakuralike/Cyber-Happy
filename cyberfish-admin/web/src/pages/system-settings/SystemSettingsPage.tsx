@@ -6,6 +6,7 @@ import { BannerSettingsPage } from "./BannerSettingsPage";
 import { LandingSettingsPage } from "./LandingSettingsPage";
 import { UserPageSettingsPage } from "./UserPageSettingsPage";
 import { ConfigPublishPage } from "./ConfigPublishPage";
+import { CheckinSettingsPage } from "./CheckinSettingsPage";
 
 export function SystemSettingsPage() {
   const { section } = useParams();
@@ -15,6 +16,7 @@ export function SystemSettingsPage() {
   if (section === "banners") return <BannerSettingsPage />;
   if (section === "landing") return <LandingSettingsPage />;
   if (section === "user-page") return <UserPageSettingsPage />;
+  if (section === "check-in") return <CheckinSettingsPage />;
   if (section === "publish") return <ConfigPublishPage />;
   return <Navigate to="/settings" replace />;
 }

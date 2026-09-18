@@ -5,7 +5,10 @@ export type ConfigScope =
   | "DOWNLOAD"
   | "BANNER"
   | "LANDING"
-  | "USER_PAGE";
+  | "USER_PAGE"
+  | "CHECKIN_BASIC"
+  | "CHECKIN_REWARD"
+  | "CHECKIN_RISK";
 export type ModuleType =
   | "HERO"
   | "FEATURE_GRID"
@@ -26,7 +29,7 @@ export interface SettingItem {
 }
 
 export interface SettingsPayload {
-  scope: "SITE" | "USER_PAGE";
+  scope: ConfigScope;
   values: Record<string, unknown>;
   drafts: Record<string, unknown>;
   draftCount: number;
@@ -112,22 +115,25 @@ export interface PublicConfigAll {
   scopes: {
     SITE: Record<string, unknown>;
     USER_PAGE: Record<string, unknown>;
+    CHECKIN_BASIC: Record<string, unknown>;
+    CHECKIN_REWARD: Record<string, unknown>;
+    CHECKIN_RISK: Record<string, unknown>;
     DOWNLOAD: DownloadLink[];
     BANNER: Banner[];
     LANDING: LandingModule[];
   };
 }
 
-export const getSettings = (scope: "SITE" | "USER_PAGE") =>
+export const getSettings = (scope: ConfigScope) =>
   http.get(`/admin/settings/${scope}`) as Promise<SettingsPayload>;
 export const saveSettings = (
-  scope: "SITE" | "USER_PAGE",
+  scope: ConfigScope,
   values: Record<string, unknown>,
 ) =>
   http.put(`/admin/settings/${scope}/items`, {
     items: Object.entries(values).map(([key, value]) => ({ key, value })),
   }) as Promise<SettingsPayload>;
-export const discardSettings = (scope: "SITE" | "USER_PAGE") =>
+export const discardSettings = (scope: ConfigScope) =>
   http.post(`/admin/settings/${scope}/discard`, {}) as Promise<SettingsPayload>;
 
 export const getCurrentVersion = () =>

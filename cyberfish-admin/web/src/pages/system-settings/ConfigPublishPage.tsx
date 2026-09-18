@@ -39,6 +39,9 @@ const scopeLabel: Record<ConfigScope, string> = {
   BANNER: "首页轮播",
   LANDING: "落地页",
   USER_PAGE: "用户页面",
+  CHECKIN_BASIC: "签到基础规则",
+  CHECKIN_REWARD: "签到奖励规则",
+  CHECKIN_RISK: "签到风控规则",
 };
 const statusLabel = {
   PUBLISHED: ["已发布", "green"],

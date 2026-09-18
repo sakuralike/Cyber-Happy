@@ -32,7 +32,6 @@ import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.AppEventType
-import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.update.ApkInstallPreparation
@@ -84,7 +83,6 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     var appInstallMessage by remember { mutableStateOf<String?>(null) }
     var supportContent by remember { mutableStateOf(SupportContent()) }
-    var checkInOverview by remember { mutableStateOf<CheckInOverview?>(null) }
     var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         avatarCropUri = uri
@@ -103,10 +101,6 @@ fun CyberFishApp(permissionRevision: Int = 0) {
         if (userSession != null && returnToCheckInAfterLogin) {
             showingCheckIn = true
             returnToCheckInAfterLogin = false
-        }
-        checkInOverview = null
-        if (userSession != null) {
-            checkInOverview = (repository.fetchCheckInOverview() as? ApiResult.Success)?.value
         }
     }
     val darkTheme = resolveDarkTheme(
@@ -132,7 +126,6 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                     showingCheckIn = false
                     selectedTabName = AppTab.Profile.name
                 },
-                onOverviewChanged = { checkInOverview = it },
                 loadOverview = repository::fetchCheckInOverview,
                 submitCheckIn = repository::checkIn,
                 loadHistory = { page, month -> repository.fetchCheckInHistory(page = page, month = month) },
@@ -162,8 +155,6 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             permissionRevision = permissionRevision,
                             isLoggedIn = userSession != null,
                             onRequireLogin = { selectedTabName = AppTab.Profile.name },
-                            showCheckInEntry = userSession == null || checkInOverview?.checkedInToday != true,
-                            onOpenCheckIn = { showingCheckIn = true },
                             onOpenSettings = { selectedTabName = AppTab.Settings.name },
                             triggerConfig = preferences.toTriggerConfig(),
                             alertPreferences = AlertPreferences(
