@@ -28,6 +28,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -63,6 +64,7 @@ fun ProfileScreen(
     supportContent: SupportContent,
     onOpenFishingSpots: () -> Unit,
     onOpenCheckIn: () -> Unit = {},
+    openLogin: Boolean = false,
     onExportRecords: () -> Unit,
     onLogin: suspend (String, String) -> ApiResult<UserSession>,
     onRegister: suspend (String, String, String, String) -> ApiResult<UserSession>,
@@ -76,6 +78,10 @@ fun ProfileScreen(
     val scope = rememberCoroutineScope()
     val validCount = records.count { !it.isFalsePositive }
     val account = userSession?.user
+
+    LaunchedEffect(openLogin, userSession) {
+        if (openLogin && userSession == null) action = ProfileAction.Login
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

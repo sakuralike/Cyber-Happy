@@ -257,6 +257,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             supportContent = supportContent,
                             onOpenFishingSpots = { showingFishingSpots = true },
                             onOpenCheckIn = { showingCheckIn = true },
+                            openLogin = returnToCheckInAfterLogin,
                             onExportRecords = {
                                 coroutineScope.launch {
                                     val file = withContext(Dispatchers.IO) { repository.exportRecords(records.orEmpty()) }
