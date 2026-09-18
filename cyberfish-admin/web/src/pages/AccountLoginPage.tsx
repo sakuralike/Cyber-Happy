@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { Button, Form, Input, Segmented, message } from 'antd';
+import { Button, Form, Input, Segmented, Typography, message } from 'antd';
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { SiteBrandMark } from '../components/SiteBrandMark';
 import { getPublicConfigAll } from '../api/systemSettings';
 import { useUserAuth } from '../store/userAuth';
+import * as userApi from '../api/user';
 
-type Mode = 'login' | 'register';
+type Mode = 'login' | 'register' | 'forgot';
 
 export function AccountLoginPage() {
   const [form] = Form.useForm();
@@ -23,10 +24,20 @@ export function AccountLoginPage() {
   const submit = async (values: { username: string; password: string; displayName?: string; email?: string }) => {
     setLoading(true);
     try {
-      if (mode === 'login') await login(values.username, values.password);
-      else await register(values);
-      message.success(mode === 'login' ? '登录成功' : '注册成功');
-      navigate('/account');
+      if (mode === 'login') {
+        await login(values.username, values.password);
+        message.success('登录成功');
+        navigate('/account');
+      } else if (mode === 'register') {
+        await register(values);
+        message.success('注册成功');
+        navigate('/account');
+      } else {
+        await userApi.forgotPassword({ username: values.username, email: values.email!, newPassword: values.password });
+        message.success('密码已重置，请使用新密码登录');
+        setMode('login');
+        form.resetFields();
+      }
     } catch (error) {
       message.error((error as Error).message);
     } finally {
@@ -42,15 +53,17 @@ export function AccountLoginPage() {
         <a href="#/login">后台管理登录</a>
       </section>
       <section className="account-login-form"><div className="login-form-wrap">
-        <h1>{mode === 'login' ? '登录用户中心' : '注册用户中心'}</h1>
-        <p>{mode === 'login' ? '使用赛博鱼乐账号继续' : '注册后可在 APP 与网站用户中心使用同一账号'}</p>
-        <Segmented block value={mode} onChange={(value) => { setMode(value as Mode); form.resetFields(); }} options={[{ label: '登录', value: 'login' }, { label: '注册', value: 'register' }]} />
+        <h1>{mode === 'login' ? '登录用户中心' : mode === 'register' ? '注册用户中心' : '重置密码'}</h1>
+        <p>{mode === 'login' ? '使用赛博鱼乐账号继续' : mode === 'register' ? '注册后可在 APP 与网站用户中心使用同一账号' : '使用已绑定邮箱验证后设置新密码'}</p>
+        {mode !== 'forgot' && <Segmented block value={mode} onChange={(value) => { setMode(value as Mode); form.resetFields(); }} options={[{ label: '登录', value: 'login' }, { label: '注册', value: 'register' }]} />}
         <Form form={form} layout="vertical" size="large" onFinish={submit} style={{ marginTop: 24 }}>
           <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2, message: '请输入至少 2 个字符的用户名' }]}><Input prefix={<UserOutlined />} autoFocus /></Form.Item>
           {mode === 'register' && <Form.Item name="displayName" label="昵称" rules={[{ max: 80 }]}><Input placeholder="默认使用用户名" /></Form.Item>}
-          {mode === 'register' && <Form.Item name="email" label="邮箱" rules={[{ type: 'email', message: '请输入有效邮箱' }]}><Input placeholder="可选" /></Form.Item>}
+          {(mode === 'register' || mode === 'forgot') && <Form.Item name="email" label="邮箱" rules={[{ required: mode === 'forgot', type: 'email', message: '请输入有效邮箱' }]}><Input placeholder={mode === 'forgot' ? '请输入注册时绑定的邮箱' : '可选'} /></Form.Item>}
           <Form.Item name="password" label="密码" rules={[{ required: true, min: 6, message: '密码至少 6 位' }]}><Input.Password prefix={<LockOutlined />} /></Form.Item>
-          <Button type="primary" htmlType="submit" block loading={loading}>{mode === 'login' ? '登录' : '注册并登录'}</Button>
+          <Button type="primary" htmlType="submit" block loading={loading}>{mode === 'login' ? '登录' : mode === 'register' ? '注册并登录' : '重置密码'}</Button>
+          {mode === 'login' && <Typography.Link onClick={() => { setMode('forgot'); form.resetFields(); }} style={{ display: 'block', marginTop: 14, textAlign: 'center' }}>忘记密码</Typography.Link>}
+          {mode === 'forgot' && <Typography.Link onClick={() => { setMode('login'); form.resetFields(); }} style={{ display: 'block', marginTop: 14, textAlign: 'center' }}>返回登录</Typography.Link>}
         </Form>
       </div></section>
     </main>

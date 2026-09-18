@@ -62,6 +62,7 @@ model UserAccount {
   updatedAt    DateTime @updatedAt
 
   feedbacks UserFeedback[]
+  checkIns  CheckInRecord[]
 
   @@index([status])
 }
@@ -78,6 +79,19 @@ model UserFeedback {
 
   @@index([userId, createdAt])
   @@index([status])
+}
+
+model CheckInRecord {
+  id          String      @id @default(cuid())
+  userId      String
+  user        UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checkinDate String
+  checkedAt   DateTime    @default(now())
+  streak      Int
+
+  @@unique([userId, checkinDate])
+  @@index([userId, checkinDate])
+  @@index([checkinDate])
 }
 
 // ============================================================

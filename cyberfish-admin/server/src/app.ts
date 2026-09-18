@@ -22,6 +22,7 @@ import siteConfigRoutes from './modules/site-config/routes';
 import appEventRoutes from './modules/app-event/routes';
 import systemSettingsRoutes from './modules/system-settings/routes';
 import userRoutes from './modules/user/routes';
+import checkInRoutes from './modules/check-in/routes';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -80,6 +81,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(siteConfigRoutes, { prefix: '/site-config' });
       await v1.register(appEventRoutes, { prefix: '/app-events' });
       await v1.register(userRoutes, { prefix: '/users' });
+      await v1.register(checkInRoutes);
       await v1.register(systemSettingsRoutes);
     },
     { prefix: '/api/v1' },
