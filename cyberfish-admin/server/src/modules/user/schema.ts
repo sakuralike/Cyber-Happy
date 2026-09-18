@@ -17,6 +17,12 @@ export const loginSchema = z.object({
   password: passwordSchema,
 });
 
+export const forgotPasswordSchema = z.object({
+  username: usernameSchema,
+  email: z.string().trim().email('请输入有效邮箱').max(160),
+  newPassword: passwordSchema,
+});
+
 export const updateMeSchema = z.object({
   displayName: z.string().trim().min(1, '昵称不能为空').max(80),
   email: emailSchema.optional(),
@@ -42,6 +48,7 @@ export const feedbackListSchema = listQuerySchema;
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;

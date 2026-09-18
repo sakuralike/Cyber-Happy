@@ -7,6 +7,10 @@ export const adminListSchema = listQuerySchema.extend({
   status: z.string().trim().optional(),
 });
 
+export const appUserListSchema = listQuerySchema.extend({
+  status: z.string().trim().optional(),
+});
+
 export const createAdminSchema = z.object({
   username: z.string().trim().min(2).max(50),
   password: z.string().min(6, '密码至少 6 位').max(100),
@@ -23,6 +27,12 @@ export const updateAdminSchema = z.object({
   password: z.string().min(6).max(100).optional(),
 });
 
+export const resetAppUserPasswordSchema = z.object({
+  password: z.string().min(6, '密码至少 6 位').max(100),
+});
+
 export type AdminListQuery = z.infer<typeof adminListSchema>;
+export type AppUserListQuery = z.infer<typeof appUserListSchema>;
 export type CreateAdminInput = z.infer<typeof createAdminSchema>;
 export type UpdateAdminInput = z.infer<typeof updateAdminSchema>;
+export type ResetAppUserPasswordInput = z.infer<typeof resetAppUserPasswordSchema>;

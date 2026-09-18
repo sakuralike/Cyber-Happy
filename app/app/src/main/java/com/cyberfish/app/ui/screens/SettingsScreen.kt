@@ -72,6 +72,7 @@ fun SettingsScreen(
     onCheckForUpdate: () -> Unit,
     modelState: ModelState = ModelState(),
     appUpdateWorkInfo: WorkInfo? = null,
+    appInstallMessage: String? = null,
     onCheckModel: () -> Unit = {},
     onRollbackModel: () -> Unit = {},
     onDownloadAppUpdate: () -> Unit = {},
@@ -115,6 +116,7 @@ fun SettingsScreen(
                     onCheckForUpdate = onCheckForUpdate,
                     modelState = modelState,
                     appUpdateWorkInfo = appUpdateWorkInfo,
+                    appInstallMessage = appInstallMessage,
                     onCheckModel = onCheckModel,
                     onRollbackModel = onRollbackModel,
                     onDownloadAppUpdate = onDownloadAppUpdate,
@@ -279,6 +281,7 @@ private fun ModelSettings(
     onCheckForUpdate: () -> Unit,
     modelState: ModelState,
     appUpdateWorkInfo: WorkInfo?,
+    appInstallMessage: String?,
     onCheckModel: () -> Unit,
     onRollbackModel: () -> Unit,
     onDownloadAppUpdate: () -> Unit,
@@ -378,6 +381,14 @@ private fun ModelSettings(
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         ) { Text("下载并安装") }
                     }
+                }
+                appInstallMessage?.let {
+                    Text(
+                        it,
+                        modifier = Modifier.padding(top = 8.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }

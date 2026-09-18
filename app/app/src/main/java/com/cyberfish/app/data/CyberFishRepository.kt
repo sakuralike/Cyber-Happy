@@ -15,6 +15,9 @@ import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.AppApiClient
 import com.cyberfish.app.network.AppEventType
 import com.cyberfish.app.network.AppUpdateInfo
+import com.cyberfish.app.network.CheckInActionResult
+import com.cyberfish.app.network.CheckInHistory
+import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.DeviceIdentityStore
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.UserAccount
@@ -203,6 +206,13 @@ class CyberFishRepository(context: Context) {
     suspend fun loadSupportContent(): ApiResult<SupportContent> = appApiClient.fetchSupportContent()
 
     suspend fun submitFeedback(content: String, contact: String): ApiResult<Unit> = appApiClient.submitFeedback(content, contact)
+
+    suspend fun fetchCheckInOverview(): ApiResult<CheckInOverview> = appApiClient.fetchCheckInOverview()
+
+    suspend fun checkIn(): ApiResult<CheckInActionResult> = appApiClient.checkIn()
+
+    suspend fun fetchCheckInHistory(page: Int = 1, pageSize: Int = 20, month: String? = null): ApiResult<CheckInHistory> =
+        appApiClient.fetchCheckInHistory(page, pageSize, month)
 
     fun enqueueAppUpdate(update: AppUpdateInfo) = AppUpdateWorker.enqueue(appContext, update)
 
