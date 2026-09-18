@@ -58,7 +58,6 @@ import com.cyberfish.app.inference.Detector
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPipeline
-import com.cyberfish.app.ui.components.StatusChip
 import com.cyberfish.app.ui.theme.ChartPalette
 import com.cyberfish.app.ui.theme.CameraPanel
 import java.io.File
@@ -149,33 +148,49 @@ fun CameraPreviewCard(
         colors = CardDefaults.cardColors(containerColor = CameraPanel),
         shape = RoundedCornerShape(20.dp),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(264.dp).clip(RoundedCornerShape(20.dp))) {
-            if (permissionGranted) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { PreviewView(it) },
-                    update = { previewView = it },
-                )
-            } else {
-                Box(Modifier.fillMaxSize().background(CameraPanel))
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(modifier = Modifier.fillMaxWidth().height(264.dp).clip(RoundedCornerShape(20.dp))) {
+                if (permissionGranted) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { PreviewView(it) },
+                        update = { previewView = it },
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize().background(CameraPanel))
+                }
+
+                DetectionOverlay(metrics?.detection)
             }
 
-            DetectionOverlay(metrics?.detection)
-            PreviewHud(metrics, captureStatus, detector.modelVersion)
-            ZoomControls(
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 44.dp),
-                selectedZoomRatio = selectedZoomRatio,
-                maxZoomRatio = maxZoomRatio,
-                enabled = permissionGranted,
-                onZoomSelected = { ratio ->
-                    selectedZoomRatio = ratio.coerceIn(1f, maxZoomRatio)
-                    frameSource.setZoomRatio(selectedZoomRatio)
-                },
-            )
-            if (!permissionGranted || !monitoring || captureStatus == CaptureStatus.Failed) {
-                PreviewState(Modifier.align(Alignment.Center), status)
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                PreviewStatus(
+                    modifier = Modifier.fillMaxWidth(),
+                    status = status,
+                    metrics = metrics,
+                    modelVersion = detector.modelVersion,
+                    captureStatus = captureStatus,
+                )
+                ZoomControls(
+                    modifier = Modifier.fillMaxWidth(),
+                    selectedZoomRatio = selectedZoomRatio,
+                    maxZoomRatio = maxZoomRatio,
+                    enabled = permissionGranted,
+                    onZoomSelected = { ratio ->
+                        selectedZoomRatio = ratio.coerceIn(1f, maxZoomRatio)
+                        frameSource.setZoomRatio(selectedZoomRatio)
+                    },
+                )
+                if (!permissionGranted || !monitoring || captureStatus == CaptureStatus.Failed) {
+                    PreviewState(Modifier.fillMaxWidth().padding(vertical = 4.dp), status)
+                }
             }
-            PreviewStatus(Modifier.align(Alignment.BottomCenter), status, metrics, detector.modelVersion)
         }
     }
 }
@@ -191,6 +206,7 @@ private fun ZoomControls(
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         listOf(1f, 2f, 3f).forEach { ratio ->
             FilterChip(
@@ -241,23 +257,6 @@ private fun DetectionOverlay(detection: Detection?) {
 }
 
 @Composable
-private fun PreviewHud(metrics: FrameMetrics?, captureStatus: CaptureStatus, modelVersion: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        StatusChip(
-            text = metrics?.let { "FPS ${it.framesPerSecond} · ${it.latencyMillis}ms" } ?: "FPS -- · --ms",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        StatusChip(
-            text = if (captureStatus == CaptureStatus.Running) "$modelVersion · 检测中" else "$modelVersion · 待机",
-            color = MaterialTheme.colorScheme.secondary,
-        )
-    }
-}
-
-@Composable
 private fun PreviewState(modifier: Modifier, status: String) {
     Column(
         modifier = modifier,
@@ -279,28 +278,41 @@ private fun PreviewState(modifier: Modifier, status: String) {
 }
 
 @Composable
-private fun PreviewStatus(modifier: Modifier, status: String, metrics: FrameMetrics?, modelVersion: String) {
+private fun PreviewStatus(
+    modifier: Modifier,
+    status: String,
+    metrics: FrameMetrics?,
+    modelVersion: String,
+    captureStatus: CaptureStatus,
+) {
     Surface(
-        modifier = modifier.fillMaxWidth().padding(12.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        color = MaterialTheme.colorScheme.surface,
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(status, style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(status, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (captureStatus == CaptureStatus.Running) "$modelVersion · 检测中" else "$modelVersion · 待机",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Text(
-                    metrics?.detection?.let { "检测置信度 %.0f%%".format(it.confidence * 100) } ?: "后置相机 · $modelVersion",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
+                    metrics?.let { "${it.framesPerSecond} FPS · ${it.latencyMillis}ms" } ?: "FPS -- · --ms",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
                 )
             }
             Text(
-                metrics?.let { "${it.framesPerSecond} FPS" } ?: "-- FPS",
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelLarge,
+                metrics?.detection?.let { "检测置信度 %.0f%%".format(it.confidence * 100) } ?: "后置相机",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }
