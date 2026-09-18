@@ -11,6 +11,9 @@ import {
 export const configurableScopeSchema = z.enum([
   ConfigScope.SITE,
   ConfigScope.USER_PAGE,
+  ConfigScope.CHECKIN_BASIC,
+  ConfigScope.CHECKIN_REWARD,
+  ConfigScope.CHECKIN_RISK,
 ]);
 export const configScopeSchema = z.nativeEnum(ConfigScope);
 
@@ -60,6 +63,48 @@ export const userPageSettingSchemas = {
   "about.title": z.string().trim().min(1).max(40),
   "about.content": z.string().trim().min(1).max(2000),
   "about.privacy": z.string().trim().min(1).max(2000),
+} as const;
+
+const checkInRewardsSchema = z.array(z.object({
+  day: z.number().int().min(1).max(120),
+  type: z.enum(['STAMP', 'MEDAL', 'TITLE']),
+  name: z.string().trim().min(1).max(40),
+  iconKey: z.string().trim().min(1).max(40),
+  milestone: z.boolean(),
+})).max(24).superRefine((items, ctx) => {
+  if (new Set(items.map((item) => item.day)).size !== items.length)
+    ctx.addIssue({ code: 'custom', message: '奖励天数不能重复' });
+  if (new Set(items.map((item) => item.name)).size !== items.length)
+    ctx.addIssue({ code: 'custom', message: '奖励名称不能重复' });
+  if (items.filter((item) => item.milestone).length > 6)
+    ctx.addIssue({ code: 'custom', message: '里程碑奖励最多 6 项' });
+});
+
+export const checkInBasicSettingSchemas = {
+  enabled: z.boolean(),
+  activityTitle: z.string().trim().min(1).max(20),
+  timezone: z.literal('Asia/Shanghai'),
+  dailyWindowEnabled: z.boolean(),
+  dailyWindowStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  dailyWindowEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  activityStartAt: z.string().datetime({ offset: true }).nullable(),
+  activityEndAt: z.string().datetime({ offset: true }).nullable(),
+  announcement: z.string().trim().max(100),
+} as const;
+
+export const checkInRewardSettingSchemas = {
+  rewardMode: z.literal('BADGE'),
+  cycleLength: z.union([z.literal(7), z.literal(14), z.literal(30)]),
+  cycleStrategy: z.enum(['LOOP', 'ONCE']),
+  rewards: checkInRewardsSchema,
+} as const;
+
+export const checkInRiskSettingSchemas = {
+  maxDevicePerUser: z.number().int().min(1).max(10),
+  ipRateLimitPerMin: z.number().int().min(1).max(60),
+  suspiciousThreshold: z.number().int().min(2).max(20),
+  auditReplayEnabled: z.boolean(),
+  backfillEnabled: z.literal(false),
 } as const;
 
 export const bulkSettingsSchema = z
