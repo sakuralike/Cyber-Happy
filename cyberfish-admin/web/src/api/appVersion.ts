@@ -17,6 +17,7 @@ export interface CreateAppVersionInput {
   updateType?: UpdateType;
   releaseNotes?: string;
   minSupportedCode?: number;
+  apkUrl?: string | null;
   apkFileId?: string;
 }
 

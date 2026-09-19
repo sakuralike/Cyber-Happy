@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { Platform, UpdateType } from '../../lib/enums';
 import { listQuerySchema, dateStr } from '../../lib/zod';
 
+const externalUrlSchema = z.string().trim().url().max(500).refine((value) => /^https?:\/\//i.test(value), '仅支持 HTTP 或 HTTPS 下载地址');
+
 export const appVersionListSchema = listQuerySchema.extend({
   status: z.string().trim().optional(),
   updateType: z.string().trim().optional(),
@@ -11,7 +13,7 @@ export const appVersionListSchema = listQuerySchema.extend({
   createdTo: dateStr,
 });
 
-export const createAppVersionSchema = z.object({
+const appVersionBaseSchema = z.object({
   versionName: z
     .string()
     .trim()
@@ -22,10 +24,17 @@ export const createAppVersionSchema = z.object({
   updateType: z.nativeEnum(UpdateType).default(UpdateType.OPTIONAL),
   releaseNotes: z.string().max(5000).default(''),
   minSupportedCode: z.number().int().nonnegative().optional(),
+  apkUrl: externalUrlSchema.optional().nullable(),
   apkFileId: z.string().min(1).optional(),
 });
 
-export const updateAppVersionSchema = createAppVersionSchema
+export const createAppVersionSchema = appVersionBaseSchema.superRefine((value, ctx) => {
+  if (value.apkUrl && value.apkFileId) {
+    ctx.addIssue({ code: 'custom', message: '外部下载地址与上传 APK 不能同时填写', path: ['apkUrl'] });
+  }
+});
+
+export const updateAppVersionSchema = appVersionBaseSchema
   .partial()
   .omit({ versionCode: true })
   .extend({

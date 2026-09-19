@@ -50,8 +50,6 @@ import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.update.ModelInstallStatus
 import com.cyberfish.app.update.ModelState
-import com.cyberfish.app.update.AppUpdateWorker
-import androidx.work.WorkInfo
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPreset
 import com.cyberfish.app.ui.ThemeMode
@@ -71,12 +69,11 @@ fun SettingsScreen(
     versionCheckState: VersionCheckState,
     onCheckForUpdate: () -> Unit,
     modelState: ModelState = ModelState(),
-    appUpdateWorkInfo: WorkInfo? = null,
     appInstallMessage: String? = null,
     onCheckModel: () -> Unit = {},
+    onInstallModelUpdate: () -> Unit = {},
     onRollbackModel: () -> Unit = {},
     onDownloadAppUpdate: () -> Unit = {},
-    onInstallAppUpdate: (String) -> Unit = {},
 ) {
     var sectionName by rememberSaveable { mutableStateOf(SettingsSection.Parameters.name) }
     val section = SettingsSection.valueOf(sectionName)
@@ -115,12 +112,11 @@ fun SettingsScreen(
                     versionCheckState = versionCheckState,
                     onCheckForUpdate = onCheckForUpdate,
                     modelState = modelState,
-                    appUpdateWorkInfo = appUpdateWorkInfo,
                     appInstallMessage = appInstallMessage,
                     onCheckModel = onCheckModel,
+                    onInstallModelUpdate = onInstallModelUpdate,
                     onRollbackModel = onRollbackModel,
                     onDownloadAppUpdate = onDownloadAppUpdate,
-                    onInstallAppUpdate = onInstallAppUpdate,
                 )
             }
         }
@@ -280,12 +276,11 @@ private fun ModelSettings(
     versionCheckState: VersionCheckState,
     onCheckForUpdate: () -> Unit,
     modelState: ModelState,
-    appUpdateWorkInfo: WorkInfo?,
     appInstallMessage: String?,
     onCheckModel: () -> Unit,
+    onInstallModelUpdate: () -> Unit,
     onRollbackModel: () -> Unit,
     onDownloadAppUpdate: () -> Unit,
-    onInstallAppUpdate: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionCard("模型状态") {
@@ -308,6 +303,12 @@ private fun ModelSettings(
                     enabled = modelState.status != ModelInstallStatus.CHECKING && modelState.status != ModelInstallStatus.DOWNLOADING && modelState.status != ModelInstallStatus.VERIFYING,
                     modifier = Modifier.weight(1f),
                 ) { Text("检查模型") }
+                if (modelState.status == ModelInstallStatus.UPDATE_AVAILABLE) {
+                    Button(
+                        onClick = onInstallModelUpdate,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("手动更新") }
+                }
                 Button(
                     onClick = onRollbackModel,
                     enabled = modelState.status == ModelInstallStatus.READY,
@@ -358,30 +359,11 @@ private fun ModelSettings(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                when (appUpdateWorkInfo?.state) {
-                    WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
-                        Text(
-                            "下载中 ${appUpdateWorkInfo.progress.getInt(AppUpdateWorker.KEY_PROGRESS, 0)}%",
-                            modifier = Modifier.padding(top = 8.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    WorkInfo.State.SUCCEEDED -> {
-                        val apkPath = appUpdateWorkInfo.outputData.getString(AppUpdateWorker.KEY_APK_PATH)
-                        if (apkPath != null) {
-                            Button(onClick = { onInstallAppUpdate(apkPath) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                                Text("安装更新")
-                            }
-                        }
-                    }
-                    else -> {
-                        Button(
-                            onClick = onDownloadAppUpdate,
-                            enabled = update.apkUrl != null && update.apkSha256 != null,
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        ) { Text("下载并安装") }
-                    }
-                }
+                Button(
+                    onClick = onDownloadAppUpdate,
+                    enabled = update.apkUrl != null,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) { Text("打开网盘") }
                 appInstallMessage?.let {
                     Text(
                         it,
@@ -415,6 +397,7 @@ private fun modelStateTitle(state: ModelState) = if (state.status == ModelInstal
 private fun modelStateSubtitle(state: ModelState) = when (state.status) {
     ModelInstallStatus.MOCK -> "规则模拟 · 仅供联调"
     ModelInstallStatus.CHECKING -> "正在检查可用模型"
+    ModelInstallStatus.UPDATE_AVAILABLE -> "发现新模型，等待手动更新"
     ModelInstallStatus.DOWNLOADING -> "正在下载模型 · ${state.progress}%"
     ModelInstallStatus.VERIFYING -> "正在校验模型完整性"
     ModelInstallStatus.READY -> "LiteRT · 已就绪"
@@ -425,6 +408,7 @@ private fun modelStateSubtitle(state: ModelState) = when (state.status) {
 private fun modelStateLabel(state: ModelState) = when (state.status) {
     ModelInstallStatus.MOCK -> "未接入"
     ModelInstallStatus.CHECKING -> "检查中"
+    ModelInstallStatus.UPDATE_AVAILABLE -> "有更新"
     ModelInstallStatus.DOWNLOADING -> "下载中"
     ModelInstallStatus.VERIFYING -> "校验中"
     ModelInstallStatus.READY -> "已就绪"
