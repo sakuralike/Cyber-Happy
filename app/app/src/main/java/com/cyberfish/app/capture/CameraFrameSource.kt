@@ -3,6 +3,7 @@ package com.cyberfish.app.capture
 import android.content.Context
 import android.os.SystemClock
 import android.view.Surface
+import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
@@ -10,6 +11,7 @@ import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.camera.view.TransformExperimental
 import androidx.camera.view.transform.OutputTransform
 import androidx.core.content.ContextCompat
 import androidx.core.view.doOnLayout
@@ -20,6 +22,7 @@ import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+@OptIn(markerClass = [TransformExperimental::class])
 class CameraFrameSource(
     private val context: Context,
     private val detector: Detector,
