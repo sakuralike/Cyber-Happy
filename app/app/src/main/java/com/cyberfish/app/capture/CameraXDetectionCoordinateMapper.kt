@@ -10,6 +10,7 @@ import androidx.camera.view.transform.ImageProxyTransformFactory
 import androidx.camera.view.transform.OutputTransform
 import com.cyberfish.app.inference.Detection
 
+@OptIn(markerClass = [TransformExperimental::class])
 internal data class CameraXFrameTransform(
     val outputTransform: OutputTransform,
     val cropWidthPx: Int,
