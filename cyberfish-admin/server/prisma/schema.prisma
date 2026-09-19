@@ -61,8 +61,10 @@ model UserAccount {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  feedbacks UserFeedback[]
-  checkIns  CheckInRecord[]
+  feedbacks         UserFeedback[]
+  checkIns          CheckInRecord[]
+  checkInRewards    CheckInRewardLog[]
+  checkInRiskEvents CheckInRiskEvent[]
 
   @@index([status])
 }
@@ -86,12 +88,46 @@ model CheckInRecord {
   userId      String
   user        UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
   checkinDate String
+  deviceId    String?
   checkedAt   DateTime    @default(now())
   streak      Int
 
   @@unique([userId, checkinDate])
   @@index([userId, checkinDate])
+  @@index([deviceId, userId])
   @@index([checkinDate])
+}
+
+model CheckInRewardLog {
+  id          String      @id @default(cuid())
+  userId      String
+  user        UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checkinDate String
+  rewardDay   Int
+  rewardType  String
+  rewardName  String
+  iconKey     String
+  streak      Int
+  grantedAt   DateTime    @default(now())
+
+  @@unique([userId, checkinDate, rewardDay])
+  @@index([userId, grantedAt])
+  @@index([checkinDate])
+}
+
+model CheckInRiskEvent {
+  id        String       @id @default(cuid())
+  userId    String?
+  user      UserAccount? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  deviceId  String?
+  ip        String?
+  reason    String
+  metadata  String       @default("{}")
+  createdAt DateTime     @default(now())
+
+  @@index([userId, createdAt])
+  @@index([ip, createdAt])
+  @@index([deviceId, createdAt])
 }
 
 // ============================================================
