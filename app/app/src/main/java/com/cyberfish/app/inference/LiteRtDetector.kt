@@ -52,7 +52,7 @@ class LiteRtDetector(
                 inputBuffers[0].writeFloat(input)
                 runtimeSignature?.let { model.run(inputBuffers, outputBuffers, it) }
                     ?: model.run(inputBuffers, outputBuffers)
-                parseDetection(outputBuffers[0].readFloat())
+                parseDetection(outputBuffers[0].readFloat(), frame.inputTransform)
             } catch (_: Exception) {
                 null
             }
@@ -93,7 +93,7 @@ class LiteRtDetector(
         val buffers: Pair<List<TensorBuffer>, List<TensorBuffer>>,
     )
 
-    private fun parseDetection(values: FloatArray): Detection? {
+    private fun parseDetection(values: FloatArray, inputTransform: ModelInputTransform?): Detection? {
         var best: Detection? = null
         for (offset in values.indices step descriptor.valuesPerDetection) {
             if (offset + descriptor.valuesPerDetection > values.size) break
@@ -105,16 +105,17 @@ class LiteRtDetector(
             val top = values[offset + 1]
             val right = values[offset + 2]
             val bottom = values[offset + 3]
-            val bounds = if (descriptor.coordinatesNormalized) {
-                DetectionBounds(left, top, right, bottom).normalized()
+            val modelBounds = if (descriptor.coordinatesNormalized) {
+                DetectionBounds(left, top, right, bottom)
             } else {
                 DetectionBounds(
                     left / descriptor.inputSize,
                     top / descriptor.inputSize,
                     right / descriptor.inputSize,
                     bottom / descriptor.inputSize,
-                ).normalized()
+                )
             }
+            val bounds = mapModelBoundsToSource(modelBounds, inputTransform) ?: continue
             if (best == null || confidence > best.confidence) {
                 best = Detection(bounds = bounds, confidence = confidence)
             }
@@ -122,16 +123,26 @@ class LiteRtDetector(
         return best
     }
 
-    private fun DetectionBounds.normalized() = DetectionBounds(
-        left = left.coerceIn(0f, 1f),
-        top = top.coerceIn(0f, 1f),
-        right = right.coerceIn(0f, 1f),
-        bottom = bottom.coerceIn(0f, 1f),
-    )
-
     private companion object {
         const val DEFAULT_RUNTIME_SIGNATURE = "serving_default"
         const val CONFIDENCE_INDEX = 4
         const val CLASS_ID_INDEX = 5
     }
+}
+
+internal fun mapModelBoundsToSource(
+    bounds: DetectionBounds,
+    inputTransform: ModelInputTransform?,
+): DetectionBounds? {
+    if (inputTransform != null) return inputTransform.modelToSourceNormalized(bounds)
+    if (!bounds.left.isFinite() || !bounds.top.isFinite() ||
+        !bounds.right.isFinite() || !bounds.bottom.isFinite()
+    ) return null
+    val normalized = DetectionBounds(
+        left = bounds.left.coerceIn(0f, 1f),
+        top = bounds.top.coerceIn(0f, 1f),
+        right = bounds.right.coerceIn(0f, 1f),
+        bottom = bounds.bottom.coerceIn(0f, 1f),
+    )
+    return normalized.takeIf { it.right > it.left && it.bottom > it.top }
 }

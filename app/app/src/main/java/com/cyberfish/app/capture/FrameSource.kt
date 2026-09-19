@@ -6,6 +6,7 @@ import com.cyberfish.app.inference.Detection
 
 data class FrameMetrics(
     val detection: Detection?,
+    val displayDetection: DisplayDetection? = null,
     val framesPerSecond: Int,
     val latencyMillis: Long,
     val timestampMillis: Long,
