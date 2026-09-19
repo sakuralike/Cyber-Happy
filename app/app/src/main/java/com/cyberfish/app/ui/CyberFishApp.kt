@@ -125,6 +125,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                     selectedTabName = AppTab.Profile.name
                 },
                 loadOverview = repository::fetchCheckInOverview,
+                forceRefreshOverview = repository::refreshCheckInOverview,
                 submitCheckIn = repository::checkIn,
                 loadHistory = { page, month -> repository.fetchCheckInHistory(page = page, month = month) },
             )

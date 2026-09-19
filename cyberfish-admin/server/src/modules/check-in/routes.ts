@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { parseOrThrow } from '../../lib/zod';
 import { sendOk, sendPage } from '../../lib/response';
-import { checkInBodySchema, historySchema, riskEventQuerySchema } from './schema';
+import { checkInBodySchema, checkInStatsQuerySchema, historySchema, riskEventQuerySchema } from './schema';
 import * as service from './service';
 
 const routes: FastifyPluginAsync = async (app) => {
@@ -26,6 +26,10 @@ const routes: FastifyPluginAsync = async (app) => {
     const result = await service.riskEvents(parseOrThrow(riskEventQuerySchema, request.query));
     return sendPage(reply, result.list, result.total, result.page, result.pageSize);
   });
+
+  app.get('/admin/check-in/stats', { onRequest: [app.authenticate, app.requirePermission('siteConfig:read')] }, async (request, reply) =>
+    sendOk(reply, await service.stats(parseOrThrow(checkInStatsQuerySchema, request.query))),
+  );
 };
 
 export default routes;

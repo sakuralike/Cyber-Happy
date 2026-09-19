@@ -52,6 +52,13 @@ export interface CheckInRiskEventsPage {
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }
 
+export interface CheckInStats {
+  range: { from: string; to: string; days: number };
+  daily: Array<{ date: string; attempts: number; success: number; uniqueUsers: number; riskEvents: number }>;
+  totals: { attempts: number; success: number; uniqueUsers: number; riskEvents: number };
+  updatedAt: string;
+}
+
 export interface DownloadLink {
   id: string;
   platform: "ANDROID" | "IOS" | "HARMONY";
@@ -154,6 +161,8 @@ export const discardSettings = (scope: ConfigScope) =>
 
 export const listCheckInRiskEvents = (params?: { page?: number; pageSize?: number; reason?: string; from?: string; to?: string }) =>
   http.get("/admin/check-in/risk-events", { params }) as Promise<CheckInRiskEventsPage>;
+export const getCheckInStats = (params?: { from?: string; to?: string }) =>
+  http.get("/admin/check-in/stats", { params }) as Promise<CheckInStats>;
 
 export const getCurrentVersion = () =>
   http.get("/admin/settings/current-version") as Promise<CurrentConfigVersion>;

@@ -21,7 +21,12 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 sealed interface ApiResult<out T> {
-    data class Success<T>(val value: T) : ApiResult<T>
+    data class Success<T>(
+        val value: T,
+        val fromCache: Boolean = false,
+        val cacheFallback: Boolean = false,
+        val cachedAtMillis: Long? = null,
+    ) : ApiResult<T>
     data object NotConfigured : ApiResult<Nothing>
     data class HttpError(val statusCode: Int, val message: String, val errorCode: Int? = null) : ApiResult<Nothing>
     data class NetworkError(val message: String) : ApiResult<Nothing>
