@@ -1,5 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,8 +8,8 @@ import assert from 'node:assert/strict';
 const serverDir = process.cwd();
 const testDir = mkdtempSync(join(serverDir, 'prisma', 'cyberfish-check-in-'));
 const testDatabase = join(testDir, 'check-in.db');
-copyFileSync(join(serverDir, 'prisma', 'dev.db'), testDatabase);
-const databasePath = relative(join(serverDir, 'prisma'), testDatabase).replaceAll('\\', '/');
+writeFileSync(testDatabase, '');
+const databasePath = `./${relative(join(serverDir, 'prisma'), testDatabase).replaceAll('\\', '/')}`;
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = `file:${databasePath}`;
 
@@ -62,6 +63,12 @@ async function createUser(label: string): Promise<string> {
 }
 
 before(async () => {
+  const prismaCli = join(serverDir, '..', 'node_modules/prisma/build/index.js');
+  execFileSync(process.execPath, [prismaCli, 'db', 'push', '--skip-generate'], {
+    cwd: serverDir,
+    env: { ...process.env, DATABASE_URL: `file:${databasePath}` },
+    stdio: 'pipe',
+  });
   ({ prisma } = await import('../src/lib/prisma'));
   service = await import('../src/modules/check-in/service');
   errors = await import('../src/lib/errors');

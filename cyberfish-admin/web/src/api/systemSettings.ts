@@ -152,7 +152,7 @@ export const saveSettings = (
 export const discardSettings = (scope: ConfigScope) =>
   http.post(`/admin/settings/${scope}/discard`, {}) as Promise<SettingsPayload>;
 
-export const listCheckInRiskEvents = (params?: { page?: number; pageSize?: number; reason?: string }) =>
+export const listCheckInRiskEvents = (params?: { page?: number; pageSize?: number; reason?: string; from?: string; to?: string }) =>
   http.get("/admin/check-in/risk-events", { params }) as Promise<CheckInRiskEventsPage>;
 
 export const getCurrentVersion = () =>
