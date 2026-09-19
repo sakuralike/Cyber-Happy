@@ -34,8 +34,6 @@ import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.AppEventType
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.VersionCheckState
-import com.cyberfish.app.update.ApkInstallPreparation
-import com.cyberfish.app.update.installApk
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.PillTabBar
 import com.cyberfish.app.ui.components.AvatarCropDialog
@@ -74,7 +72,6 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     val preferences by repository.preferences.collectAsState(initial = AppPreferences())
     val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
     val modelState by repository.modelState.collectAsState()
-    val appUpdateWorkInfo by repository.appUpdateWorkInfo.collectAsState(initial = null)
     val userSession by repository.userSession.collectAsState(initial = null)
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
     var showingFishingSpots by rememberSaveable { mutableStateOf(false) }
@@ -206,7 +203,6 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             },
                             versionCheckState = versionCheckState,
                             modelState = modelState,
-                            appUpdateWorkInfo = appUpdateWorkInfo,
                             appInstallMessage = appInstallMessage,
                             onCheckForUpdate = {
                                 coroutineScope.launch {
@@ -221,21 +217,17 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                 }
                             },
                             onDownloadAppUpdate = {
-                                (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.let(repository::enqueueAppUpdate)
-                            },
-                            onInstallAppUpdate = { path ->
-                                appInstallMessage = when (val result = installApk(context, path)) {
-                                    is ApkInstallPreparation.Ready -> "已打开系统安装器"
-                                    ApkInstallPreparation.PermissionRequired -> "请允许安装未知应用后再次点击安装更新"
-                                    ApkInstallPreparation.FileMissing -> "安装包不存在，请重新下载"
-                                    ApkInstallPreparation.InvalidPackage -> "安装包无效，请重新下载"
-                                    ApkInstallPreparation.VersionNotNewer -> "安装包版本不高于当前版本"
-                                    ApkInstallPreparation.SignatureMismatch -> "安装包签名与当前 APP 不一致"
-                                    is ApkInstallPreparation.Failed -> result.message
+                                (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.apkUrl?.let { url ->
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                    }.onFailure { appInstallMessage = "无法打开网盘地址：${it.message ?: "未知错误"}" }
                                 }
                             },
                             onCheckModel = {
                                 coroutineScope.launch(Dispatchers.IO) { repository.checkForModelUpdate() }
+                            },
+                            onInstallModelUpdate = {
+                                coroutineScope.launch(Dispatchers.IO) { repository.installPendingModelUpdate() }
                             },
                             onRollbackModel = {
                                 coroutineScope.launch(Dispatchers.IO) { repository.rollbackModel() }

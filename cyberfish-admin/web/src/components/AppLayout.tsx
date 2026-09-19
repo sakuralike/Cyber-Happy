@@ -11,7 +11,6 @@ import {
   SettingOutlined,
   SearchOutlined,
   CloudUploadOutlined,
-  DownloadOutlined,
   PictureOutlined,
   AppstoreOutlined,
   UserOutlined,
@@ -40,7 +39,6 @@ export function AppLayout() {
       hasPerm('admin:read') && { key: '/admins', icon: <TeamOutlined />, label: '账号管理' },
       hasPerm('siteConfig:read') && { key: '/settings', icon: <SettingOutlined />, label: '配置域总览' },
       hasPerm('siteConfig:read') && { key: '/settings/site', icon: <SearchOutlined />, label: '站点与 SEO' },
-      hasPerm('siteConfig:read') && { key: '/settings/downloads', icon: <DownloadOutlined />, label: '应用下载管理' },
       hasPerm('siteConfig:read') && { key: '/settings/banners', icon: <PictureOutlined />, label: '首页轮播图' },
       hasPerm('siteConfig:read') && { key: '/settings/landing', icon: <AppstoreOutlined />, label: '落地页内容编排' },
       hasPerm('siteConfig:read') && { key: '/settings/user-page', icon: <UserOutlined />, label: '用户页面设置' },
@@ -53,7 +51,7 @@ export function AppLayout() {
     ];
   }, [hasPerm]);
 
-  const selectedKey = ['/dashboard', '/app-versions', '/models', '/misreports', '/audit-logs', '/admins', '/settings/site', '/settings/downloads', '/settings/banners', '/settings/landing', '/settings/user-page', '/settings/check-in', '/settings/publish', '/settings']
+  const selectedKey = ['/dashboard', '/app-versions', '/models', '/misreports', '/audit-logs', '/admins', '/settings/site', '/settings/banners', '/settings/landing', '/settings/user-page', '/settings/check-in', '/settings/publish', '/settings']
     .find((key) => location.pathname === key || location.pathname.startsWith(`${key}/`)) ?? '/dashboard';
   const roleMeta = user ? ROLE_MAP[user.role] : null;
 

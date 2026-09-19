@@ -94,6 +94,21 @@ class ModelRepositoryTest {
     }
 
     @Test
+    fun `check for update only marks pending model without downloading`() = runBlocking {
+        val pending = update("model-pending", "pending model".toByteArray())
+        val api = FakeModelApi(check = ModelCheckInfo(hasUpdate = true, update = pending))
+        val repository = repository(api)
+
+        val result = repository.checkForUpdate()
+
+        assertTrue(result is ApiResult.Success)
+        assertEquals(ModelInstallStatus.UPDATE_AVAILABLE, repository.state.value.status)
+        assertEquals("model-pending", repository.state.value.modelVersion)
+        assertFalse(File(storageDir, "active.tflite").exists())
+        assertTrue(api.reports.isEmpty())
+    }
+
+    @Test
     fun `invalid previous metadata leaves active model unchanged`() = runBlocking {
         val repository = repository(FakeModelApi())
         assertTrue(repository.install(update("model-v1", "first model".toByteArray())).activated)

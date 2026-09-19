@@ -6,6 +6,7 @@ import com.cyberfish.app.inference.LiteRtDetector
 import com.cyberfish.app.inference.LiteRtModelContract
 import com.cyberfish.app.inference.LiteRtModelDescriptor
 import com.cyberfish.app.network.ApiResult
+import com.cyberfish.app.network.ModelCheckInfo
 import com.cyberfish.app.network.ModelApi
 import com.cyberfish.app.network.ModelDispatchStatus
 import com.cyberfish.app.network.ModelUpdateInfo
@@ -30,7 +31,7 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
-enum class ModelInstallStatus { MOCK, CHECKING, DOWNLOADING, VERIFYING, READY, FAILED, ROLLED_BACK }
+enum class ModelInstallStatus { MOCK, CHECKING, UPDATE_AVAILABLE, DOWNLOADING, VERIFYING, READY, FAILED, ROLLED_BACK }
 
 data class ModelState(
     val status: ModelInstallStatus = ModelInstallStatus.MOCK,
@@ -110,6 +111,8 @@ class ModelRepository(
     private val stateFlow = MutableStateFlow(readState())
     private val mutationMutex = Mutex()
     private val lastProgressReport = AtomicLong(0L)
+    @Volatile
+    private var pendingUpdate: ModelUpdateInfo? = null
     val state: StateFlow<ModelState> = stateFlow.asStateFlow()
 
     init {
@@ -137,6 +140,52 @@ class ModelRepository(
             is ApiResult.NetworkError -> fail("NETWORK_ERROR", result.message, true)
             is ApiResult.ParseError -> fail("PARSE_ERROR", result.message, false)
         }
+    }
+
+    suspend fun checkForUpdate(currentModelVersion: String? = activeVersion()): ApiResult<ModelCheckInfo> {
+        updateState(ModelState(ModelInstallStatus.CHECKING, currentModelVersion ?: "MockDetector"))
+        return when (val result = modelApi.checkModel(currentModelVersion)) {
+            is ApiResult.Success -> {
+                val check = result.value
+                if (check.hasUpdate && check.update != null) {
+                    pendingUpdate = check.update
+                    updateState(
+                        ModelState(
+                            ModelInstallStatus.UPDATE_AVAILABLE,
+                            check.update.descriptor.modelVersion,
+                            errorMessage = "发现新模型，确认后手动下载更新",
+                        ),
+                    )
+                } else {
+                    pendingUpdate = null
+                    updateState(ModelState(ModelInstallStatus.READY, currentModelVersion ?: "MockDetector", 100))
+                }
+                result
+            }
+            ApiResult.NotConfigured -> {
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "NOT_CONFIGURED", errorMessage = "未配置服务地址或 APP 令牌"))
+                result
+            }
+            is ApiResult.HttpError -> {
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "HTTP_${result.statusCode}", errorMessage = result.message))
+                result
+            }
+            is ApiResult.NetworkError -> {
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "NETWORK_ERROR", errorMessage = result.message))
+                result
+            }
+            is ApiResult.ParseError -> {
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "PARSE_ERROR", errorMessage = result.message))
+                result
+            }
+        }
+    }
+
+    suspend fun installPendingUpdate(): ModelInstallResult = mutationMutex.withLock {
+        val update = pendingUpdate ?: return@withLock fail("NO_PENDING_UPDATE", "没有待更新模型", false)
+        val result = installUnlocked(update)
+        if (result.activated) pendingUpdate = null
+        result
     }
 
     suspend fun install(update: ModelUpdateInfo): ModelInstallResult = mutationMutex.withLock {
