@@ -9,6 +9,7 @@ import {
   Select,
   Space,
   Switch,
+  Table,
   Tabs,
   TimePicker,
 } from "antd";
@@ -24,6 +25,7 @@ import {
   getSettings,
   publishSettings,
   saveSettings,
+  listCheckInRiskEvents,
 } from "../../api/systemSettings";
 import { notifyError } from "../../api/client";
 import { useAuth } from "../../store/auth";
@@ -36,6 +38,11 @@ import {
 
 type Values = Record<string, any>;
 const SCOPES = ["CHECKIN_BASIC", "CHECKIN_REWARD", "CHECKIN_RISK"] as const;
+const ICON_OPTIONS = [
+  "stamp_rod", "stamp_regular", "stamp_expert", "stamp_master",
+  "medal_bronze", "medal_silver", "medal_gold", "medal_platinum",
+  "title_beginner", "title_regular", "title_master", "title_fishing_god",
+].map((value) => ({ value, label: value }));
 
 function toTimePickerValue(value: unknown) {
   if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return value;
@@ -55,6 +62,7 @@ export function CheckinSettingsPage() {
   const basic = useQuery({ queryKey: ["admin", "settings", "CHECKIN_BASIC"], queryFn: () => getSettings("CHECKIN_BASIC") });
   const reward = useQuery({ queryKey: ["admin", "settings", "CHECKIN_REWARD"], queryFn: () => getSettings("CHECKIN_REWARD") });
   const risk = useQuery({ queryKey: ["admin", "settings", "CHECKIN_RISK"], queryFn: () => getSettings("CHECKIN_RISK") });
+  const riskEvents = useQuery({ queryKey: ["admin", "check-in", "risk-events"], queryFn: () => listCheckInRiskEvents({ page: 1, pageSize: 50 }) });
 
   useEffect(() => { if (basic.data) basicForm.setFieldsValue(basic.data.values); }, [basic.data, basicForm]);
   useEffect(() => { if (reward.data) rewardForm.setFieldsValue(reward.data.values); }, [reward.data, rewardForm]);
@@ -90,8 +98,8 @@ export function CheckinSettingsPage() {
   const tabs = useMemo(() => [
     { key: "basic", label: "基础规则", children: <BasicTab form={basicForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_BASIC", values })} /> },
     { key: "reward", label: "奖励规则", children: <RewardTab form={rewardForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_REWARD", values })} /> },
-    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} /> },
-  ], [basicForm, rewardForm, riskForm, canWrite, saveMutation]);
+    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} riskEvents={riskEvents.data?.list ?? []} /> },
+  ], [basicForm, rewardForm, riskForm, canWrite, saveMutation, riskEvents.data?.list]);
 
   return (
     <div className="settings-page">
@@ -127,12 +135,13 @@ function BasicTab({ form, disabled, onSubmit }: { form: any; disabled: boolean; 
 function RewardTab({ form, disabled, onSubmit }: { form: any; disabled: boolean; onSubmit: (values: Values) => void }) {
   return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ rewardMode: "BADGE", cycleLength: 7, cycleStrategy: "LOOP", rewards: [] }}>
     <Card title="奖励模式"><Space><Form.Item name="rewardMode" label="奖励类型"><Select style={{ width: 180 }} options={[{ value: "BADGE", label: "荣誉勋章" }]} /></Form.Item><Form.Item name="cycleLength" label="周期长度"><Select style={{ width: 140 }} options={[7, 14, 30].map((value) => ({ value, label: `${value} 天` }))} /></Form.Item><Form.Item name="cycleStrategy" label="周期策略"><Select style={{ width: 160 }} options={[{ value: "LOOP", label: "循环累计" }, { value: "ONCE", label: "仅首周期" }]} /></Form.Item></Space></Card>
-    <Card title="奖励梯度" style={{ marginTop: 16 }}><Form.List name="rewards">{(fields, { add, remove }) => <>{fields.map((field) => <Space key={field.key} align="baseline"><Form.Item {...field} name={[field.name, "day"]} rules={[{ required: true }]}><InputNumber min={1} max={120} placeholder="天数" /></Form.Item><Form.Item {...field} name={[field.name, "type"]}><Select style={{ width: 120 }} options={["STAMP", "MEDAL", "TITLE"].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item {...field} name={[field.name, "name"]}><Input placeholder="奖励名称" /></Form.Item><Form.Item {...field} name={[field.name, "iconKey"]}><Input placeholder="图标 key" /></Form.Item><Form.Item {...field} name={[field.name, "milestone"]} valuePropName="checked"><Switch checkedChildren="里程碑" /></Form.Item><Button type="link" onClick={() => remove(field.name)}>删除</Button></Space>)}<Button onClick={() => add({ type: "STAMP", milestone: false })}>添加奖励</Button></>}</Form.List></Card>
+    <Card title="奖励梯度" style={{ marginTop: 16 }}><Form.List name="rewards">{(fields, { add, remove }) => <>{fields.map((field) => <Space key={field.key} align="baseline"><Form.Item {...field} name={[field.name, "day"]} rules={[{ required: true }]}><InputNumber min={1} max={120} placeholder="天数" /></Form.Item><Form.Item {...field} name={[field.name, "type"]}><Select style={{ width: 120 }} options={["STAMP", "MEDAL", "TITLE"].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item {...field} name={[field.name, "name"]}><Input placeholder="奖励名称" /></Form.Item><Form.Item {...field} name={[field.name, "iconKey"]}><Select style={{ width: 180 }} options={ICON_OPTIONS} placeholder="预置图标" /></Form.Item><Form.Item {...field} name={[field.name, "milestone"]} valuePropName="checked"><Switch checkedChildren="里程碑" /></Form.Item><Button type="link" onClick={() => remove(field.name)}>删除</Button></Space>)}<Button onClick={() => add({ type: "STAMP", milestone: false })}>添加奖励</Button></>}</Form.List></Card>
   </Form>;
 }
 
-function RiskTab({ form, disabled, onSubmit }: { form: any; disabled: boolean; onSubmit: (values: Values) => void }) {
+function RiskTab({ form, disabled, onSubmit, riskEvents }: { form: any; disabled: boolean; onSubmit: (values: Values) => void; riskEvents: Array<{ id: string; createdAt: string; reason: string; username: string | null; deviceId: string | null; ip: string | null; metadata?: Record<string, unknown> }> }) {
   return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ maxDevicePerUser: 3, ipRateLimitPerMin: 10, suspiciousThreshold: 5, auditReplayEnabled: true, backfillEnabled: false }}>
     <Card title="频次与风控"><Form.Item name="maxDevicePerUser" label="单账号设备上限"><InputNumber min={1} max={10} /></Form.Item><Form.Item name="ipRateLimitPerMin" label="单 IP 每分钟上限"><InputNumber min={1} max={60} /></Form.Item><Form.Item name="suspiciousThreshold" label="同设备多账号阈值"><InputNumber min={2} max={20} /></Form.Item><SettingSwitchRow title="异常请求全量日志" description="记录签到接口失败请求，便于审计排查。" control={<Form.Item name="auditReplayEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>} /><SettingSwitchRow title="补签功能（二期）" description="当前版本锁定关闭。" control={<Form.Item name="backfillEnabled" valuePropName="checked" noStyle><Switch disabled /></Form.Item>} /></Card>
+    <Card title="最近 7 天风控事件" style={{ marginTop: 16 }}><Table rowKey="id" size="small" pagination={false} loading={false} dataSource={riskEvents} expandable={{ expandedRowRender: (record) => <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(record.metadata ?? {}, null, 2)}</pre> }} columns={[{ title: "时间", dataIndex: "createdAt", render: (value: string) => new Date(value).toLocaleString("zh-CN") }, { title: "原因", dataIndex: "reason" }, { title: "账号", dataIndex: "username", render: (value: string | null) => value ?? "-" }, { title: "设备", dataIndex: "deviceId", render: (value: string | null) => value ?? "-" }, { title: "IP", dataIndex: "ip", render: (value: string | null) => value ?? "-" }]} /></Card>
   </Form>;
 }

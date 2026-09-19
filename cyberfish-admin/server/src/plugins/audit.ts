@@ -68,6 +68,7 @@ function moduleFromUrl(url: string): AuditModule | null {
   if (p.includes('/models')) return AuditModule.MODEL;
   if (p.includes('/misreports')) return AuditModule.MISREPORT;
   if (p.includes('/dashboard')) return AuditModule.DASHBOARD;
+  if (p.includes('/admin/check-in') || p.includes('/admin/settings/CHECKIN_')) return AuditModule.CHECKIN_SETTINGS;
   if (p.includes('/admin/settings') || p.includes('/admin/download-links') || p.includes('/admin/banners') || p.includes('/admin/landing-modules')) return AuditModule.SITE_CONFIG;
   return null;
 }
@@ -123,7 +124,8 @@ const auditPlugin: FastifyPluginAsync = async (app) => {
     if (SKIP_AUDIT.some((p) => url.startsWith(p))) return payload;
     if (request.headers['x-app-token']) return payload; // APP 端调用不记后台审计
 
-    const module = moduleFromUrl(url);
+    const extra = request.auditExtra;
+    const module = (extra?.module as AuditModule | undefined) ?? moduleFromUrl(url);
     const action = actionFromMethod(method, url);
     if (!module || !action) return payload;
 
@@ -135,7 +137,6 @@ const auditPlugin: FastifyPluginAsync = async (app) => {
     }
     const success = reply.statusCode < 400 && (parsed.code === undefined || parsed.code === 0);
 
-    const extra = request.auditExtra;
     await writeAudit({
       operatorId: request.currentUser?.id ?? null,
       operatorName: request.currentUser?.displayName ?? 'system',

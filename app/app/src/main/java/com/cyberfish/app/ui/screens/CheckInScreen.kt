@@ -55,6 +55,7 @@ import com.cyberfish.app.network.CheckInActionResult
 import com.cyberfish.app.network.CheckInHistory
 import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.CheckInRecord
+import com.cyberfish.app.network.CheckInReward
 import com.cyberfish.app.network.UserSession
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -84,6 +85,7 @@ fun CheckInScreen(
     var historyLoading by remember { mutableStateOf(false) }
     var calendarMonth by remember { mutableStateOf(YearMonth.now(CHECK_IN_ZONE)) }
     var calendarDates by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var rewards by remember { mutableStateOf<List<CheckInReward>>(emptyList()) }
     val scope = rememberCoroutineScope()
     val currentMonth = remember { YearMonth.now(CHECK_IN_ZONE) }
 
@@ -123,6 +125,7 @@ fun CheckInScreen(
     LaunchedEffect(userSession?.token) {
         overview = null
         history = null
+        rewards = emptyList()
         errorMessage = null
         if (userSession != null) {
             loading = true
@@ -153,7 +156,9 @@ fun CheckInScreen(
     }
 
     LaunchedEffect(selectedSection, userSession?.token) {
-        if (selectedSection == 1 && userSession != null && history == null) refreshHistory()
+        if (selectedSection == 1 && userSession != null && history == null) {
+            refreshHistory(month = calendarMonth.toString())
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize().testTag("check-in-screen")) {
@@ -168,7 +173,7 @@ fun CheckInScreen(
                 Text("每日签到", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Text("坚持签到，记录每天的钓友出勤", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = { refreshOverview(); if (selectedSection == 1) refreshHistory() }) {
+            IconButton(onClick = { refreshOverview(); if (selectedSection == 1) refreshHistory(month = calendarMonth.toString()) }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "刷新")
             }
         }
@@ -191,7 +196,7 @@ fun CheckInScreen(
                     TextButton(
                         onClick = {
                             if (message.startsWith("登录状态")) onRequireLogin()
-                            else if (selectedSection == 0) refreshOverview() else refreshHistory()
+                            else if (selectedSection == 0) refreshOverview() else refreshHistory(month = calendarMonth.toString())
                         },
                     ) { Text(if (message.startsWith("登录状态")) "去登录" else "重试") }
                 }
@@ -216,8 +221,13 @@ fun CheckInScreen(
                                     is ApiResult.Success -> {
                                         overview = result.value.overview
                                         calendarDates = result.value.overview.checkedDates
+                                        rewards = result.value.rewards
                                         onOverviewChanged(result.value.overview)
-                                        if (selectedSection == 1) refreshHistory()
+                                        if (selectedSection == 1) refreshHistory(month = calendarMonth.toString())
+                                    }
+                                    is ApiResult.HttpError -> {
+                                        errorMessage = result.checkInMessage()
+                                        if (result.errorCode == 40912) refreshOverview()
                                     }
                                     else -> errorMessage = result.checkInMessage()
                                 }
@@ -225,12 +235,13 @@ fun CheckInScreen(
                             }
                         }
                     },
+                    rewards = rewards,
                 )
             } else {
                 CheckInHistoryContent(
                     history = history,
                     loading = historyLoading,
-                    onLoadMore = { refreshHistory((history?.page ?: 0) + 1) },
+                    onLoadMore = { refreshHistory((history?.page ?: 0) + 1, calendarMonth.toString()) },
                 )
             }
         }
@@ -262,6 +273,7 @@ private fun CheckInCalendarContent(
     loading: Boolean,
     submitting: Boolean,
     onCheckIn: () -> Unit,
+    rewards: List<CheckInReward>,
 ) {
     val today = remember { LocalDate.now(CHECK_IN_ZONE) }
     val month = calendarMonth
@@ -271,6 +283,23 @@ private fun CheckInCalendarContent(
         contentPadding = PaddingValues(bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        item {
+            if (rewards.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("本次获得奖励", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        rewards.forEach { reward ->
+                            Text("第${reward.day}天 · ${reward.name}", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                }
+            }
+        }
         item {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
@@ -428,7 +457,11 @@ private fun CheckInHistoryRow(record: CheckInRecord) {
 
 private fun <T> ApiResult<T>.checkInMessage(): String = when (this) {
     ApiResult.NotConfigured -> "未配置服务地址或 APP 令牌"
-    is ApiResult.HttpError -> if (statusCode == 401) "登录状态已失效，请重新登录" else message.ifBlank { "签到请求失败（$statusCode）" }
+    is ApiResult.HttpError -> when {
+        statusCode == 401 -> "登录状态已失效，请重新登录"
+        errorCode == 40912 -> "今日已签到"
+        else -> message.ifBlank { "签到请求失败（$statusCode）" }
+    }
     is ApiResult.NetworkError -> "网络不可用，请检查网络后重试"
     is ApiResult.ParseError -> message.ifBlank { "签到数据解析失败" }
     is ApiResult.Success -> ""

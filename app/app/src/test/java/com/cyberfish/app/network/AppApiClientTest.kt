@@ -154,6 +154,18 @@ class AppApiClientTest {
     }
 
     @Test
+    fun `check in duplicate exposes dedicated error code`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"code":40912,"message":"今日已签到","data":{"alreadyCheckedIn":true}}"""))
+
+        val result = client(testSession()).checkIn()
+
+        val failure = result as ApiResult.HttpError
+        assertEquals(409, failure.statusCode)
+        assertEquals(40912, failure.errorCode)
+        assertEquals("今日已签到", failure.message)
+    }
+
+    @Test
     fun `user login sends app token and parses session`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -194,7 +206,7 @@ class AppApiClientTest {
     fun `check in posts idempotent action and parses returned status`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"code":0,"message":"ok","data":{"alreadyCheckedIn":false,"overview":{"config":{"enabled":true},"todayCheckedIn":true,"currentStreak":13,"cycleDay":6,"cycleLength":7,"checkedDates":["2026-09-18"],"canCheckIn":true},"record":{"date":"2026-09-18","streak":13}}}""",
+                """{"code":0,"message":"ok","data":{"alreadyCheckedIn":false,"overview":{"config":{"enabled":true},"todayCheckedIn":true,"currentStreak":13,"cycleDay":6,"cycleLength":7,"checkedDates":["2026-09-18"],"canCheckIn":true},"record":{"date":"2026-09-18","streak":13},"rewards":[{"day":7,"type":"MEDAL","name":"铜钩钓士","iconKey":"medal_bronze"}]}}""",
             ),
         )
 
@@ -203,10 +215,12 @@ class AppApiClientTest {
         val action = (result as ApiResult.Success).value
         assertTrue(action.overview.checkedInToday)
         assertEquals("2026-09-18", action.record?.date)
+        assertEquals("铜钩钓士", action.rewards.single().name)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/api/v1/check-in", request.requestUrl?.encodedPath)
         assertEquals("Bearer user-token", request.getHeader("Authorization"))
+        assertEquals("device-123", JSONObject(request.body.readUtf8()).getString("deviceId"))
     }
 
     @Test

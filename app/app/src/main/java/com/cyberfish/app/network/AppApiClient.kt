@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 sealed interface ApiResult<out T> {
     data class Success<T>(val value: T) : ApiResult<T>
     data object NotConfigured : ApiResult<Nothing>
-    data class HttpError(val statusCode: Int, val message: String) : ApiResult<Nothing>
+    data class HttpError(val statusCode: Int, val message: String, val errorCode: Int? = null) : ApiResult<Nothing>
     data class NetworkError(val message: String) : ApiResult<Nothing>
     data class ParseError(val message: String) : ApiResult<Nothing>
 }
@@ -56,6 +56,13 @@ data class CheckInRecord(
     val streak: Int = 0,
 )
 
+data class CheckInReward(
+    val day: Int,
+    val type: String,
+    val name: String,
+    val iconKey: String,
+)
+
 data class CheckInOverview(
     val enabled: Boolean = true,
     val checkedInToday: Boolean = false,
@@ -72,6 +79,7 @@ data class CheckInOverview(
 data class CheckInActionResult(
     val overview: CheckInOverview,
     val record: CheckInRecord? = null,
+    val rewards: List<CheckInReward> = emptyList(),
     val alreadyCheckedIn: Boolean = false,
 )
 
@@ -225,12 +233,13 @@ class AppApiClient(
     suspend fun checkIn(): ApiResult<CheckInActionResult> = withContext(Dispatchers.IO) {
         val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val identity = identityStore.get()
         val requestUrl = config.endpoint("api/v1/check-in").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
         executeJson(
             Request.Builder()
                 .url(requestUrl)
-                .post(JSONObject().toString().toRequestBody(JSON_MEDIA_TYPE))
+                .post(JSONObject().put("deviceId", identity.deviceId).toString().toRequestBody(JSON_MEDIA_TYPE))
                 .appToken(config.appToken)
                 .userToken(session.token)
                 .build(),
@@ -241,6 +250,7 @@ class AppApiClient(
                     checkedInToday = overview.checkedInToday || data.optBoolean("alreadyCheckedIn", false),
                 ),
                 record = parseCheckInRecord(data.optJSONObject("record") ?: data.optJSONObject("checkIn")),
+                rewards = parseCheckInRewards(data.optJSONArray("rewards")),
                 alreadyCheckedIn = data.optBoolean("alreadyCheckedIn", false),
             )
         }
@@ -329,6 +339,18 @@ class AppApiClient(
                 ?: value.optString("createdAt").takeIf { it.isNotBlank() },
             streak = value.optInt("streak", value.optInt("currentStreak", 0)).coerceAtLeast(0),
         )
+    }
+
+    private fun parseCheckInRewards(values: JSONArray?): List<CheckInReward> {
+        if (values == null) return emptyList()
+        return buildList {
+            for (index in 0 until values.length()) {
+                val item = values.optJSONObject(index) ?: continue
+                val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
+                val iconKey = item.optString("iconKey").takeIf { it.isNotBlank() } ?: continue
+                add(CheckInReward(item.optInt("day", 0), item.optString("type", "STAMP"), name, iconKey))
+            }
+        }
     }
 
     private fun parseCheckInHistory(data: JSONObject, fallbackPage: Int, fallbackPageSize: Int): CheckInHistory {
@@ -626,9 +648,23 @@ class AppApiClient(
     private fun <T> executeJson(request: Request, transform: (JSONObject) -> T): ApiResult<T> = try {
         httpClient.newCall(request).execute().use { response ->
             val payload = response.body?.string().orEmpty()
-            if (!response.isSuccessful) return ApiResult.HttpError(response.code, parseErrorMessage(payload, response.message))
+            if (!response.isSuccessful) {
+                val errorEnvelope = runCatching { JSONObject(payload) }.getOrNull()
+                val errorCode = errorEnvelope?.optInt("code", 0)?.takeIf { it != 0 }
+                return ApiResult.HttpError(
+                    response.code,
+                    errorEnvelope?.optString("message", response.message).orEmpty().ifBlank { response.message },
+                    errorCode,
+                )
+            }
             val envelope = JSONObject(payload)
-            if (envelope.optInt("code", -1) != 0) return ApiResult.HttpError(response.code, envelope.optString("message", "服务端拒绝请求"))
+            if (envelope.optInt("code", -1) != 0) {
+                return ApiResult.HttpError(
+                    response.code,
+                    envelope.optString("message", "服务端拒绝请求"),
+                    envelope.optInt("code").takeIf { it != 0 },
+                )
+            }
             val data = envelope.optJSONObject("data") ?: JSONObject()
             ApiResult.Success(transform(data))
         }
@@ -636,12 +672,6 @@ class AppApiClient(
         ApiResult.NetworkError(error.message ?: "网络不可用")
     } catch (error: Exception) {
         ApiResult.ParseError(error.message ?: "响应解析失败")
-    }
-
-    private fun parseErrorMessage(payload: String, fallback: String): String = try {
-        JSONObject(payload).optString("message", fallback)
-    } catch (_: Exception) {
-        fallback
     }
 
     private fun Request.Builder.appToken(token: String) = header("X-App-Token", token)

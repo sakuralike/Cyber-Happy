@@ -87,6 +87,7 @@ const routes: FastifyPluginAsync = async (app) => {
       const { id } = parseOrThrow(idParamSchema, request.params);
       const result = await service.rollback(id, request.currentUser?.id);
       request.auditExtra = {
+        module: result.scopes?.some((scope) => String(scope).startsWith('CHECKIN_')) ? 'CHECKIN_SETTINGS' : undefined,
         action: "ROLLBACK",
         targetType: "ConfigRevision",
         targetId: result.id,
@@ -103,6 +104,7 @@ const routes: FastifyPluginAsync = async (app) => {
       const input = parseOrThrow(publishSchema, request.body);
       const result = await service.publish(input, request.currentUser?.id);
       request.auditExtra = {
+        module: input.scopes.some((scope) => scope.startsWith('CHECKIN_')) ? 'CHECKIN_SETTINGS' : undefined,
         action: "PUBLISH",
         targetType: "ConfigRevision",
         targetId: result.id,
@@ -136,15 +138,18 @@ const routes: FastifyPluginAsync = async (app) => {
         configurableScopeSchema,
         (request.params as { scope?: unknown }).scope,
       );
+      const before = await service.getSettings(scope);
       const result = await service.saveSettings(
         scope,
         parseOrThrow(bulkSettingsSchema, request.body),
         request.currentUser?.id,
       );
       request.auditExtra = {
+        module: scope.startsWith('CHECKIN_') ? 'CHECKIN_SETTINGS' : undefined,
         targetType: "SiteSetting",
         targetName: scope,
-        after: { draftCount: result.draftCount },
+        before: { values: before.values, drafts: before.drafts },
+        after: { values: result.values, drafts: result.drafts },
       };
       return sendOk(reply, result);
     },
@@ -157,11 +162,14 @@ const routes: FastifyPluginAsync = async (app) => {
         configurableScopeSchema,
         (request.params as { scope?: unknown }).scope,
       );
+      const before = await service.getSettings(scope);
       const result = await service.discardSettings(scope);
       request.auditExtra = {
+        module: scope.startsWith('CHECKIN_') ? 'CHECKIN_SETTINGS' : undefined,
         targetType: "SiteSetting",
         targetName: scope,
-        after: { draftCount: 0 },
+        before: { values: before.values, drafts: before.drafts },
+        after: { values: result.values, drafts: result.drafts },
       };
       return sendOk(reply, result);
     },
@@ -180,6 +188,7 @@ const routes: FastifyPluginAsync = async (app) => {
         request.currentUser?.id,
       );
       request.auditExtra = {
+        module: scope.startsWith('CHECKIN_') ? 'CHECKIN_SETTINGS' : undefined,
         action: "PUBLISH",
         targetType: "ConfigRevision",
         targetId: result.id,
