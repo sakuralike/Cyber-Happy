@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { logger } from '../../lib/logger';
-import type { HistoryQuery, RiskEventQuery } from './schema';
+import type { CheckInStatsQuery, HistoryQuery, RiskEventQuery } from './schema';
 import {
   checkInConfig,
   checkInRewardConfig,
@@ -12,6 +12,8 @@ import type { CheckInBody } from './schema';
 
 const TIMEZONE = 'Asia/Shanghai';
 const CYCLE_LENGTH = 7;
+
+export const LEGACY_CHECK_IN_DEVICE_ID = '__legacy_unknown__';
 
 export const DEFAULT_CHECK_IN_CONFIG = {
   enabled: true,
@@ -143,26 +145,29 @@ async function enforceRisk(userId: string, body: CheckInBody, ip?: string) {
     const config = { ...DEFAULT_RISK_CONFIG, ...configured };
     const now = Date.now();
     const recentFrom = new Date(now - 60_000);
+    const deviceId = body.deviceId && body.deviceId !== LEGACY_CHECK_IN_DEVICE_ID
+      ? body.deviceId
+      : undefined;
     if (ip) {
       const recent = await prisma.checkInRiskEvent.count({
         where: { ip, reason: 'CHECK_IN_ATTEMPT', createdAt: { gte: recentFrom } },
       });
       if (recent >= Number(config.ipRateLimitPerMin)) {
-        await recordRisk({ userId, deviceId: body.deviceId, ip, reason: 'IP_RATE_LIMIT', metadata: { limit: config.ipRateLimitPerMin } });
+        await recordRisk({ userId, deviceId, ip, reason: 'IP_RATE_LIMIT', metadata: { limit: config.ipRateLimitPerMin } });
         throw AppError.rateLimited('签到请求过于频繁，请稍后再试');
       }
     }
-    if (body.deviceId) {
+    if (deviceId) {
       const records = await prisma.checkInRecord.findMany({
-        where: { userId, deviceId: { not: null } },
+        where: { userId, deviceId: { not: null, notIn: [LEGACY_CHECK_IN_DEVICE_ID] } },
         select: { deviceId: true },
       });
       const devices = new Set(records.map((record) => record.deviceId).filter(Boolean));
-      if (!devices.has(body.deviceId) && devices.size >= Number(config.maxDevicePerUser)) {
-        await recordRisk({ userId, deviceId: body.deviceId, ip, reason: 'DEVICE_LIMIT', metadata: { limit: config.maxDevicePerUser } });
+      if (!devices.has(deviceId) && devices.size >= Number(config.maxDevicePerUser)) {
+        await recordRisk({ userId, deviceId, ip, reason: 'DEVICE_LIMIT', metadata: { limit: config.maxDevicePerUser } });
       }
       const otherAccountRecords = await prisma.checkInRecord.findMany({
-        where: { deviceId: body.deviceId, userId: { not: userId } },
+        where: { deviceId, userId: { not: userId } },
         select: { userId: true },
         distinct: ['userId'],
       });
@@ -170,14 +175,14 @@ async function enforceRisk(userId: string, body: CheckInBody, ip?: string) {
       if (otherAccounts >= Number(config.suspiciousThreshold)) {
         await recordRisk({
           userId,
-          deviceId: body.deviceId,
+          deviceId,
           ip,
           reason: 'DEVICE_MULTI_ACCOUNT',
           metadata: { otherAccountRecords: otherAccounts },
         });
       }
     }
-    await recordRisk({ userId, deviceId: body.deviceId, ip, reason: 'CHECK_IN_ATTEMPT' });
+    await recordRisk({ userId, deviceId, ip, reason: 'CHECK_IN_ATTEMPT' });
   } catch (error) {
     if (error instanceof AppError) throw error;
     logger.warn({ err: error }, '[check-in] 风控检查失败，继续签到');
@@ -368,6 +373,63 @@ export async function checkIn(userId: string, body: CheckInBody = {}, ip?: strin
       overview: await overview(userId),
     });
   }
+}
+
+export async function stats(query: CheckInStatsQuery = {}) {
+  const to = query.to ?? localDateKey(new Date());
+  const from = query.from ?? shiftDateKey(to, -6);
+  if (from > to) throw AppError.badRequest('开始日期不能晚于结束日期');
+
+  const endDate = shiftDateKey(to, 1);
+  const startAt = new Date(`${from}T00:00:00.000+08:00`);
+  const endAt = new Date(`${endDate}T00:00:00.000+08:00`);
+  const [records, riskEvents] = await Promise.all([
+    prisma.checkInRecord.findMany({
+      where: { checkinDate: { gte: from, lte: to } },
+      select: { checkinDate: true, userId: true },
+    }),
+    prisma.checkInRiskEvent.findMany({
+      where: { createdAt: { gte: startAt, lt: endAt } },
+      select: { createdAt: true, reason: true },
+    }),
+  ]);
+
+  const buckets = new Map<string, { attempts: number; success: number; users: Set<string>; riskEvents: number }>();
+  for (let date = from; date <= to; date = shiftDateKey(date, 1)) {
+    buckets.set(date, { attempts: 0, success: 0, users: new Set<string>(), riskEvents: 0 });
+  }
+  for (const record of records) {
+    const bucket = buckets.get(record.checkinDate);
+    if (!bucket) continue;
+    bucket.success += 1;
+    bucket.users.add(record.userId);
+  }
+  for (const event of riskEvents) {
+    const bucket = buckets.get(localDateKey(event.createdAt));
+    if (!bucket) continue;
+    bucket.riskEvents += 1;
+    if (event.reason === 'CHECK_IN_ATTEMPT') bucket.attempts += 1;
+  }
+
+  const daily = [...buckets.entries()].map(([date, bucket]) => ({
+    date,
+    attempts: bucket.attempts,
+    success: bucket.success,
+    uniqueUsers: bucket.users.size,
+    riskEvents: bucket.riskEvents,
+  }));
+  const uniqueUsers = new Set(records.map((record) => record.userId)).size;
+  return {
+    range: { from, to, days: daily.length },
+    daily,
+    totals: {
+      attempts: daily.reduce((sum, item) => sum + item.attempts, 0),
+      success: daily.reduce((sum, item) => sum + item.success, 0),
+      uniqueUsers,
+      riskEvents: daily.reduce((sum, item) => sum + item.riskEvents, 0),
+    },
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export async function history(userId: string, query: HistoryQuery) {

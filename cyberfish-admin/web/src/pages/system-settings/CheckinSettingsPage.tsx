@@ -8,6 +8,7 @@ import {
   message,
   Select,
   Space,
+  Statistic,
   Switch,
   Table,
   Tabs,
@@ -23,6 +24,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   discardSettings,
   getSettings,
+  getCheckInStats,
   publishSettings,
   saveSettings,
   listCheckInRiskEvents,
@@ -69,6 +71,10 @@ export function CheckinSettingsPage() {
     queryKey: ["admin", "check-in", "risk-events", riskReason, riskFrom, riskTo],
     queryFn: () => listCheckInRiskEvents({ page: 1, pageSize: 50, reason: riskReason, from: riskFrom, to: `${riskTo}T23:59:59+08:00` }),
   });
+  const checkInStats = useQuery({
+    queryKey: ["admin", "check-in", "stats"],
+    queryFn: () => getCheckInStats(),
+  });
 
   useEffect(() => { if (basic.data) basicForm.setFieldsValue(basic.data.values); }, [basic.data, basicForm]);
   useEffect(() => { if (reward.data) rewardForm.setFieldsValue(reward.data.values); }, [reward.data, rewardForm]);
@@ -104,8 +110,8 @@ export function CheckinSettingsPage() {
   const tabs = useMemo(() => [
     { key: "basic", label: "基础规则", children: <BasicTab form={basicForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_BASIC", values })} /> },
     { key: "reward", label: "奖励规则", children: <RewardTab form={rewardForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_REWARD", values })} /> },
-    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} riskEvents={riskEvents.data?.list ?? []} riskReason={riskReason} setRiskReason={setRiskReason} riskFrom={riskFrom} setRiskFrom={setRiskFrom} riskTo={riskTo} setRiskTo={setRiskTo} /> },
-  ], [basicForm, rewardForm, riskForm, canWrite, saveMutation, riskEvents.data?.list]);
+    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} riskEvents={riskEvents.data?.list ?? []} riskReason={riskReason} setRiskReason={setRiskReason} riskFrom={riskFrom} setRiskFrom={setRiskFrom} riskTo={riskTo} setRiskTo={setRiskTo} stats={checkInStats.data} statsLoading={checkInStats.isLoading} /> },
+  ], [basicForm, rewardForm, riskForm, canWrite, saveMutation, riskEvents.data?.list, checkInStats.data, checkInStats.isLoading]);
 
   return (
     <div className="settings-page">
@@ -145,9 +151,18 @@ function RewardTab({ form, disabled, onSubmit }: { form: any; disabled: boolean;
   </Form>;
 }
 
-function RiskTab({ form, disabled, onSubmit, riskEvents, riskReason, setRiskReason, riskFrom, setRiskFrom, riskTo, setRiskTo }: { form: any; disabled: boolean; onSubmit: (values: Values) => void; riskEvents: Array<{ id: string; createdAt: string; reason: string; username: string | null; deviceId: string | null; ip: string | null; metadata?: Record<string, unknown> }>; riskReason?: string; setRiskReason: (value?: string) => void; riskFrom: string; setRiskFrom: (value: string) => void; riskTo: string; setRiskTo: (value: string) => void }) {
+function RiskTab({ form, disabled, onSubmit, riskEvents, riskReason, setRiskReason, riskFrom, setRiskFrom, riskTo, setRiskTo, stats, statsLoading }: { form: any; disabled: boolean; onSubmit: (values: Values) => void; riskEvents: Array<{ id: string; createdAt: string; reason: string; username: string | null; deviceId: string | null; ip: string | null; metadata?: Record<string, unknown> }>; riskReason?: string; setRiskReason: (value?: string) => void; riskFrom: string; setRiskFrom: (value: string) => void; riskTo: string; setRiskTo: (value: string) => void; stats?: { daily: Array<{ date: string; attempts: number; success: number; uniqueUsers: number; riskEvents: number }>; totals: { attempts: number; success: number; uniqueUsers: number; riskEvents: number } }; statsLoading: boolean }) {
   return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ maxDevicePerUser: 3, ipRateLimitPerMin: 10, suspiciousThreshold: 5, auditReplayEnabled: true, backfillEnabled: false }}>
     <Card title="频次与风控"><Form.Item name="maxDevicePerUser" label="单账号设备上限"><InputNumber min={1} max={10} /></Form.Item><Form.Item name="ipRateLimitPerMin" label="单 IP 每分钟上限"><InputNumber min={1} max={60} /></Form.Item><Form.Item name="suspiciousThreshold" label="同设备多账号阈值"><InputNumber min={2} max={20} /></Form.Item><SettingSwitchRow title="异常请求全量日志" description="记录签到接口失败请求，便于审计排查。" control={<Form.Item name="auditReplayEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>} /><SettingSwitchRow title="补签功能（二期）" description="当前版本锁定关闭。" control={<Form.Item name="backfillEnabled" valuePropName="checked" noStyle><Switch disabled /></Form.Item>} /></Card>
+    <Card title="近 7 日运营统计" style={{ marginTop: 16 }}>
+      <Space size="large" wrap style={{ marginBottom: 16 }}>
+        <Statistic title="签到请求" value={stats?.totals.attempts ?? 0} />
+        <Statistic title="签到成功" value={stats?.totals.success ?? 0} />
+        <Statistic title="去重用户" value={stats?.totals.uniqueUsers ?? 0} />
+        <Statistic title="风控事件" value={stats?.totals.riskEvents ?? 0} />
+      </Space>
+      <Table rowKey="date" size="small" pagination={false} loading={statsLoading} dataSource={stats?.daily ?? []} columns={[{ title: "日期", dataIndex: "date" }, { title: "签到请求", dataIndex: "attempts" }, { title: "签到成功", dataIndex: "success" }, { title: "去重用户", dataIndex: "uniqueUsers" }, { title: "风控事件", dataIndex: "riskEvents" }]} />
+    </Card>
     <Card title="风控事件" style={{ marginTop: 16 }}>
       <Space wrap style={{ marginBottom: 12 }}>
         <Input type="date" value={riskFrom} onChange={(event) => setRiskFrom(event.target.value)} />
