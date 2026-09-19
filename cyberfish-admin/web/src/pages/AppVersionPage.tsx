@@ -26,7 +26,6 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
 import * as appVersionApi from '../api/appVersion';
 import type { AppVersion, ReleaseStatus } from '../api/types';
-import { FileUpload } from '../components/FileUpload';
 import { EnumTag } from '../components/EnumTag';
 import {
   RELEASE_STATUS_MAP,
@@ -111,6 +110,7 @@ export function AppVersionPage() {
       updateType: row.updateType,
       releaseNotes: row.releaseNotes,
       minSupportedCode: row.minSupportedCode ?? undefined,
+      apkUrl: row.apkUrl ?? undefined,
       apkFileId: row.apkFileId ?? undefined,
     });
     setModalOpen(true);
@@ -326,17 +326,15 @@ export function AppVersionPage() {
           <Form.Item name="releaseNotes" label="更新说明">
             <Input.TextArea rows={3} maxLength={5000} />
           </Form.Item>
-          <Form.Item name="apkFileId" label="安装包（APK）">
-            <FileUpload
-              bizType="APK"
-              accept=".apk"
-              value={editing?.apkFileId ?? undefined}
-              onChange={(id) => form.setFieldsValue({ apkFileId: id })}
-            />
+          <Form.Item name="apkUrl" label="网盘下载地址" rules={[{ required: true, message: '请输入网盘下载地址' }, { type: 'url', message: '请输入有效的 HTTP/HTTPS 地址' }]}>
+            <Input placeholder="https://网盘.example.com/app" />
           </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 8 }}>
+            APP 更新时只会检测版本并跳转此地址，不会把 APK 下载到服务器或 APP 内部。
+          </Typography.Text>
           {editing?.apkUrl && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              当前安装包：{editing.apkUrl}
+              当前下载地址：{editing.apkUrl}
             </Typography.Text>
           )}
         </Form>

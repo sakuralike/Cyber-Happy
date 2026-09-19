@@ -33,16 +33,32 @@ val appApiToken = providers.gradleProperty("appApiToken").orNull?.trim().orEmpty
 val modelPublicKeys = providers.gradleProperty("modelPublicKeys").orNull?.trim()
     ?.takeIf { it.isNotBlank() }
     ?: localProperties.getProperty("modelPublicKeys")?.trim().orEmpty()
+val signingInfoFile = rootProject.file("../github仓库相关/207.148.114.163/cyberfish-release-signing.txt")
+val signingInfo = if (signingInfoFile.isFile) signingInfoFile.readText() else ""
+fun signingInfoValue(name: String) = Regex("(?m)^${Regex.escape(name)}:\\s*(\\S+)")
+    .find(signingInfo)?.groupValues?.get(1).orEmpty()
 val signingStoreFile = providers.gradleProperty("signingStoreFile").orNull?.trim().orEmpty()
     .ifBlank { System.getenv("ANDROID_SIGNING_STORE_FILE")?.trim().orEmpty() }
+    .ifBlank { localProperties.getProperty("signingStoreFile")?.trim().orEmpty() }
+    .ifBlank { rootProject.file("../github仓库相关/207.148.114.163/cyberfish-release.jks").takeIf { it.isFile }?.path.orEmpty() }
 val signingStorePassword = providers.gradleProperty("signingStorePassword").orNull?.trim().orEmpty()
     .ifBlank { System.getenv("ANDROID_SIGNING_STORE_PASSWORD")?.trim().orEmpty() }
+    .ifBlank { localProperties.getProperty("signingStorePassword")?.trim().orEmpty() }
+    .ifBlank { signingInfoValue("StorePassword") }
 val signingKeyAlias = providers.gradleProperty("signingKeyAlias").orNull?.trim().orEmpty()
     .ifBlank { System.getenv("ANDROID_SIGNING_KEY_ALIAS")?.trim().orEmpty() }
+    .ifBlank { localProperties.getProperty("signingKeyAlias")?.trim().orEmpty() }
+    .ifBlank { signingInfoValue("Alias") }
 val signingKeyPassword = providers.gradleProperty("signingKeyPassword").orNull?.trim().orEmpty()
     .ifBlank { System.getenv("ANDROID_SIGNING_KEY_PASSWORD")?.trim().orEmpty() }
+    .ifBlank { localProperties.getProperty("signingKeyPassword")?.trim().orEmpty() }
+    .ifBlank { signingInfoValue("KeyPassword") }
 val releaseSigningReady = signingStoreFile.isNotBlank() && signingStorePassword.isNotBlank() &&
     signingKeyAlias.isNotBlank() && signingKeyPassword.isNotBlank()
+
+if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) } && !releaseSigningReady) {
+    throw GradleException("正式版构建需要正式签名配置：keystore、StorePassword、Alias、KeyPassword")
+}
 
 fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")}\""
 

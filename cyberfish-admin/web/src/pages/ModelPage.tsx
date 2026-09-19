@@ -99,7 +99,7 @@ export function ModelPage() {
   const dispatchMut = useMutation({
     mutationFn: ({ id, v }: { id: string; v: modelApi.DispatchInput }) => modelApi.dispatchModel(id, v),
     onSuccess: (d) => {
-      message.success(`下发单已创建，命中 ${d.matchedDevices ?? d.totalDevices} 台设备`);
+      message.success(`更新提示已发布，命中 ${d.matchedDevices ?? d.totalDevices} 台设备；APP 不会自动下载`);
       setDispatchTarget(null);
       invalidate();
     },
@@ -256,7 +256,7 @@ export function ModelPage() {
               disabled={!r.fileUrl}
               onClick={() => openDispatch(r)}
             >
-              下发
+                提示更新
             </Button>}
             {hasPerm('model:rollback') && <Button
               size="small"
@@ -566,7 +566,7 @@ export function ModelPage() {
 
       {/* 下发 */}
       <Modal
-        title={`下发模型 ${dispatchTarget?.modelVersion ?? ''}`}
+        title={`发布模型更新提示 ${dispatchTarget?.modelVersion ?? ''}`}
         open={!!dispatchTarget}
         onOk={submitDispatch}
         onCancel={() => setDispatchTarget(null)}
@@ -575,7 +575,10 @@ export function ModelPage() {
         destroyOnClose
       >
         <Form form={dispatchForm} layout="vertical">
-          <Form.Item name="targetType" label="下发目标" rules={[{ required: true }]}>
+          <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+            发布后仅提示命中设备有新模型，APP 不会自动下载；用户确认后才会手动更新。
+          </Typography.Text>
+          <Form.Item name="targetType" label="提示范围" rules={[{ required: true }]}>
             <Select options={enumOptions(DISPATCH_TARGET_MAP)} />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(a, b) => a.targetType !== b.targetType}>

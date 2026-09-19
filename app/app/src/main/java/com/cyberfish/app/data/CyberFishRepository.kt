@@ -27,18 +27,12 @@ import com.cyberfish.app.network.MisreportUploadWorker
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.update.ModelRuntime
 import com.cyberfish.app.update.ModelUpdateWorker
-import com.cyberfish.app.update.AppUpdateWorker
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
-import kotlinx.coroutines.channels.awaitClose
-import androidx.lifecycle.Observer
 import org.json.JSONObject
 
 class CyberFishRepository(context: Context) {
@@ -50,13 +44,6 @@ class CyberFishRepository(context: Context) {
     private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext), userSessionStore)
     val modelRepository = ModelRuntime.get(appContext, appApiClient)
     val modelState = modelRepository.state
-    val appUpdateWorkInfo: Flow<WorkInfo?> = callbackFlow {
-        val liveData = WorkManager.getInstance(appContext).getWorkInfosForUniqueWorkLiveData(AppUpdateWorker.WORK_NAME)
-        val observer = Observer<List<WorkInfo>> { trySend(it.firstOrNull()).isSuccess }
-        liveData.observeForever(observer)
-        awaitClose { liveData.removeObserver(observer) }
-    }
-
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
     val preferences: Flow<AppPreferences> = preferencesStore.data
     val userSession: Flow<UserSession?> = userSessionStore.session
@@ -214,9 +201,9 @@ class CyberFishRepository(context: Context) {
     suspend fun fetchCheckInHistory(page: Int = 1, pageSize: Int = 20, month: String? = null): ApiResult<CheckInHistory> =
         appApiClient.fetchCheckInHistory(page, pageSize, month)
 
-    fun enqueueAppUpdate(update: AppUpdateInfo) = AppUpdateWorker.enqueue(appContext, update)
+    suspend fun checkForModelUpdate() = modelRepository.checkForUpdate()
 
-    suspend fun checkForModelUpdate() = modelRepository.checkAndInstall()
+    suspend fun installPendingModelUpdate() = modelRepository.installPendingUpdate()
 
     suspend fun rollbackModel() = modelRepository.rollback()
 

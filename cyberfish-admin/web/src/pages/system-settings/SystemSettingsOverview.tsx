@@ -1,7 +1,6 @@
 import {
   AppstoreOutlined,
   CloudUploadOutlined,
-  DownloadOutlined,
   PictureOutlined,
   SearchOutlined,
   UserOutlined,
@@ -18,15 +17,6 @@ const domains = [
     model: "SiteSetting (JSON)",
     path: "/admin/settings/SITE",
     detail: "页面标题、meta 关键词与描述、OG 分享图、备案与版权信息。",
-  },
-  {
-    key: "downloads",
-    title: "应用下载管理",
-    scope: "DOWNLOAD",
-    icon: <DownloadOutlined />,
-    model: "DownloadLink",
-    path: "/admin/download-links",
-    detail: "Android、iOS、HarmonyOS 下载链接、版本与渠道。",
   },
   {
     key: "banners",

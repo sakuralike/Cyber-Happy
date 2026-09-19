@@ -13,6 +13,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.cyberfish.app.data.CyberFishRepository
+import com.cyberfish.app.network.ApiResult
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
@@ -40,8 +41,12 @@ class ModelUpdateWorker(
                 }
             }
             try {
-                val result = repository.checkAndInstall()
-                if (result.retryable) Result.retry() else Result.success()
+                when (val result = repository.checkForUpdate()) {
+                    is ApiResult.Success -> Result.success()
+                    is ApiResult.NetworkError -> Result.retry()
+                    is ApiResult.HttpError -> if (result.statusCode >= 500) Result.retry() else Result.failure()
+                    ApiResult.NotConfigured, is ApiResult.ParseError -> Result.failure()
+                }
             } finally {
                 progressJob.cancelAndJoin()
             }

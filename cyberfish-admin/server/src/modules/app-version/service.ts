@@ -79,9 +79,9 @@ export async function create(input: CreateAppVersionInput, operatorId?: string) 
       updateType: input.updateType,
       releaseNotes: input.releaseNotes,
       minSupportedCode: input.minSupportedCode ?? null,
-      apkUrl: apk?.url ?? null,
-      apkSize: apk?.size ?? null,
-      apkSha256: apk?.sha256 ?? null,
+      apkUrl: input.apkUrl ?? apk?.url ?? null,
+      apkSize: input.apkUrl ? null : apk?.size ?? null,
+      apkSha256: input.apkUrl ? null : apk?.sha256 ?? null,
       apkFileId: input.apkFileId ?? null,
       createdById: operatorId ?? null,
     },
@@ -105,6 +105,13 @@ export async function update(id: string, input: UpdateAppVersionInput) {
   if (input.minSupportedCode !== undefined) data.minSupportedCode = input.minSupportedCode;
   if (input.grayPercent !== undefined) data.grayPercent = input.grayPercent;
   if (input.grayDeviceIds !== undefined) data.grayDeviceIds = JSON.stringify(input.grayDeviceIds);
+
+  if (input.apkUrl !== undefined) {
+    data.apkUrl = input.apkUrl;
+    data.apkSize = null;
+    data.apkSha256 = null;
+    data.apkFileId = null;
+  }
 
   if (input.apkFileId && input.apkFileId !== found.apkFileId) {
     const file = await prisma.fileAsset.findUnique({ where: { id: input.apkFileId } });
@@ -134,7 +141,9 @@ export async function remove(id: string) {
 export async function doAction(id: string, input: AppVersionActionInput, operatorId?: string) {
   const found = await prisma.appVersion.findUnique({ where: { id } });
   if (!found) throw AppError.notFound('APP 版本不存在');
-  if (!found.apkUrl) throw AppError.invalidState('请先上传安装包再发布');
+  if (!found.apkUrl || !/^https?:\/\//i.test(found.apkUrl)) {
+    throw AppError.invalidState('请先在 APP 版本中配置 HTTP/HTTPS 网盘外部链接再发布');
+  }
 
   const before = normalize(found);
   let after: Record<string, unknown>;
