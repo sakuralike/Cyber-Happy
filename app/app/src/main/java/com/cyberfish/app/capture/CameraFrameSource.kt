@@ -137,7 +137,16 @@ class CameraFrameSource(
                 val latencyMillis = ((SystemClock.elapsedRealtimeNanos() - startedAt) / NANOS_PER_MILLISECOND).coerceAtLeast(1)
                 mainExecutor.execute {
                     if (expectedGeneration == generation) {
-                        onFrame(FrameMetrics(detection, framesPerSecond.coerceAtLeast(1), latencyMillis, now))
+                        onFrame(
+                            FrameMetrics(
+                                detection = detection,
+                                framesPerSecond = framesPerSecond.coerceAtLeast(1),
+                                latencyMillis = latencyMillis,
+                                timestampMillis = now,
+                                sourceWidthPx = image.width,
+                                sourceHeightPx = image.height,
+                            ),
+                        )
                     }
                 }
             }
