@@ -191,4 +191,41 @@ describe('check-in service', () => {
     assert.equal(rejected[0]!.reason.code, errors.ErrorCode.CHECKIN_ALREADY_CHECKED_IN);
     assert.equal(await prisma.checkInRecord.count({ where: { userId } }), 1);
   });
+
+  it('returns daily operations stats for attempts, success, users, and risks', async () => {
+    const userId = await createUser('stats');
+    await prisma.checkInRecord.createMany({
+      data: [
+        { userId, checkinDate: '2099-01-01', streak: 1 },
+        { userId, checkinDate: '2099-01-02', streak: 2 },
+      ],
+    });
+    await prisma.checkInRiskEvent.createMany({
+      data: [
+        { userId, reason: 'CHECK_IN_ATTEMPT', createdAt: new Date('2099-01-01T04:00:00.000Z') },
+        { userId, reason: 'DEVICE_LIMIT', createdAt: new Date('2099-01-02T04:00:00.000Z') },
+      ],
+    });
+
+    const result = await service.stats({ from: '2099-01-01', to: '2099-01-03' });
+    assert.equal(result.daily.length, 3);
+    assert.deepEqual(result.daily[0], { date: '2099-01-01', attempts: 1, success: 1, uniqueUsers: 1, riskEvents: 1 });
+    assert.deepEqual(result.daily[1], { date: '2099-01-02', attempts: 0, success: 1, uniqueUsers: 1, riskEvents: 1 });
+    assert.deepEqual(result.totals, { attempts: 1, success: 2, uniqueUsers: 1, riskEvents: 2 });
+  });
+
+  it('does not count the legacy device sentinel toward the device limit', async () => {
+    const userId = await createUser('legacy-device');
+    await prisma.checkInRecord.create({
+      data: {
+        userId,
+        checkinDate: '2099-02-01',
+        deviceId: service.LEGACY_CHECK_IN_DEVICE_ID,
+        streak: 1,
+      },
+    });
+
+    await service.checkIn(userId, { deviceId: 'new-device' });
+    assert.equal(await prisma.checkInRiskEvent.count({ where: { userId, reason: 'DEVICE_LIMIT' } }), 0);
+  });
 });

@@ -8,6 +8,9 @@ import com.cyberfish.app.data.local.CyberFishDatabase
 import com.cyberfish.app.data.local.FishRecordDao
 import com.cyberfish.app.data.local.FishRecordEntity
 import com.cyberfish.app.data.model.FishRecord
+import com.cyberfish.app.data.checkin.CheckInCacheStore
+import com.cyberfish.app.data.checkin.CHECK_IN_CONFIG_CACHE_TTL_MILLIS
+import com.cyberfish.app.data.checkin.isCheckInCacheFresh
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.data.preferences.AppPreferencesStore
 import com.cyberfish.app.network.ApiConfig
@@ -40,6 +43,7 @@ class CyberFishRepository(context: Context) {
     private val database = CyberFishDatabase.get(appContext)
     private val recordDao: FishRecordDao = database.fishRecordDao()
     private val preferencesStore = AppPreferencesStore(appContext)
+    private val checkInCacheStore = CheckInCacheStore(appContext)
     private val userSessionStore = UserSessionStore(appContext)
     private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext), userSessionStore)
     val modelRepository = ModelRuntime.get(appContext, appApiClient)
@@ -194,12 +198,70 @@ class CyberFishRepository(context: Context) {
 
     suspend fun submitFeedback(content: String, contact: String): ApiResult<Unit> = appApiClient.submitFeedback(content, contact)
 
-    suspend fun fetchCheckInOverview(): ApiResult<CheckInOverview> = appApiClient.fetchCheckInOverview()
+    suspend fun fetchCheckInOverview(forceRefresh: Boolean = false): ApiResult<CheckInOverview> {
+        val session = userSessionStore.get()
+        if (session == null) return appApiClient.fetchCheckInOverview()
+        val cached = checkInCacheStore.readOverview(session.user.id)
+        val nowMillis = System.currentTimeMillis()
+        if (!forceRefresh && cached != null && isCheckInCacheFresh(cached.savedAtMillis, nowMillis, CHECK_IN_CONFIG_CACHE_TTL_MILLIS)) {
+            return ApiResult.Success(
+                value = cached.value,
+                fromCache = true,
+                cachedAtMillis = cached.savedAtMillis,
+            )
+        }
+        return when (val result = appApiClient.fetchCheckInOverview()) {
+            is ApiResult.Success -> {
+                checkInCacheStore.writeOverview(session.user.id, result.value, nowMillis)
+                result
+            }
+            is ApiResult.NetworkError -> if (cached != null) {
+                ApiResult.Success(
+                    value = cached.value,
+                    fromCache = true,
+                    cacheFallback = true,
+                    cachedAtMillis = cached.savedAtMillis,
+                )
+            } else {
+                result
+            }
+            else -> result
+        }
+    }
 
-    suspend fun checkIn(): ApiResult<CheckInActionResult> = appApiClient.checkIn()
+    suspend fun refreshCheckInOverview(): ApiResult<CheckInOverview> = fetchCheckInOverview(forceRefresh = true)
 
-    suspend fun fetchCheckInHistory(page: Int = 1, pageSize: Int = 20, month: String? = null): ApiResult<CheckInHistory> =
-        appApiClient.fetchCheckInHistory(page, pageSize, month)
+    suspend fun checkIn(): ApiResult<CheckInActionResult> {
+        val result = appApiClient.checkIn()
+        if (result is ApiResult.Success) {
+            userSessionStore.get()?.user?.id?.let { userId ->
+                checkInCacheStore.writeOverview(userId, result.value.overview)
+            }
+        }
+        return result
+    }
+
+    suspend fun fetchCheckInHistory(page: Int = 1, pageSize: Int = 20, month: String? = null): ApiResult<CheckInHistory> {
+        val session = userSessionStore.get()
+        if (session == null) return appApiClient.fetchCheckInHistory(page, pageSize, month)
+        val result = appApiClient.fetchCheckInHistory(page, pageSize, month)
+        if (result is ApiResult.Success) {
+            if (page == 1) checkInCacheStore.writeHistory(session.user.id, month, result.value)
+            return result
+        }
+        if (result is ApiResult.NetworkError && page == 1) {
+            val cached = checkInCacheStore.readHistory(session.user.id, month)
+            if (cached != null) {
+                return ApiResult.Success(
+                    value = cached.value,
+                    fromCache = true,
+                    cacheFallback = true,
+                    cachedAtMillis = cached.savedAtMillis,
+                )
+            }
+        }
+        return result
+    }
 
     suspend fun checkForModelUpdate() = modelRepository.checkForUpdate()
 

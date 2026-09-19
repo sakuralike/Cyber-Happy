@@ -20,6 +20,8 @@ import com.cyberfish.app.ui.theme.CyberFishTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.Assert.assertTrue
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class CheckInScreenTest {
@@ -75,5 +77,39 @@ class CheckInScreenTest {
 
         composeRule.onNodeWithText("本次获得奖励").assertIsDisplayed()
         composeRule.onNodeWithText("第7天 · 铜钩钓士").assertIsDisplayed()
+    }
+
+    @Test
+    fun cachedOverviewShowsOfflineMessageAndRetryAction() {
+        val session = UserSession(
+            token = "test-token",
+            user = UserAccount("user-1", "angler", "钓友", null),
+        )
+        val overview = CheckInOverview(enabled = true, checkedInToday = true, currentStreak = 3, cycleDay = 3)
+        val overviewRequests = AtomicInteger(0)
+
+        composeRule.activity.runOnUiThread {
+            composeRule.activity.setContent {
+                CyberFishTheme {
+                    CheckInScreen(
+                        userSession = session,
+                        onBack = {},
+                        onRequireLogin = {},
+                        loadOverview = {
+                            overviewRequests.incrementAndGet()
+                            ApiResult.Success(overview, fromCache = true, cacheFallback = true)
+                        },
+                        submitCheckIn = { ApiResult.Success(CheckInActionResult(overview)) },
+                        loadHistory = { _, _ -> ApiResult.Success(CheckInHistory()) },
+                    )
+                }
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("网络不可用，当前显示最近同步的签到数据").assertIsDisplayed()
+        composeRule.onNodeWithText("重试").performClick()
+        composeRule.waitForIdle()
+        assertTrue(overviewRequests.get() >= 2)
     }
 }

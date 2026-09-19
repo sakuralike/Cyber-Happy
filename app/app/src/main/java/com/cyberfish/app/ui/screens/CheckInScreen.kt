@@ -75,6 +75,7 @@ fun CheckInScreen(
     loadOverview: suspend () -> ApiResult<CheckInOverview>,
     submitCheckIn: suspend () -> ApiResult<CheckInActionResult>,
     loadHistory: suspend (Int, String?) -> ApiResult<CheckInHistory>,
+    forceRefreshOverview: (suspend () -> ApiResult<CheckInOverview>)? = null,
 ) {
     var overview by remember { mutableStateOf<CheckInOverview?>(null) }
     var history by remember { mutableStateOf<CheckInHistory?>(null) }
@@ -89,19 +90,41 @@ fun CheckInScreen(
     val scope = rememberCoroutineScope()
     val currentMonth = remember { YearMonth.now(CHECK_IN_ZONE) }
 
-    fun refreshOverview() {
+    suspend fun requestOverview(forceRefresh: Boolean): ApiResult<CheckInOverview> =
+        if (forceRefresh) forceRefreshOverview?.invoke() ?: loadOverview() else loadOverview()
+
+    fun applyOverviewResult(result: ApiResult<CheckInOverview>) {
+        when (result) {
+            is ApiResult.Success -> {
+                overview = result.value
+                if (calendarMonth == currentMonth) calendarDates = result.value.checkedDates
+                onOverviewChanged(result.value)
+                errorMessage = if (result.cacheFallback) "网络不可用，当前显示最近同步的签到数据" else null
+            }
+            else -> errorMessage = result.checkInMessage()
+        }
+    }
+
+    fun applyHistoryResult(page: Int, result: ApiResult<CheckInHistory>) {
+        when (result) {
+            is ApiResult.Success -> {
+                history = if (page == 1) result.value else {
+                    val current = history
+                    result.value.copy(records = current?.records.orEmpty() + result.value.records)
+                }
+                if (result.cacheFallback) errorMessage = "网络不可用，当前显示最近同步的签到记录"
+                else if (page == 1) errorMessage = null
+            }
+            else -> errorMessage = result.checkInMessage()
+        }
+    }
+
+    fun refreshOverview(forceRefresh: Boolean = true) {
         if (userSession == null) return
         scope.launch {
             loading = true
             errorMessage = null
-            when (val result = loadOverview()) {
-                is ApiResult.Success -> {
-                    overview = result.value
-                    if (calendarMonth == currentMonth) calendarDates = result.value.checkedDates
-                    onOverviewChanged(result.value)
-                }
-                else -> errorMessage = result.checkInMessage()
-            }
+            applyOverviewResult(requestOverview(forceRefresh))
             loading = false
         }
     }
@@ -111,13 +134,7 @@ fun CheckInScreen(
         scope.launch {
             historyLoading = true
             if (page == 1) errorMessage = null
-            when (val result = loadHistory(page, month)) {
-                is ApiResult.Success -> history = if (page == 1) result.value else {
-                    val current = history
-                    result.value.copy(records = current?.records.orEmpty() + result.value.records)
-                }
-                else -> errorMessage = result.checkInMessage()
-            }
+            applyHistoryResult(page, loadHistory(page, month))
             historyLoading = false
         }
     }
@@ -129,14 +146,7 @@ fun CheckInScreen(
         errorMessage = null
         if (userSession != null) {
             loading = true
-            when (val result = loadOverview()) {
-                is ApiResult.Success -> {
-                    overview = result.value
-                    calendarDates = result.value.checkedDates
-                    onOverviewChanged(result.value)
-                }
-                else -> errorMessage = result.checkInMessage()
-            }
+            applyOverviewResult(loadOverview())
             loading = false
         }
     }
@@ -149,7 +159,10 @@ fun CheckInScreen(
         }
         historyLoading = true
         when (val result = loadHistory(1, calendarMonth.toString())) {
-            is ApiResult.Success -> calendarDates = result.value.records.map { it.date }.toSet()
+            is ApiResult.Success -> {
+                calendarDates = result.value.records.map { it.date }.toSet()
+                if (result.cacheFallback) errorMessage = "网络不可用，当前显示最近同步的签到记录"
+            }
             else -> errorMessage = result.checkInMessage()
         }
         historyLoading = false
@@ -173,7 +186,7 @@ fun CheckInScreen(
                 Text("每日签到", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Text("坚持签到，记录每天的钓友出勤", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = { refreshOverview(); if (selectedSection == 1) refreshHistory(month = calendarMonth.toString()) }) {
+            IconButton(onClick = { refreshOverview(forceRefresh = true); if (selectedSection == 1) refreshHistory(month = calendarMonth.toString()) }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "刷新")
             }
         }
@@ -196,7 +209,7 @@ fun CheckInScreen(
                     TextButton(
                         onClick = {
                             if (message.startsWith("登录状态")) onRequireLogin()
-                            else if (selectedSection == 0) refreshOverview() else refreshHistory(month = calendarMonth.toString())
+                            else if (selectedSection == 0) refreshOverview(forceRefresh = true) else refreshHistory(month = calendarMonth.toString())
                         },
                     ) { Text(if (message.startsWith("登录状态")) "去登录" else "重试") }
                 }
@@ -227,7 +240,7 @@ fun CheckInScreen(
                                     }
                                     is ApiResult.HttpError -> {
                                         errorMessage = result.checkInMessage()
-                                        if (result.errorCode == 40912) refreshOverview()
+                                        if (result.errorCode == 40912) refreshOverview(forceRefresh = true)
                                     }
                                     else -> errorMessage = result.checkInMessage()
                                 }
