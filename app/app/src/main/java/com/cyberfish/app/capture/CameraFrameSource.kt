@@ -2,13 +2,17 @@ package com.cyberfish.app.capture
 
 import android.content.Context
 import android.os.SystemClock
+import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.camera.view.transform.OutputTransform
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
 import androidx.lifecycle.LifecycleOwner
 import com.cyberfish.app.inference.CameraFrame
 import com.cyberfish.app.inference.Detector
@@ -28,6 +32,7 @@ class CameraFrameSource(
 ) : FrameSource {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor = ContextCompat.getMainExecutor(context)
+    private val coordinateMapper = CameraXDetectionCoordinateMapper()
     private var cameraProvider: ProcessCameraProvider? = null
     @Volatile
     private var camera: Camera? = null
@@ -42,6 +47,8 @@ class CameraFrameSource(
     private var lastSnapshotAt = 0L
     @Volatile
     private var latestSnapshotFile: File? = null
+    @Volatile
+    private var previewOutputTransform: OutputTransform? = null
 
     fun latestSnapshot(): File? = latestSnapshotFile?.takeIf { it.isFile }
 
@@ -55,25 +62,8 @@ class CameraFrameSource(
             try {
                 val provider = providerFuture.get()
                 cameraProvider = provider
-                val preview = Preview.Builder().build().also {
-                    it.setSurfaceProvider(previewView.surfaceProvider)
-                }
-                val analysis = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                analysis.setAnalyzer(analysisExecutor) { image -> analyzeImage(image, currentGeneration) }
-                provider.unbindAll()
-                val boundCamera = provider.bindToLifecycle(
-                    lifecycleOwner,
-                    CameraSelector.DEFAULT_BACK_CAMERA,
-                    preview,
-                    analysis,
-                )
-                if (currentGeneration == generation) {
-                    camera = boundCamera
-                    maxZoomRatio = boundCamera.cameraInfo.zoomState.value?.maxZoomRatio?.coerceAtLeast(1f) ?: 1f
-                    onZoomCapabilitiesChanged(maxZoomRatio)
-                    onStatusChanged(CaptureStatus.Running)
+                previewView.doOnLayout {
+                    bindCamera(provider, lifecycleOwner, previewView, currentGeneration)
                 }
             } catch (_: Exception) {
                 if (currentGeneration == generation) onStatusChanged(CaptureStatus.Failed)
@@ -81,13 +71,72 @@ class CameraFrameSource(
         }, mainExecutor)
     }
 
+    private fun bindCamera(
+        provider: ProcessCameraProvider,
+        lifecycleOwner: LifecycleOwner,
+        previewView: PreviewView,
+        expectedGeneration: Int,
+    ) {
+        if (expectedGeneration != generation) return
+        try {
+            val viewPort = previewView.viewPort ?: run {
+                previewView.post { bindCamera(provider, lifecycleOwner, previewView, expectedGeneration) }
+                return
+            }
+            val targetRotation = previewView.display?.rotation ?: Surface.ROTATION_0
+            val preview = Preview.Builder()
+                .setTargetRotation(targetRotation)
+                .build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            val analysis = ImageAnalysis.Builder()
+                .setTargetRotation(targetRotation)
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+            analysis.setAnalyzer(analysisExecutor) { image ->
+                analyzeImage(image, expectedGeneration, previewView)
+            }
+            val useCaseGroup = UseCaseGroup.Builder()
+                .setViewPort(viewPort)
+                .addUseCase(preview)
+                .addUseCase(analysis)
+                .build()
+            provider.unbindAll()
+            val boundCamera = provider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                useCaseGroup,
+            )
+            if (expectedGeneration == generation) {
+                camera = boundCamera
+                refreshPreviewOutputTransform(previewView, expectedGeneration)
+                maxZoomRatio = boundCamera.cameraInfo.zoomState.value?.maxZoomRatio?.coerceAtLeast(1f) ?: 1f
+                onZoomCapabilitiesChanged(maxZoomRatio)
+                onStatusChanged(CaptureStatus.Running)
+            }
+        } catch (_: Exception) {
+            if (expectedGeneration == generation) onStatusChanged(CaptureStatus.Failed)
+        }
+    }
+
     override fun stop() {
         generation += 1
         camera = null
+        previewOutputTransform = null
         maxZoomRatio = 1f
         onZoomCapabilitiesChanged(1f)
         cameraProvider?.unbindAll()
         onStatusChanged(CaptureStatus.Idle)
+    }
+
+    private fun refreshPreviewOutputTransform(previewView: PreviewView, expectedGeneration: Int, attempt: Int = 0) {
+        previewView.post {
+            if (expectedGeneration != generation) return@post
+            val transform = previewView.outputTransform
+            if (transform != null) {
+                previewOutputTransform = transform
+            } else if (attempt < 20) {
+                previewView.postDelayed({ refreshPreviewOutputTransform(previewView, expectedGeneration, attempt + 1) }, 50L)
+            }
+        }
     }
 
     fun setZoomRatio(ratio: Float) {
@@ -102,17 +151,26 @@ class CameraFrameSource(
         analysisExecutor.shutdown()
     }
 
-    private fun analyzeImage(image: androidx.camera.core.ImageProxy, expectedGeneration: Int) {
+    private fun analyzeImage(
+        image: androidx.camera.core.ImageProxy,
+        expectedGeneration: Int,
+        previewView: PreviewView,
+    ) {
         val startedAt = SystemClock.elapsedRealtimeNanos()
         try {
             if (expectedGeneration != generation) return
-            val normalizedRgb = if (detector.requiresPixelData) image.toNormalizedRgb(detector.inputSize) else null
+            val frameTransform = coordinateMapper.capture(image)
+            val preparedInput = if (detector.requiresPixelData) image.toModelInput(detector.inputSize) else null
+            val normalizedRgb = preparedInput?.normalizedRgb
+            val sourceWidthPx = preparedInput?.transform?.sourceWidthPx ?: frameTransform.orientedWidthPx
+            val sourceHeightPx = preparedInput?.transform?.sourceHeightPx ?: frameTransform.orientedHeightPx
             val detection = detector.detect(
                 CameraFrame(
-                    width = image.width,
-                    height = image.height,
+                    width = sourceWidthPx,
+                    height = sourceHeightPx,
                     timestampNanos = image.imageInfo.timestamp,
                     normalizedRgb = normalizedRgb,
+                    inputTransform = preparedInput?.transform,
                 ),
             )
             val now = SystemClock.elapsedRealtime()
@@ -140,11 +198,20 @@ class CameraFrameSource(
                         onFrame(
                             FrameMetrics(
                                 detection = detection,
+                                displayDetection = previewOutputTransform?.let { target ->
+                                    coordinateMapper.map(
+                                        detection = detection,
+                                        source = frameTransform,
+                                        target = target,
+                                        previewWidthPx = previewView.width.toFloat(),
+                                        previewHeightPx = previewView.height.toFloat(),
+                                    )
+                                },
                                 framesPerSecond = framesPerSecond.coerceAtLeast(1),
                                 latencyMillis = latencyMillis,
                                 timestampMillis = now,
-                                sourceWidthPx = image.width,
-                                sourceHeightPx = image.height,
+                                sourceWidthPx = sourceWidthPx,
+                                sourceHeightPx = sourceHeightPx,
                             ),
                         )
                     }

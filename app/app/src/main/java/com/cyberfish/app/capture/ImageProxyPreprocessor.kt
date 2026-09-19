@@ -2,11 +2,31 @@ package com.cyberfish.app.capture
 
 import androidx.camera.core.ImageProxy
 import android.graphics.Bitmap
+import com.cyberfish.app.inference.ModelInputTransform
 import java.io.File
 import kotlin.math.min
 
-fun ImageProxy.toNormalizedRgb(targetSize: Int): FloatArray {
+data class PreparedModelInput(
+    val normalizedRgb: FloatArray,
+    val transform: ModelInputTransform,
+)
+
+fun ImageProxy.toModelInput(targetSize: Int): PreparedModelInput {
+    require(targetSize > 0) { "targetSize must be positive" }
+    val crop = cropRect
+    require(crop.left >= 0 && crop.top >= 0 && crop.right <= width && crop.bottom <= height) {
+        "cropRect must fit inside the image"
+    }
+    val transform = ModelInputTransform.letterbox(
+        cropLeftPx = crop.left,
+        cropTopPx = crop.top,
+        cropWidthPx = crop.width(),
+        cropHeightPx = crop.height(),
+        rotationDegrees = imageInfo.rotationDegrees,
+        inputWidthPx = targetSize,
+    )
     val output = FloatArray(targetSize * targetSize * 3)
+    output.fill(LETTERBOX_VALUE)
     val yPlane = planes[0]
     val uPlane = planes[1]
     val vPlane = planes[2]
@@ -18,13 +38,22 @@ fun ImageProxy.toNormalizedRgb(targetSize: Int): FloatArray {
     val vRowStride = vPlane.rowStride
     val uPixelStride = uPlane.pixelStride
     val vPixelStride = vPlane.pixelStride
-    val scaleX = width.toFloat() / targetSize
-    val scaleY = height.toFloat() / targetSize
+    val sourceWidth = transform.sourceWidthPx
+    val sourceHeight = transform.sourceHeightPx
 
-    for (outY in 0 until targetSize) {
-        val sourceY = min(height - 1, (outY * scaleY).toInt())
-        for (outX in 0 until targetSize) {
-            val sourceX = min(width - 1, (outX * scaleX).toInt())
+    for (contentY in 0 until transform.contentHeightPx) {
+        val orientedY = min(
+            sourceHeight - 1,
+            ((contentY + 0.5f) * sourceHeight / transform.contentHeightPx).toInt(),
+        )
+        val outY = transform.paddingTopPx + contentY
+        for (contentX in 0 until transform.contentWidthPx) {
+            val orientedX = min(
+                sourceWidth - 1,
+                ((contentX + 0.5f) * sourceWidth / transform.contentWidthPx).toInt(),
+            )
+            val sourceX = transform.orientedToBufferX(orientedX, orientedY)
+            val sourceY = transform.orientedToBufferY(orientedX, orientedY)
             val yIndex = sourceY * yRowStride + sourceX * yPlane.pixelStride
             val chromaX = sourceX / 2
             val chromaY = sourceY / 2
@@ -36,13 +65,14 @@ fun ImageProxy.toNormalizedRgb(targetSize: Int): FloatArray {
             val r = (y + 1.596f * v).coerceIn(0f, 255f)
             val g = (y - 0.392f * u - 0.813f * v).coerceIn(0f, 255f)
             val b = (y + 2.017f * u).coerceIn(0f, 255f)
+            val outX = transform.paddingLeftPx + contentX
             val outputIndex = (outY * targetSize + outX) * 3
             output[outputIndex] = r / 255f
             output[outputIndex + 1] = g / 255f
             output[outputIndex + 2] = b / 255f
         }
     }
-    return output
+    return PreparedModelInput(normalizedRgb = output, transform = transform)
 }
 
 private fun java.nio.ByteBuffer.getUnsigned(index: Int): Int {
@@ -65,3 +95,5 @@ fun FloatArray.writeJpeg(targetSize: Int, file: File) {
     file.outputStream().use { output -> bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output) }
     bitmap.recycle()
 }
+
+private const val LETTERBOX_VALUE = 114f / 255f

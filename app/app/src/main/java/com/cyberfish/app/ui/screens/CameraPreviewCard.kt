@@ -53,9 +53,6 @@ import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.alert.AndroidAlertNotifier
 import com.cyberfish.app.capture.CameraFrameSource
 import com.cyberfish.app.capture.CaptureStatus
-import com.cyberfish.app.capture.AspectRatioDetectionCoordinateMapper
-import com.cyberfish.app.capture.FrameGeometry
-import com.cyberfish.app.capture.PreviewScaleType
 import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.MockDetector
@@ -250,18 +247,7 @@ private fun DetectionOverlay(metrics: FrameMetrics?) {
     androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val previewWidthPx = with(density) { maxWidth.toPx() }
         val previewHeightPx = with(density) { maxHeight.toPx() }
-        val displayDetection = metrics?.detection?.let { detection ->
-            AspectRatioDetectionCoordinateMapper().map(
-                detection,
-                FrameGeometry(
-                    sourceWidthPx = metrics.sourceWidthPx,
-                    sourceHeightPx = metrics.sourceHeightPx,
-                    previewWidthPx = previewWidthPx,
-                    previewHeightPx = previewHeightPx,
-                    scaleType = PreviewScaleType.CENTER_CROP,
-                ),
-            )
-        }
+        val displayDetection = metrics?.displayDetection
         Canvas(modifier = Modifier.fillMaxSize()) {
             displayDetection?.boundsInPreview?.let { bounds ->
                 drawRect(
