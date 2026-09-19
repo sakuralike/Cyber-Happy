@@ -20,7 +20,7 @@ const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
     'misreport:read', 'misreport:review', 'misreport:assign', 'misreport:export',
     'dashboard:read', 'auditLog:read', 'siteConfig:read', 'siteConfig:write', 'file:read', 'file:upload',
   ],
-  REVIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'misreport:review', 'dashboard:read', 'siteConfig:read', 'siteConfig:publish', 'file:read'],
+  REVIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'misreport:review', 'dashboard:read', 'siteConfig:read', 'file:read'],
   VIEWER: ['appVersion:read', 'model:read', 'misreport:read', 'dashboard:read', 'siteConfig:read', 'file:read'],
 };
 

@@ -120,6 +120,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                 onBack = { showingCheckIn = false },
                 onRequireLogin = {
                     returnToCheckInAfterLogin = true
+                    coroutineScope.launch { repository.logout() }
                     showingCheckIn = false
                     selectedTabName = AppTab.Profile.name
                 },

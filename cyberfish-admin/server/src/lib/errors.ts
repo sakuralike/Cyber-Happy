@@ -12,6 +12,10 @@ export const ErrorCode = {
   NOT_FOUND: 40400,
   CONFLICT: 40900,
   INVALID_STATE: 40901,
+  CHECKIN_DISABLED: 40910,
+  CHECKIN_OUT_OF_WINDOW: 40911,
+  CHECKIN_ALREADY_CHECKED_IN: 40912,
+  RATE_LIMITED: 42900,
 
   VALIDATION: 42200,
   FILE_TYPE: 42201,
@@ -53,6 +57,18 @@ export class AppError extends Error {
   static invalidState(message = '当前状态不允许该操作') {
     return new AppError(ErrorCode.INVALID_STATE, message, 409);
   }
+  static checkInDisabled(message = '签到活动暂未开启') {
+    return new AppError(ErrorCode.CHECKIN_DISABLED, message, 409);
+  }
+  static checkInOutOfWindow(message = '当前不在签到时间') {
+    return new AppError(ErrorCode.CHECKIN_OUT_OF_WINDOW, message, 409);
+  }
+  static checkInAlreadyCheckedIn(message = '今日已签到', details?: unknown) {
+    return new AppError(ErrorCode.CHECKIN_ALREADY_CHECKED_IN, message, 409, details);
+  }
+  static rateLimited(message = '请求过于频繁，请稍后再试') {
+    return new AppError(ErrorCode.RATE_LIMITED, message, 429);
+  }
   static internal(message = '服务器内部错误') {
     return new AppError(ErrorCode.INTERNAL, message, 500);
   }
@@ -60,6 +76,7 @@ export class AppError extends Error {
 
 function defaultHttpStatus(code: number): number {
   if (code === ErrorCode.OK) return 200;
+  if (code === ErrorCode.RATE_LIMITED) return 429;
   if (code >= 40100 && code < 40200) return 401;
   if (code >= 40300 && code < 40400) return 403;
   if (code >= 40400 && code < 41000) return 404;

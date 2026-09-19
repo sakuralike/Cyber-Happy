@@ -145,6 +145,7 @@ export const AuditModule = {
   MISREPORT: 'MISREPORT',
   DASHBOARD: 'DASHBOARD',
   SITE_CONFIG: 'SITE_CONFIG',
+  CHECKIN_SETTINGS: 'CHECKIN_SETTINGS',
 } as const;
 export type AuditModule = (typeof AuditModule)[keyof typeof AuditModule];
 

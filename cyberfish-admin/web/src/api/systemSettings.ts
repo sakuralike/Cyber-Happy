@@ -36,6 +36,22 @@ export interface SettingsPayload {
   items: SettingItem[];
 }
 
+export interface CheckInRiskEvent {
+  id: string;
+  username: string | null;
+  displayName: string | null;
+  deviceId: string | null;
+  ip: string | null;
+  reason: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CheckInRiskEventsPage {
+  list: CheckInRiskEvent[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+}
+
 export interface DownloadLink {
   id: string;
   platform: "ANDROID" | "IOS" | "HARMONY";
@@ -135,6 +151,9 @@ export const saveSettings = (
   }) as Promise<SettingsPayload>;
 export const discardSettings = (scope: ConfigScope) =>
   http.post(`/admin/settings/${scope}/discard`, {}) as Promise<SettingsPayload>;
+
+export const listCheckInRiskEvents = (params?: { page?: number; pageSize?: number; reason?: string }) =>
+  http.get("/admin/check-in/risk-events", { params }) as Promise<CheckInRiskEventsPage>;
 
 export const getCurrentVersion = () =>
   http.get("/admin/settings/current-version") as Promise<CurrentConfigVersion>;

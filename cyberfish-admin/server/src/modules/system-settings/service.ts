@@ -497,6 +497,48 @@ function isSettingScope(scope: ConfigScopeValue): boolean {
     scope === ConfigScope.CHECKIN_RISK;
 }
 
+const CHECKIN_ICON_KEYS = new Set([
+  'stamp_rod', 'stamp_regular', 'stamp_expert', 'stamp_master',
+  'medal_bronze', 'medal_silver', 'medal_gold', 'medal_platinum',
+  'title_beginner', 'title_regular', 'title_master', 'title_fishing_god',
+]);
+
+function parseClock(value: unknown): number {
+  const [hour, minute] = String(value).split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+async function validateCheckInSettings(
+  scope: ConfigScopeValue,
+  parsed: Array<{ key: string; value: unknown }>,
+): Promise<void> {
+  if (scope !== ConfigScope.CHECKIN_BASIC && scope !== ConfigScope.CHECKIN_REWARD) return;
+  const rows = await prisma.siteSetting.findMany({ where: { scope } });
+  const merged = { ...defaultsFor(scope) } as Record<string, unknown>;
+  for (const row of rows) {
+    const raw = row.draftValue ?? row.value;
+    merged[row.key] = parseJson(raw, merged[row.key]);
+  }
+  for (const item of parsed) merged[item.key] = item.value;
+
+  if (scope === ConfigScope.CHECKIN_BASIC) {
+    if (merged.dailyWindowEnabled && parseClock(merged.dailyWindowEnd) <= parseClock(merged.dailyWindowStart)) {
+      throw AppError.badRequest('每日结束时间必须晚于开始时间');
+    }
+    if (merged.activityStartAt && merged.activityEndAt &&
+      new Date(String(merged.activityEndAt)).getTime() <= new Date(String(merged.activityStartAt)).getTime()) {
+      throw AppError.badRequest('活动结束时间必须晚于开始时间');
+    }
+  } else {
+    const cycleLength = Number(merged.cycleLength);
+    const rewards = Array.isArray(merged.rewards) ? merged.rewards as Array<Record<string, unknown>> : [];
+    for (const reward of rewards) {
+      if (Number(reward.day) > cycleLength * 4) throw AppError.badRequest(`奖励天数不能超过周期上限 ${cycleLength * 4} 天`);
+      if (!CHECKIN_ICON_KEYS.has(String(reward.iconKey))) throw AppError.badRequest(`不支持的签到图标：${String(reward.iconKey)}`);
+    }
+  }
+}
+
 async function validateImageFile(value: unknown): Promise<void> {
   if (value == null || value === "") return;
   const file = await prisma.fileAsset.findUnique({
@@ -552,6 +594,7 @@ export async function saveSettings(
     if (item.key.endsWith("FileId")) await validateImageFile(value);
     parsed.push({ key: item.key, value });
   }
+  await validateCheckInSettings(scope, parsed);
   await prisma.$transaction(
     parsed.map((item) =>
       prisma.siteSetting.upsert({
@@ -1487,6 +1530,16 @@ function withSettingDefaults(scope: ConfigScopeValue, value: unknown): unknown {
 
 export async function checkInConfig() {
   const result = await publicConfig(ConfigScope.CHECKIN_BASIC);
+  return ("data" in result ? result.data : {}) as Record<string, unknown>;
+}
+
+export async function checkInRewardConfig() {
+  const result = await publicConfig(ConfigScope.CHECKIN_REWARD);
+  return ("data" in result ? result.data : {}) as Record<string, unknown>;
+}
+
+export async function checkInRiskConfig() {
+  const result = await publicConfig(ConfigScope.CHECKIN_RISK);
   return ("data" in result ? result.data : {}) as Record<string, unknown>;
 }
 
