@@ -42,4 +42,5 @@ jobs:
       - run: npm ci
       - run: npm run db:generate --workspace server
       - run: npm run typecheck
+      - run: npm run test:check-in --workspace server
       - run: npm run build
