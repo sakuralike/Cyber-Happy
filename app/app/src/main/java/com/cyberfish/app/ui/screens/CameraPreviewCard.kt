@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -40,9 +41,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -51,6 +53,9 @@ import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.alert.AndroidAlertNotifier
 import com.cyberfish.app.capture.CameraFrameSource
 import com.cyberfish.app.capture.CaptureStatus
+import com.cyberfish.app.capture.AspectRatioDetectionCoordinateMapper
+import com.cyberfish.app.capture.FrameGeometry
+import com.cyberfish.app.capture.PreviewScaleType
 import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.MockDetector
@@ -62,6 +67,7 @@ import com.cyberfish.app.ui.theme.ChartPalette
 import com.cyberfish.app.ui.theme.CameraPanel
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 
 @Composable
 fun CameraPreviewCard(
@@ -156,14 +162,19 @@ fun CameraPreviewCard(
                 if (permissionGranted) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
-                        factory = { PreviewView(it) },
+                        factory = {
+                            PreviewView(it).apply {
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            }
+                        },
                         update = { previewView = it },
                     )
                 } else {
                     Box(Modifier.fillMaxSize().background(CameraPanel))
                 }
 
-                DetectionOverlay(metrics?.detection)
+                DetectionOverlay(metrics)
             }
 
             Column(
@@ -234,27 +245,58 @@ private fun copySnapshot(source: File, directory: File, timestampMillis: Long): 
 }.getOrNull()
 
 @Composable
-private fun DetectionOverlay(detection: Detection?) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val baselineY = size.height * 0.66f
-        val thresholdY = size.height * 0.45f
-        drawLine(ChartPalette.TracePrimary, Offset(0f, baselineY), Offset(size.width, baselineY), 3f, StrokeCap.Round)
-        drawLine(ChartPalette.TraceWarning, Offset(0f, thresholdY), Offset(size.width, thresholdY), 2f, StrokeCap.Round)
-        detection?.let {
-            val bounds = it.bounds
-            val left = bounds.left * size.width
-            val top = bounds.top * size.height
-            val width = (bounds.right - bounds.left) * size.width
-            val height = (bounds.bottom - bounds.top) * size.height
-            drawRect(
-                color = ChartPalette.TraceAccent,
-                topLeft = Offset(left, top),
-                size = Size(width, height),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+private fun DetectionOverlay(metrics: FrameMetrics?) {
+    val density = LocalDensity.current
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val previewWidthPx = with(density) { maxWidth.toPx() }
+        val previewHeightPx = with(density) { maxHeight.toPx() }
+        val displayDetection = metrics?.detection?.let { detection ->
+            AspectRatioDetectionCoordinateMapper().map(
+                detection,
+                FrameGeometry(
+                    sourceWidthPx = metrics.sourceWidthPx,
+                    sourceHeightPx = metrics.sourceHeightPx,
+                    previewWidthPx = previewWidthPx,
+                    previewHeightPx = previewHeightPx,
+                    scaleType = PreviewScaleType.CENTER_CROP,
+                ),
+            )
+        }
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            displayDetection?.boundsInPreview?.let { bounds ->
+                drawRect(
+                    color = ChartPalette.TraceAccent,
+                    topLeft = Offset(bounds.left, bounds.top),
+                    size = Size(bounds.width, bounds.height),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+                )
+            }
+        }
+        displayDetection?.let { display ->
+            val labelWidthPx = with(density) { 104.dp.toPx() }
+            val gapPx = with(density) { 8.dp.toPx() }
+            val labelX = if (display.boundsInPreview.right + gapPx + labelWidthPx <= previewWidthPx) {
+                display.boundsInPreview.right + gapPx
+            } else {
+                (display.boundsInPreview.left - gapPx - labelWidthPx).coerceAtLeast(0f)
+            }
+            val labelY = display.boundsInPreview.top.coerceIn(0f, (previewHeightPx - with(density) { 28.dp.toPx() }).coerceAtLeast(0f))
+            Text(
+                text = formatDetectionSize(display.widthPx, display.heightPx),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .offset { IntOffset(labelX.roundToInt(), labelY.roundToInt()) }
+                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 5.dp, vertical = 3.dp),
+                maxLines = 1,
             )
         }
     }
 }
+
+internal fun formatDetectionSize(widthPx: Float, heightPx: Float): String =
+    "W ${widthPx.coerceAtLeast(0f).roundToInt()} × H ${heightPx.coerceAtLeast(0f).roundToInt()} px"
 
 @Composable
 private fun PreviewState(modifier: Modifier, status: String) {
