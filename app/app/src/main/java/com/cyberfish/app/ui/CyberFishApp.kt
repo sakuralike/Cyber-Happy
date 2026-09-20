@@ -58,6 +58,12 @@ import android.net.Uri
 import kotlin.math.roundToLong
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.cyberfish.app.network.AppDownloadMode
+import com.cyberfish.app.update.ApkInstallPreparation
+import com.cyberfish.app.update.AppUpdateWorker
+import com.cyberfish.app.update.installApk
 
 internal enum class AppTab(val label: String) {
     Monitor("监控"),
@@ -88,6 +94,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     var returnToCheckInAfterLogin by rememberSaveable { mutableStateOf(false) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     var appInstallMessage by remember { mutableStateOf<String?>(null) }
+    var appUpdateInProgress by remember { mutableStateOf(false) }
     var supportContent by remember { mutableStateOf(SupportContent()) }
     var checkInOverview by remember { mutableStateOf<CheckInOverview?>(null) }
     var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
@@ -96,6 +103,18 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     }
     val selectedTab = AppTab.valueOf(selectedTabName)
     val currentShowingCheckIn by rememberUpdatedState(showingCheckIn)
+
+    fun installDownloadedUpdate(apkPath: String) {
+        appInstallMessage = when (val result = installApk(context, apkPath)) {
+            is ApkInstallPreparation.Ready -> "安装包校验通过，已打开系统安装器"
+            ApkInstallPreparation.PermissionRequired -> "请允许安装未知应用，然后再次点击更新"
+            ApkInstallPreparation.FileMissing -> "安装包不存在，请重新下载"
+            ApkInstallPreparation.InvalidPackage -> "安装包无效或包名不匹配"
+            ApkInstallPreparation.VersionNotNewer -> "安装包版本不高于当前版本"
+            ApkInstallPreparation.SignatureMismatch -> "安装包签名与当前 APP 不一致"
+            is ApkInstallPreparation.Failed -> result.message
+        }
+    }
     LaunchedEffect(selectedTab, userSession?.token) {
         if (selectedTab == AppTab.Profile) {
             withContext(Dispatchers.IO) {
@@ -315,8 +334,10 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             versionCheckState = versionCheckState,
                             modelState = modelState,
                             appInstallMessage = appInstallMessage,
+                            appUpdateInProgress = appUpdateInProgress,
                             onCheckForUpdate = {
                                 coroutineScope.launch {
+                                    appInstallMessage = null
                                     versionCheckState = VersionCheckState.Checking
                                     versionCheckState = when (val result = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
                                         is ApiResult.Success -> if (result.value.hasUpdate) VersionCheckState.UpdateAvailable(result.value) else VersionCheckState.UpToDate
@@ -328,10 +349,70 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                 }
                             },
                             onDownloadAppUpdate = {
-                                (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.apkUrl?.let { url ->
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                    }.onFailure { appInstallMessage = "无法打开网盘地址：${it.message ?: "未知错误"}" }
+                                val update = (versionCheckState as? VersionCheckState.UpdateAvailable)?.update
+                                if (update == null) {
+                                    appInstallMessage = "没有可用的更新信息"
+                                } else if (update.downloadMode == AppDownloadMode.EXTERNAL) {
+                                    update.apkUrl?.let { url ->
+                                        runCatching {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                            appInstallMessage = "已打开网盘链接"
+                                        }.onFailure { appInstallMessage = "无法打开网盘地址：${it.message ?: "未知错误"}" }
+                                    }
+                                } else {
+                                    val cachedApk = AppUpdateWorker.downloadedApkPath(context, update.versionCode)
+                                    if (cachedApk != null) {
+                                        installDownloadedUpdate(cachedApk)
+                                    } else {
+                                        val workId = AppUpdateWorker.enqueue(context, update)
+                                        if (workId == null) {
+                                            appInstallMessage = "服务器更新缺少下载地址、大小或 SHA-256"
+                                            return@SettingsScreen
+                                        }
+                                        appUpdateInProgress = true
+                                        appInstallMessage = "正在准备下载更新"
+                                        coroutineScope.launch {
+                                            val workManager = WorkManager.getInstance(context)
+                                            while (true) {
+                                                val infoResult = runCatching {
+                                                    withContext(Dispatchers.IO) { workManager.getWorkInfoById(workId).get() }
+                                                }
+                                                if (infoResult.isFailure) {
+                                                    appInstallMessage = "无法读取更新任务状态：${infoResult.exceptionOrNull()?.message ?: "未知错误"}"
+                                                    appUpdateInProgress = false
+                                                    break
+                                                }
+                                                val info = infoResult.getOrNull()
+                                                if (info == null) {
+                                                    appInstallMessage = "无法读取更新任务状态"
+                                                    appUpdateInProgress = false
+                                                    break
+                                                }
+                                                when (info.state) {
+                                                    WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> appInstallMessage = "等待网络后下载更新"
+                                                    WorkInfo.State.RUNNING -> appInstallMessage = "正在下载更新 ${info.progress.getInt(AppUpdateWorker.KEY_PROGRESS, 0)}%"
+                                                    WorkInfo.State.SUCCEEDED -> {
+                                                        appUpdateInProgress = false
+                                                        val apkPath = info.outputData.getString(AppUpdateWorker.KEY_APK_PATH)
+                                                        if (apkPath == null) appInstallMessage = "更新下载完成，但安装包路径无效"
+                                                        else installDownloadedUpdate(apkPath)
+                                                        break
+                                                    }
+                                                    WorkInfo.State.FAILED -> {
+                                                        appUpdateInProgress = false
+                                                        appInstallMessage = info.outputData.getString(AppUpdateWorker.KEY_ERROR) ?: "更新下载或校验失败"
+                                                        break
+                                                    }
+                                                    WorkInfo.State.CANCELLED -> {
+                                                        appUpdateInProgress = false
+                                                        appInstallMessage = "更新已取消"
+                                                        break
+                                                    }
+                                                }
+                                                delay(350)
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             onCheckModel = {

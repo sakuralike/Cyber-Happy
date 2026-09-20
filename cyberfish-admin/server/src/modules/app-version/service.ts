@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { ReleaseStatus, UpdateType } from '../../lib/enums';
+import { AppDownloadMode, ReleaseStatus, UpdateType } from '../../lib/enums';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { buildListQuery, type RawListQuery } from '../../lib/query';
@@ -12,6 +12,45 @@ import type {
   AppVersionActionInput,
   CheckUpdateQuery,
 } from './schema';
+import { appVersionDownloadSchema } from './schema';
+
+type DownloadInput = {
+  downloadMode?: AppDownloadMode;
+  apkUrl?: string | null;
+  apkSize?: number | null;
+  apkSha256?: string | null;
+  apkFileId?: string | null;
+};
+
+async function resolveDownload(input: DownloadInput) {
+  const parsed = appVersionDownloadSchema.parse({
+    ...input,
+    apkUrl: input.apkFileId ? null : input.apkUrl,
+  });
+  const downloadMode = parsed.downloadMode ?? (parsed.apkFileId ? AppDownloadMode.SERVER : AppDownloadMode.EXTERNAL);
+  if (parsed.apkFileId) {
+    const file = await prisma.fileAsset.findUnique({ where: { id: parsed.apkFileId } });
+    if (!file) throw AppError.notFound('安装包文件不存在');
+    if (file.bizType !== 'APK') throw AppError.badRequest('文件类型不是 APK');
+    return {
+      downloadMode: AppDownloadMode.SERVER,
+      apkUrl: `/api/v1/files/${file.id}/download`,
+      apkSize: file.size,
+      apkSha256: file.sha256.toLowerCase(),
+      apkFileId: file.id,
+    };
+  }
+  if (downloadMode === AppDownloadMode.EXTERNAL) {
+    return {
+      downloadMode: AppDownloadMode.EXTERNAL,
+      apkUrl: parsed.apkUrl!,
+      apkSize: null,
+      apkSha256: null,
+      apkFileId: null,
+    };
+  }
+  throw AppError.badRequest('服务器模式必须上传 APK');
+}
 
 function normalize<T extends { apkSize?: bigint | null; grayDeviceIds?: string | null }>(row: T) {
   return {
@@ -62,13 +101,7 @@ export async function create(input: CreateAppVersionInput, operatorId?: string) 
   const dup = await prisma.appVersion.findUnique({ where: { versionCode: input.versionCode } });
   if (dup) throw AppError.conflict(`versionCode ${input.versionCode} 已存在`);
 
-  let apk: { url: string; size: bigint; sha256: string } | null = null;
-  if (input.apkFileId) {
-    const file = await prisma.fileAsset.findUnique({ where: { id: input.apkFileId } });
-    if (!file) throw AppError.notFound('安装包文件不存在');
-    if (file.bizType !== 'APK') throw AppError.badRequest('文件类型不是 APK');
-    apk = { url: file.url, size: file.size, sha256: file.sha256 };
-  }
+  const download = await resolveDownload(input);
 
   const created = await prisma.appVersion.create({
     data: {
@@ -79,10 +112,7 @@ export async function create(input: CreateAppVersionInput, operatorId?: string) 
       updateType: input.updateType,
       releaseNotes: input.releaseNotes,
       minSupportedCode: input.minSupportedCode ?? null,
-      apkUrl: input.apkUrl ?? apk?.url ?? null,
-      apkSize: input.apkUrl ? null : apk?.size ?? null,
-      apkSha256: input.apkUrl ? null : apk?.sha256 ?? null,
-      apkFileId: input.apkFileId ?? null,
+      ...download,
       createdById: operatorId ?? null,
     },
   });
@@ -106,21 +136,20 @@ export async function update(id: string, input: UpdateAppVersionInput) {
   if (input.grayPercent !== undefined) data.grayPercent = input.grayPercent;
   if (input.grayDeviceIds !== undefined) data.grayDeviceIds = JSON.stringify(input.grayDeviceIds);
 
-  if (input.apkUrl !== undefined) {
-    data.apkUrl = input.apkUrl;
-    data.apkSize = null;
-    data.apkSha256 = null;
-    data.apkFileId = null;
-  }
-
-  if (input.apkFileId && input.apkFileId !== found.apkFileId) {
-    const file = await prisma.fileAsset.findUnique({ where: { id: input.apkFileId } });
-    if (!file) throw AppError.notFound('安装包文件不存在');
-    if (file.bizType !== 'APK') throw AppError.badRequest('文件类型不是 APK');
-    data.apkUrl = file.url;
-    data.apkSize = file.size;
-    data.apkSha256 = file.sha256;
-    data.apkFileId = file.id;
+  const hasDownloadChange = ['downloadMode', 'apkUrl', 'apkSize', 'apkSha256', 'apkFileId']
+    .some((key) => Object.prototype.hasOwnProperty.call(input, key));
+  if (hasDownloadChange) {
+    const requestedMode = input.downloadMode ?? (input.apkFileId ? AppDownloadMode.SERVER : found.downloadMode as AppDownloadMode);
+    const download = await resolveDownload({
+      downloadMode: requestedMode,
+      apkUrl: input.apkUrl !== undefined ? input.apkUrl : found.apkUrl,
+      apkSize: input.apkSize !== undefined ? input.apkSize : found.apkSize == null ? null : Number(found.apkSize),
+      apkSha256: input.apkSha256 !== undefined ? input.apkSha256 : found.apkSha256,
+      apkFileId: requestedMode === AppDownloadMode.EXTERNAL
+        ? null
+        : input.apkFileId !== undefined ? input.apkFileId : found.apkFileId,
+    });
+    Object.assign(data, download);
   }
 
   const updated = await prisma.appVersion.update({ where: { id }, data });
@@ -141,8 +170,15 @@ export async function remove(id: string) {
 export async function doAction(id: string, input: AppVersionActionInput, operatorId?: string) {
   const found = await prisma.appVersion.findUnique({ where: { id } });
   if (!found) throw AppError.notFound('APP 版本不存在');
-  if (!found.apkUrl || !/^https?:\/\//i.test(found.apkUrl)) {
-    throw AppError.invalidState('请先在 APP 版本中配置 HTTP/HTTPS 网盘外部链接再发布');
+  const download = appVersionDownloadSchema.safeParse({
+    downloadMode: found.downloadMode,
+    apkUrl: found.apkFileId ? null : found.apkUrl,
+    apkSize: found.apkSize == null ? null : Number(found.apkSize),
+    apkSha256: found.apkSha256,
+    apkFileId: found.apkFileId,
+  });
+  if (!download.success) {
+    throw AppError.invalidState(download.error.issues[0]?.message ?? '请先完成下载配置再发布');
   }
 
   const before = normalize(found);
@@ -284,6 +320,7 @@ export async function checkUpdate(q: CheckUpdateQuery) {
       versionCode: latest.versionCode,
       channel: latest.channel,
       releaseNotes: latest.releaseNotes,
+      downloadMode: latest.downloadMode,
       apkUrl: latest.apkUrl,
       apkSize: latest.apkSize ? Number(latest.apkSize) : null,
       sha256: latest.apkSha256,

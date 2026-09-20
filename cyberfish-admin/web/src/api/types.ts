@@ -72,6 +72,7 @@ export interface SiteConfig {
 export type Platform = 'ANDROID' | 'IOS' | 'HARMONY';
 export type UpdateType = 'FORCE' | 'OPTIONAL' | 'NONE';
 export type ReleaseStatus = 'DRAFT' | 'GRAY' | 'ONLINE' | 'OFFLINE';
+export type AppDownloadMode = 'EXTERNAL' | 'SERVER';
 
 export interface AppVersion {
   id: string;
@@ -81,6 +82,7 @@ export interface AppVersion {
   channel: string;
   updateType: UpdateType;
   releaseNotes: string;
+  downloadMode: AppDownloadMode;
   apkUrl: string | null;
   apkSize: number | null;
   apkSha256: string | null;

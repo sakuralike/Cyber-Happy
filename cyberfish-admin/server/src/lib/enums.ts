@@ -34,6 +34,12 @@ export const UpdateType = {
 } as const;
 export type UpdateType = (typeof UpdateType)[keyof typeof UpdateType];
 
+export const AppDownloadMode = {
+  EXTERNAL: 'EXTERNAL',
+  SERVER: 'SERVER',
+} as const;
+export type AppDownloadMode = (typeof AppDownloadMode)[keyof typeof AppDownloadMode];
+
 export const ReleaseStatus = {
   DRAFT: 'DRAFT',
   GRAY: 'GRAY',

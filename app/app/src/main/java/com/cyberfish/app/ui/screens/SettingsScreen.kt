@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.VersionCheckState
+import com.cyberfish.app.network.AppDownloadMode
 import com.cyberfish.app.update.ModelInstallStatus
 import com.cyberfish.app.update.ModelState
 import com.cyberfish.app.trigger.TriggerConfig
@@ -70,6 +71,7 @@ fun SettingsScreen(
     onCheckForUpdate: () -> Unit,
     modelState: ModelState = ModelState(),
     appInstallMessage: String? = null,
+    appUpdateInProgress: Boolean = false,
     onCheckModel: () -> Unit = {},
     onInstallModelUpdate: () -> Unit = {},
     onRollbackModel: () -> Unit = {},
@@ -113,6 +115,7 @@ fun SettingsScreen(
                     onCheckForUpdate = onCheckForUpdate,
                     modelState = modelState,
                     appInstallMessage = appInstallMessage,
+                    appUpdateInProgress = appUpdateInProgress,
                     onCheckModel = onCheckModel,
                     onInstallModelUpdate = onInstallModelUpdate,
                     onRollbackModel = onRollbackModel,
@@ -277,6 +280,7 @@ private fun ModelSettings(
     onCheckForUpdate: () -> Unit,
     modelState: ModelState,
     appInstallMessage: String?,
+    appUpdateInProgress: Boolean,
     onCheckModel: () -> Unit,
     onInstallModelUpdate: () -> Unit,
     onRollbackModel: () -> Unit,
@@ -347,9 +351,15 @@ private fun ModelSettings(
             Button(
                 onClick = onCheckForUpdate,
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                enabled = versionCheckState !is VersionCheckState.Checking,
+                enabled = versionCheckState !is VersionCheckState.Checking && !appUpdateInProgress,
             ) {
-                Text(if (versionCheckState is VersionCheckState.Checking) "检查中" else "检查 APP 更新")
+                Text(
+                    when {
+                        appUpdateInProgress -> "更新下载中"
+                        versionCheckState is VersionCheckState.Checking -> "检查中"
+                        else -> "检查 APP 更新"
+                    },
+                )
             }
             val update = (versionCheckState as? VersionCheckState.UpdateAvailable)?.update
             if (update != null) {
@@ -361,9 +371,23 @@ private fun ModelSettings(
                 )
                 Button(
                     onClick = onDownloadAppUpdate,
-                    enabled = update.apkUrl != null,
+                    enabled = update.apkUrl != null && !appUpdateInProgress,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                ) { Text("打开网盘") }
+                ) {
+                    Text(
+                        when {
+                            appUpdateInProgress -> "正在更新"
+                            update.downloadMode == AppDownloadMode.SERVER -> "更新"
+                            else -> "打开网盘"
+                        },
+                    )
+                }
+                Text(
+                    if (update.downloadMode == AppDownloadMode.SERVER) "服务器安装包将校验后安装" else "网盘链接将在浏览器中打开",
+                    modifier = Modifier.padding(top = 6.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 appInstallMessage?.let {
                     Text(
                         it,
