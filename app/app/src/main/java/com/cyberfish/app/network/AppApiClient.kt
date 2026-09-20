@@ -66,10 +66,12 @@ data class CheckInReward(
     val type: String,
     val name: String,
     val iconKey: String,
+    val milestone: Boolean = false,
 )
 
 data class CheckInOverview(
-    val enabled: Boolean = true,
+    val activityTitle: String = "每日签到",
+    val enabled: Boolean = false,
     val checkedInToday: Boolean = false,
     val currentStreak: Int = 0,
     val longestStreak: Int = 0,
@@ -79,6 +81,7 @@ data class CheckInOverview(
     val canCheckIn: Boolean = true,
     val windowLabel: String? = null,
     val notice: String? = null,
+    val earnedRewards: List<CheckInReward> = emptyList(),
 )
 
 data class CheckInActionResult(
@@ -96,7 +99,18 @@ data class CheckInHistory(
     val hasMore: Boolean = false,
 )
 
-enum class AppEventType { LAUNCH, TRIGGER, MODEL_CALL, MISREPORT, CRASH }
+enum class AppEventType {
+    LAUNCH,
+    TRIGGER,
+    MODEL_CALL,
+    MISREPORT,
+    CRASH,
+    CHECKIN_ENTRY_EXPOSE,
+    CHECKIN_PAGE_VIEW,
+    CHECKIN_SUCCESS,
+    CHECKIN_FAIL,
+    MILESTONE_POPUP_VIEW,
+}
 
 data class ModelCheckInfo(
     val hasUpdate: Boolean,
@@ -313,7 +327,8 @@ class AppApiClient(
         val cycleLength = source.optInt("cycleLength", source.optInt("periodLength", 7)).coerceAtLeast(1)
         val currentStreak = source.optInt("currentStreak", source.optInt("streak", 0)).coerceAtLeast(0)
         return CheckInOverview(
-            enabled = source.optBoolean("enabled", source.optBoolean("active", config?.optBoolean("enabled", true) ?: true)),
+            activityTitle = config?.optString("activityTitle")?.takeIf { it.isNotBlank() } ?: "每日签到",
+            enabled = source.optBoolean("enabled", source.optBoolean("active", config?.optBoolean("enabled", false) ?: false)),
             checkedInToday = source.optBoolean(
                 "checkedInToday",
                 source.optBoolean("todayCheckedIn", source.optBoolean("todayChecked", source.optBoolean("hasCheckedIn", source.optBoolean("checkedIn", false)))),
@@ -330,6 +345,7 @@ class AppApiClient(
             notice = source.optString("notice").takeIf { it.isNotBlank() }
                 ?: source.optString("message").takeIf { it.isNotBlank() }
                 ?: config?.optString("announcement")?.takeIf { it.isNotBlank() },
+            earnedRewards = parseCheckInRewards(source.optJSONArray("earnedRewards")),
         )
     }
 
@@ -353,7 +369,15 @@ class AppApiClient(
                 val item = values.optJSONObject(index) ?: continue
                 val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
                 val iconKey = item.optString("iconKey").takeIf { it.isNotBlank() } ?: continue
-                add(CheckInReward(item.optInt("day", 0), item.optString("type", "STAMP"), name, iconKey))
+                add(
+                    CheckInReward(
+                        day = item.optInt("day", 0),
+                        type = item.optString("type", "STAMP"),
+                        name = name,
+                        iconKey = iconKey,
+                        milestone = item.optBoolean("milestone", false),
+                    ),
+                )
             }
         }
     }

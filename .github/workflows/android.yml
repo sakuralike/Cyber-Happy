@@ -41,6 +41,11 @@ jobs:
           cache-dependency-path: cyberfish-admin/package-lock.json
       - run: npm ci
       - run: npm run db:generate --workspace server
+      - run: npx prisma validate --schema server/prisma/schema.prisma
+      - run: touch server/prisma/ci-migrate.db
+      - run: npx prisma migrate deploy --schema server/prisma/schema.prisma
+        env:
+          DATABASE_URL: file:./ci-migrate.db
       - run: npm run typecheck
       - run: npm run test:check-in --workspace server
       - run: npm run build

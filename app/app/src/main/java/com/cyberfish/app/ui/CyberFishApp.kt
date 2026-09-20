@@ -13,25 +13,30 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.FileProvider
 import android.content.Intent
 import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.data.CyberFishRepository
+import com.cyberfish.app.data.checkin.CHECK_IN_CONFIG_CACHE_TTL_MILLIS
 import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.data.preferences.AppPreferences
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.AppEventType
+import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.VersionCheckState
 import com.cyberfish.app.trigger.TriggerConfig
@@ -45,11 +50,14 @@ import com.cyberfish.app.ui.screens.RecordsScreen
 import com.cyberfish.app.ui.screens.SettingsScreen
 import com.cyberfish.app.ui.theme.CyberFishTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import android.net.Uri
 import kotlin.math.roundToLong
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 internal enum class AppTab(val label: String) {
     Monitor("监控"),
@@ -69,6 +77,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     val context = LocalContext.current.applicationContext
     val repository = remember(context) { CyberFishRepository(context) }
     val coroutineScope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
     val preferences by repository.preferences.collectAsState(initial = AppPreferences())
     val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
     val modelState by repository.modelState.collectAsState()
@@ -80,11 +89,33 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
     var appInstallMessage by remember { mutableStateOf<String?>(null) }
     var supportContent by remember { mutableStateOf(SupportContent()) }
+    var checkInOverview by remember { mutableStateOf<CheckInOverview?>(null) }
     var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         avatarCropUri = uri
     }
     val selectedTab = AppTab.valueOf(selectedTabName)
+    val currentShowingCheckIn by rememberUpdatedState(showingCheckIn)
+    LaunchedEffect(selectedTab, userSession?.token) {
+        if (selectedTab == AppTab.Profile) {
+            withContext(Dispatchers.IO) {
+                repository.reportEvent(
+                    AppEventType.CHECKIN_ENTRY_EXPOSE,
+                    payload = JSONObject().put("source", "profile_card").put("loggedIn", userSession != null),
+                )
+            }
+        }
+    }
+    LaunchedEffect(showingCheckIn, userSession?.token) {
+        if (showingCheckIn) {
+            withContext(Dispatchers.IO) {
+                repository.reportEvent(
+                    AppEventType.CHECKIN_PAGE_VIEW,
+                    payload = JSONObject().put("loggedIn", userSession != null),
+                )
+            }
+        }
+    }
     LaunchedEffect(repository) {
         repository.resumeUserSession()
         repository.scheduleModelUpdates()
@@ -95,10 +126,42 @@ fun CyberFishApp(permissionRevision: Int = 0) {
         if (supportResult is ApiResult.Success) supportContent = supportResult.value
     }
     LaunchedEffect(userSession?.token) {
+        checkInOverview = if (userSession == null) null else {
+            when (val result = repository.fetchCheckInOverview()) {
+                is ApiResult.Success -> result.value
+                else -> null
+            }
+        }
         if (userSession != null && returnToCheckInAfterLogin) {
             showingCheckIn = true
             returnToCheckInAfterLogin = false
         }
+    }
+    LaunchedEffect(userSession?.token) {
+        if (userSession == null) return@LaunchedEffect
+        while (true) {
+            delay(CHECK_IN_CONFIG_CACHE_TTL_MILLIS)
+            if (!currentShowingCheckIn) {
+                when (val result = repository.refreshCheckInOverview()) {
+                    is ApiResult.Success -> checkInOverview = result.value
+                    else -> Unit
+                }
+            }
+        }
+    }
+    DisposableEffect(lifecycleOwner, userSession?.token) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && userSession != null && !currentShowingCheckIn) {
+                coroutineScope.launch {
+                    when (val result = repository.refreshCheckInOverview()) {
+                        is ApiResult.Success -> checkInOverview = result.value
+                        else -> Unit
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val darkTheme = resolveDarkTheme(
         preferences = preferences,
@@ -126,7 +189,43 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                 },
                 loadOverview = repository::fetchCheckInOverview,
                 forceRefreshOverview = repository::refreshCheckInOverview,
-                submitCheckIn = repository::checkIn,
+                onOverviewChanged = { checkInOverview = it },
+                submitCheckIn = {
+                    val result = repository.checkIn()
+                    when (result) {
+                        is ApiResult.Success -> coroutineScope.launch(Dispatchers.IO) {
+                            repository.reportEvent(
+                                AppEventType.CHECKIN_SUCCESS,
+                                payload = JSONObject()
+                                    .put("streak", result.value.overview.currentStreak)
+                                    .put("cycleLength", result.value.overview.cycleLength),
+                            )
+                            result.value.rewards.firstOrNull { it.milestone }?.let { reward ->
+                                repository.reportEvent(
+                                    AppEventType.MILESTONE_POPUP_VIEW,
+                                    payload = JSONObject()
+                                        .put("day", reward.day)
+                                        .put("type", reward.type)
+                                        .put("name", reward.name),
+                                )
+                            }
+                        }
+                        else -> coroutineScope.launch(Dispatchers.IO) {
+                            val errorCode = when (result) {
+                                is ApiResult.HttpError -> result.errorCode ?: result.statusCode
+                                ApiResult.NotConfigured -> "NOT_CONFIGURED"
+                                is ApiResult.NetworkError -> "NETWORK"
+                                is ApiResult.ParseError -> "PARSE"
+                                is ApiResult.Success -> 0
+                            }
+                            repository.reportEvent(
+                                AppEventType.CHECKIN_FAIL,
+                                payload = JSONObject().put("errorCode", errorCode),
+                            )
+                        }
+                    }
+                    result
+                },
                 loadHistory = { page, month -> repository.fetchCheckInHistory(page = page, month = month) },
             )
         } else if (showingFishingSpots) {
@@ -239,6 +338,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                             records = records.orEmpty(),
                             favoriteSpots = preferences.favoriteSpots,
                             userSession = userSession,
+                            checkInOverview = checkInOverview,
                             supportContent = supportContent,
                             onOpenFishingSpots = { showingFishingSpots = true },
                             onOpenCheckIn = { showingCheckIn = true },
