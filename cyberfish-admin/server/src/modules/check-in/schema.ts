@@ -10,7 +10,10 @@ export const historySchema = listQuerySchema.extend({
 export type HistoryQuery = z.infer<typeof historySchema>;
 
 export const checkInBodySchema = z.object({
-  deviceId: z.string().trim().min(1).max(200),
+  deviceId: z.string().trim().min(1).max(200).refine(
+    (value) => value !== '__legacy_unknown__',
+    '该设备标识仅供历史记录使用',
+  ),
 });
 export type CheckInBody = z.infer<typeof checkInBodySchema>;
 

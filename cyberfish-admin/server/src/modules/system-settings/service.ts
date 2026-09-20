@@ -108,6 +108,9 @@ export const CHECKIN_REWARD_DEFAULTS: Record<string, unknown> = {
     { day: 1, type: "STAMP", name: "初竿", iconKey: "stamp_rod", milestone: false },
     { day: 3, type: "STAMP", name: "常客", iconKey: "stamp_regular", milestone: false },
     { day: 7, type: "MEDAL", name: "铜钩钓士", iconKey: "medal_bronze", milestone: true },
+    { day: 14, type: "MEDAL", name: "银钩钓士", iconKey: "medal_silver", milestone: true },
+    { day: 21, type: "MEDAL", name: "金钩钓士", iconKey: "medal_gold", milestone: true },
+    { day: 28, type: "TITLE", name: "钓神出勤", iconKey: "title_master", milestone: true },
   ],
 };
 
@@ -296,6 +299,10 @@ const DEFAULT_LANDING_MODULES: Array<{
 
 function json(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function jsonEqual(raw: string | null | undefined, value: unknown): boolean {
+  return raw !== null && raw !== undefined && json(parseJson(raw, null)) === json(value);
 }
 
 function defaultsFor(scope: ConfigScopeValue): Record<string, unknown> {
@@ -1184,18 +1191,31 @@ async function applySnapshot(
   tx: Prisma.TransactionClient,
   snapshot: Snapshot,
   scopes: ConfigScopeValue[],
+  options: { preserveNewerDrafts?: boolean } = {},
 ): Promise<void> {
   for (const scope of scopes) {
     const value = snapshot[scope];
     if (isSettingScope(scope)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const keys = Object.keys(value as Record<string, unknown>);
+      await tx.siteSetting.deleteMany({
+        where: { scope, key: { notIn: keys } },
+      });
       for (const [key, item] of Object.entries(
         value as Record<string, unknown>,
       )) {
+        const serialized = json(item);
+        const current = await tx.siteSetting.findUnique({
+          where: { scope_key: { scope, key } },
+          select: { draftValue: true },
+        });
+        const clearDraft = !options.preserveNewerDrafts ||
+          current?.draftValue == null ||
+          jsonEqual(current.draftValue, item);
         await tx.siteSetting.upsert({
           where: { scope_key: { scope, key } },
-          create: { id: `${scope}:${key}`, scope, key, value: json(item) },
-          update: { value: json(item), draftValue: null },
+          create: { id: `${scope}:${key}`, scope, key, value: serialized },
+          update: { value: serialized, ...(clearDraft ? { draftValue: null } : {}) },
         });
       }
     } else if (scope === ConfigScope.DOWNLOAD) {
@@ -1208,6 +1228,30 @@ async function applySnapshot(
       await tx.banner.deleteMany();
       const rows = (value as Record<string, unknown>[]).map(mapBannerForCreate);
       if (rows.length) await tx.banner.createMany({ data: rows });
+    } else if (options.preserveNewerDrafts) {
+      const rows = value as Record<string, unknown>[];
+      const ids = rows.map((row) => String(row.id));
+      const existing = await tx.landingModule.findMany({ where: { id: { in: ids } } });
+      await tx.landingModule.deleteMany({ where: { id: { notIn: ids } } });
+      for (const row of rows) {
+        const id = String(row.id);
+        const current = existing.find((item) => item.id === id);
+        const content = row.content ?? {};
+        const contentDraftIsCurrent = current?.draftContentJson == null || jsonEqual(current.draftContentJson, content);
+        const sortDraftIsCurrent = current?.draftSortOrder == null || current.draftSortOrder === Number(row.sortOrder);
+        await tx.landingModule.upsert({
+          where: { id },
+          create: mapLandingForCreate(row),
+          update: {
+            type: String(row.type),
+            enabled: Boolean(row.enabled),
+            sortOrder: Number(row.sortOrder),
+            contentJson: json(content),
+            ...(contentDraftIsCurrent ? { draftContentJson: null } : {}),
+            ...(sortDraftIsCurrent ? { draftSortOrder: null } : {}),
+          },
+        });
+      }
     } else {
       await tx.landingModule.deleteMany();
       const rows = (value as Record<string, unknown>[]).map(
@@ -1274,14 +1318,22 @@ async function publishInternal(input: PublishInput, operatorId?: string) {
     ? RevisionStatus.PENDING
     : RevisionStatus.PUBLISHED;
   const revision = await prisma.$transaction(async (tx) => {
-    await tx.configRevision.updateMany({
+    const pending = await tx.configRevision.findMany({
       where: { status: RevisionStatus.PENDING },
-      data: {
-        status: RevisionStatus.ROLLED_BACK,
-        rolledBackById: operatorId ?? null,
-        rolledBackAt: new Date(),
-      },
+      select: { id: true, scopes: true },
     });
+    for (const row of pending) {
+      const rowScopes = row.scopes.split(',').filter(Boolean);
+      if (!input.scopes.some((scope) => rowScopes.includes(scope))) continue;
+      await tx.configRevision.update({
+        where: { id: row.id },
+        data: {
+          status: RevisionStatus.ROLLED_BACK,
+          rolledBackById: operatorId ?? null,
+          rolledBackAt: new Date(),
+        },
+      });
+    }
     const created = await tx.configRevision.create({
       data: {
         version,
@@ -1414,6 +1466,14 @@ export async function rollback(id: string, operatorId?: string) {
   });
   const version = (last?.version ?? 0) + 1;
   const created = await prisma.$transaction(async (tx) => {
+    await tx.configRevision.updateMany({
+      where: { status: RevisionStatus.PENDING },
+      data: {
+        status: RevisionStatus.ROLLED_BACK,
+        rolledBackById: operatorId ?? null,
+        rolledBackAt: new Date(),
+      },
+    });
     await applySnapshot(tx, snapshot, Object.values(ConfigScope));
     await tx.configRevision.update({
       where: { id: target.id },
@@ -1456,21 +1516,38 @@ export async function publishScheduled(): Promise<number> {
       .filter((scope): scope is ConfigScopeValue =>
         Object.values(ConfigScope).includes(scope as ConfigScopeValue),
       );
-    const snapshot = parseJson<Snapshot>(row.snapshotJson, {} as Snapshot);
+    const scheduledSnapshot = parseJson<Snapshot>(row.snapshotJson, {} as Snapshot);
+    const current = await baselineSnapshot();
+    const merged = { ...current } as Snapshot;
+    for (const scope of scopes) merged[scope] = scheduledSnapshot[scope];
+    const changes = scopes.flatMap((scope) => diffScope(scope, current[scope], merged[scope]));
     const activated = await prisma.$transaction(async (tx) => {
       const claimed = await tx.configRevision.updateMany({
         where: { id: row.id, status: RevisionStatus.PENDING },
         data: { status: RevisionStatus.PUBLISHED, publishedAt: new Date() },
       });
       if (claimed.count === 0) return false;
-      await applySnapshot(tx, snapshot, scopes);
-      return true;
+      await applySnapshot(tx, merged, scopes, { preserveNewerDrafts: true });
+      const latest = await tx.configRevision.findFirst({ orderBy: { version: 'desc' } });
+      const materialized = await tx.configRevision.create({
+        data: {
+          version: (latest?.version ?? row.version) + 1,
+          scopes: Object.values(ConfigScope).join(','),
+          snapshotJson: json(merged),
+          changesJson: json(changes),
+          status: RevisionStatus.PUBLISHED,
+          publishedById: row.publishedById,
+          publishedAt: new Date(),
+          note: `定时发布 v${row.version}`,
+        },
+      });
+      return materialized.version;
     });
     if (activated) {
       published += 1;
       publishConfigEvent({
-        scopes,
-        version: row.version,
+        scopes: Object.values(ConfigScope),
+        version: activated,
         at: new Date().toISOString(),
       });
     }

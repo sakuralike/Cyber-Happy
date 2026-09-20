@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,6 +44,8 @@ const snapshot = {
     cycleStrategy: 'LOOP',
     rewards: [
       { day: 1, type: 'STAMP', name: '初竿', iconKey: 'stamp_rod', milestone: false },
+      { day: 3, type: 'STAMP', name: '常客', iconKey: 'stamp_regular', milestone: false },
+      { day: 7, type: 'MEDAL', name: '铜钩钓士', iconKey: 'medal_bronze', milestone: true },
     ],
   },
   CHECKIN_RISK: {
@@ -149,7 +151,7 @@ after(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-describe('check-in service', () => {
+  describe('check-in service', { concurrency: false }, () => {
   it('uses the planned default daily check-in window', async () => {
     const settings = await import('../src/modules/system-settings/service');
     assert.equal(service.DEFAULT_CHECK_IN_CONFIG.enabled, false);
@@ -182,6 +184,30 @@ describe('check-in service', () => {
   it('requires a stable device id for every new check-in request', () => {
     assert.equal(checkInBodySchema.safeParse({}).success, false);
     assert.equal(checkInBodySchema.safeParse({ deviceId: 'device-1' }).success, true);
+    assert.equal(checkInBodySchema.safeParse({ deviceId: service.LEGACY_CHECK_IN_DEVICE_ID }).success, false);
+    assert.deepEqual(
+      (service.DEFAULT_CHECK_IN_CONFIG as unknown as { activityTitle: string }).activityTitle,
+      '每日签到',
+    );
+  });
+
+  it('defaults all planned reward milestones and audits service failures', async () => {
+    const settings = await import('../src/modules/system-settings/service');
+    const rewards = settings.CHECKIN_REWARD_DEFAULTS.rewards as Array<{ day: number }>;
+    assert.deepEqual(rewards.map((reward) => reward.day), [1, 3, 7, 14, 21, 28]);
+
+    const userId = await createUser('internal-audit');
+    await service.recordCheckInHttpFailure(
+      { userId, deviceId: 'internal-audit-device', ip: '203.0.113.30', userAgent: 'Audit/1.0', requestId: 'internal-request' },
+      new Error('unexpected'),
+    );
+    const event = await prisma.checkInRiskEvent.findFirst({ where: { userId, reason: 'CHECK_IN_FAILED' } });
+    assert.ok(event);
+    assert.deepEqual(JSON.parse(event.metadata), {
+      errorCode: errors.ErrorCode.INTERNAL,
+      userAgent: 'Audit/1.0',
+      requestId: 'internal-request',
+    });
   });
 
   it('grants a reward once and reports a duplicate with the dedicated error code', async () => {
@@ -578,6 +604,109 @@ describe('check-in service', () => {
 
     assert.equal(response.statusCode, 422);
     assert.equal(response.json().code, errors.ErrorCode.VALIDATION);
+    const event = await prisma.checkInRiskEvent.findFirst({ where: { userId, reason: 'INVALID_REQUEST' } });
+    assert.ok(event);
+    assert.equal(JSON.parse(event.metadata).errorCode, errors.ErrorCode.VALIDATION);
+  });
+
+  it('audits unauthenticated and sentinel check-in POST failures once', async () => {
+    const unauthenticated = await app.inject({
+      method: 'POST',
+      url: '/api/v1/check-in',
+      headers: { 'user-agent': 'Audit-Unauth/1.0' },
+      payload: { deviceId: 'unauthenticated-device' },
+    });
+    assert.equal(unauthenticated.statusCode, 401);
+    const unauthorizedEvents = await prisma.checkInRiskEvent.findMany({ where: { reason: 'UNAUTHORIZED', deviceId: 'unauthenticated-device' } });
+    assert.equal(unauthorizedEvents.length, 1);
+    assert.equal(JSON.parse(unauthorizedEvents[0]!.metadata).errorCode, errors.ErrorCode.UNAUTHORIZED);
+
+    const userId = await createUser('legacy-rejected');
+    const token = app.jwt.sign({ sub: userId, kind: 'APP_USER' }, { expiresIn: '5m' });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/check-in',
+      headers: { authorization: `Bearer ${token}`, 'x-app-token': appApiToken, 'user-agent': 'Audit-Sentinel/1.0' },
+      payload: { deviceId: service.LEGACY_CHECK_IN_DEVICE_ID },
+    });
+    assert.equal(response.statusCode, 422);
+    assert.equal(await prisma.checkInRecord.count({ where: { userId } }), 0);
+    const sentinelEvents = await prisma.checkInRiskEvent.findMany({ where: { userId, reason: 'INVALID_REQUEST' } });
+    assert.equal(sentinelEvents.length, 1);
+    assert.equal(JSON.parse(sentinelEvents[0]!.metadata).errorCode, errors.ErrorCode.VALIDATION);
+  });
+
+  it('applies the reward-default migration only to the legacy default', async () => {
+    const oldRewards = JSON.stringify([
+      { day: 1, type: 'STAMP', name: '初竿', iconKey: 'stamp_rod', milestone: false },
+      { day: 3, type: 'STAMP', name: '常客', iconKey: 'stamp_regular', milestone: false },
+      { day: 7, type: 'MEDAL', name: '铜钩钓士', iconKey: 'medal_bronze', milestone: true },
+    ]);
+    await prisma.siteSetting.upsert({
+      where: { scope_key: { scope: 'CHECKIN_REWARD', key: 'rewards' } },
+      create: { id: 'migration-test-rewards', scope: 'CHECKIN_REWARD', key: 'rewards', value: oldRewards },
+      update: { value: oldRewards, draftValue: null },
+    });
+    const migration = readFileSync(join(serverDir, 'prisma', 'migrations', '20260920_check_in_reward_defaults', 'migration.sql'), 'utf8');
+    for (const statement of migration.split(';').map((part) => part.trim()).filter(Boolean))
+      await prisma.$executeRawUnsafe(statement);
+    const upgraded = await prisma.siteSetting.findUnique({ where: { scope_key: { scope: 'CHECKIN_REWARD', key: 'rewards' } } });
+    assert.ok(upgraded);
+    assert.deepEqual(JSON.parse(upgraded.value).map((reward: { day: number }) => reward.day), [1, 3, 7, 14, 21, 28]);
+    const published = await prisma.configRevision.findFirst({ where: { status: 'PUBLISHED' }, orderBy: { version: 'desc' } });
+    assert.ok(published);
+    const publishedSnapshot = JSON.parse(published.snapshotJson) as { CHECKIN_REWARD: { rewards: Array<{ day: number }> } };
+    assert.deepEqual(publishedSnapshot.CHECKIN_REWARD.rewards.map((reward) => reward.day), [1, 3, 7, 14, 21, 28]);
+  });
+
+  it('preserves a draft edited after scheduling and cancels pending revisions on rollback', async () => {
+    const settings = await import('../src/modules/system-settings/service');
+    await settings.saveSettings(ConfigScope.CHECKIN_BASIC, { items: [{ key: 'activityTitle', value: '排期版本' }] });
+    const scheduled = await settings.publish({
+      scopes: [ConfigScope.CHECKIN_BASIC],
+      effectiveAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await settings.saveSettings(ConfigScope.CHECKIN_BASIC, { items: [{ key: 'activityTitle', value: '排期后草稿' }] });
+    await prisma.configRevision.update({ where: { id: scheduled.id }, data: { effectiveAt: new Date(Date.now() - 1_000) } });
+    assert.equal(await settings.publishScheduled(), 1);
+    const setting = await prisma.siteSetting.findUnique({ where: { scope_key: { scope: 'CHECKIN_BASIC', key: 'activityTitle' } } });
+    assert.equal(setting?.value, JSON.stringify('排期版本'));
+    assert.equal(setting?.draftValue, JSON.stringify('排期后草稿'));
+
+    const latest = await prisma.configRevision.findFirst({ where: { status: 'PUBLISHED' }, orderBy: { version: 'desc' } });
+    assert.ok(latest);
+    const nextVersion = (await prisma.configRevision.findFirst({ orderBy: { version: 'desc' } }))!.version + 1;
+    const snapshotJson = latest.snapshotJson;
+    await prisma.configRevision.createMany({
+      data: [
+        { version: nextVersion, scopes: 'CHECKIN_BASIC', snapshotJson, status: 'PENDING', effectiveAt: new Date(Date.now() + 60_000) },
+        { version: nextVersion + 1, scopes: 'SITE', snapshotJson, status: 'PENDING', effectiveAt: new Date(Date.now() + 120_000) },
+      ],
+    });
+    await settings.rollback(latest.id);
+    assert.equal(await prisma.configRevision.count({ where: { status: 'PENDING' } }), 0);
+    assert.equal(await settings.publishScheduled(), 0);
+  });
+
+  it('keeps public snapshots aligned with setting rows across scheduled and immediate scopes', async () => {
+    const settings = await import('../src/modules/system-settings/service');
+    await settings.saveSettings(ConfigScope.CHECKIN_BASIC, { items: [{ key: 'activityTitle', value: '排期一致性' }] });
+    const scheduled = await settings.publish({
+      scopes: [ConfigScope.CHECKIN_BASIC],
+      effectiveAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await settings.saveSettings(ConfigScope.SITE, { items: [{ key: 'site.name', value: '立即一致性' }] });
+    const immediate = await settings.publish({ scopes: [ConfigScope.SITE] });
+    assert.ok(immediate.version > scheduled.version);
+    await prisma.configRevision.update({ where: { id: scheduled.id }, data: { effectiveAt: new Date(Date.now() - 1_000) } });
+    assert.equal(await settings.publishScheduled(), 1);
+
+    const basicPublic = await settings.publicConfig(ConfigScope.CHECKIN_BASIC);
+    const sitePublic = await settings.publicConfig(ConfigScope.SITE);
+    const basicRow = await prisma.siteSetting.findUnique({ where: { scope_key: { scope: 'CHECKIN_BASIC', key: 'activityTitle' } } });
+    const siteRow = await prisma.siteSetting.findUnique({ where: { scope_key: { scope: 'SITE', key: 'site.name' } } });
+    assert.equal((basicPublic as { data: Record<string, unknown> }).data.activityTitle, JSON.parse(basicRow!.value));
+    assert.equal((sitePublic as { data: Record<string, unknown> }).data['site.name'], JSON.parse(siteRow!.value));
   });
 
   it('enforces risk visibility and lets an operator publish audited check-in settings', async () => {

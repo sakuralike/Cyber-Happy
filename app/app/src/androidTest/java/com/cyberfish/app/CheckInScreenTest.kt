@@ -2,6 +2,7 @@ package com.cyberfish.app
 
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -103,6 +104,7 @@ class CheckInScreenTest {
             canCheckIn = true,
         )
         val checkedOverview = overview.copy(checkedInToday = true, currentStreak = 7, cycleDay = 7)
+        val milestoneShown = AtomicInteger(0)
 
         composeRule.activity.runOnUiThread {
             composeRule.activity.setContent {
@@ -113,6 +115,7 @@ class CheckInScreenTest {
                         onRequireLogin = {},
                         loadOverview = { ApiResult.Success(overview) },
                         forceRefreshOverview = { ApiResult.Success(overview) },
+                        onMilestoneShown = { milestoneShown.incrementAndGet() },
                         submitCheckIn = {
                             ApiResult.Success(
                                 CheckInActionResult(
@@ -136,6 +139,7 @@ class CheckInScreenTest {
         composeRule.onNodeWithText("里程碑达成").assertIsDisplayed()
         composeRule.onNodeWithText("连续签到 7 天").assertIsDisplayed()
         composeRule.onNodeWithText("铜钩钓士").assertIsDisplayed()
+        assertEquals(1, milestoneShown.get())
     }
 
     @Test
@@ -254,6 +258,34 @@ class CheckInScreenTest {
 
         assertEquals(3, requestedMonths.size)
         assertTrue(requestedMonths[0] != requestedMonths[2])
+    }
+
+    @Test
+    fun historicalCalendarMonthCannotSubmitTodaysCheckIn() {
+        val session = UserSession(
+            token = "test-token",
+            user = UserAccount("user-1", "angler", "钓友", null),
+        )
+        val overview = CheckInOverview(enabled = true, checkedInToday = false, canCheckIn = true)
+
+        composeRule.activity.runOnUiThread {
+            composeRule.activity.setContent {
+                CyberFishTheme {
+                    CheckInScreen(
+                        userSession = session,
+                        onBack = {},
+                        onRequireLogin = {},
+                        loadOverview = { ApiResult.Success(overview) },
+                        submitCheckIn = { ApiResult.Success(CheckInActionResult(overview)) },
+                        loadHistory = { _, _ -> ApiResult.Success(CheckInHistory()) },
+                    )
+                }
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("上个月").performClick()
+        composeRule.onNodeWithTag("check-in-button").performScrollTo().assertIsNotEnabled()
     }
 
     @Test

@@ -190,6 +190,25 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                 loadOverview = repository::fetchCheckInOverview,
                 forceRefreshOverview = repository::refreshCheckInOverview,
                 onOverviewChanged = { checkInOverview = it },
+                onMilestoneShown = { reward ->
+                    coroutineScope.launch(Dispatchers.IO) {
+                        repository.reportEvent(
+                            AppEventType.MILESTONE_POPUP_VIEW,
+                            payload = JSONObject()
+                                .put("day", reward.day)
+                                .put("type", reward.type)
+                                .put("name", reward.name),
+                        )
+                    }
+                },
+                onCheckInLoadFailure = { errorCode ->
+                    coroutineScope.launch(Dispatchers.IO) {
+                        repository.reportEvent(
+                            AppEventType.CHECKIN_FAIL,
+                            payload = JSONObject().put("errorCode", errorCode).put("source", "load"),
+                        )
+                    }
+                },
                 submitCheckIn = {
                     val result = repository.checkIn()
                     when (result) {
@@ -200,15 +219,6 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                     .put("streak", result.value.overview.currentStreak)
                                     .put("cycleLength", result.value.overview.cycleLength),
                             )
-                            result.value.rewards.firstOrNull { it.milestone }?.let { reward ->
-                                repository.reportEvent(
-                                    AppEventType.MILESTONE_POPUP_VIEW,
-                                    payload = JSONObject()
-                                        .put("day", reward.day)
-                                        .put("type", reward.type)
-                                        .put("name", reward.name),
-                                )
-                            }
                         }
                         else -> coroutineScope.launch(Dispatchers.IO) {
                             val errorCode = when (result) {
