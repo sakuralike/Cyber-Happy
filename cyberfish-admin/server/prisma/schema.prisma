@@ -88,7 +88,7 @@ model CheckInRecord {
   userId      String
   user        UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
   checkinDate String
-  deviceId    String?
+  deviceId    String
   checkedAt   DateTime    @default(now())
   streak      Int
 
@@ -107,6 +107,7 @@ model CheckInRewardLog {
   rewardType  String
   rewardName  String
   iconKey     String
+  milestone   Boolean     @default(false)
   streak      Int
   grantedAt   DateTime    @default(now())
 

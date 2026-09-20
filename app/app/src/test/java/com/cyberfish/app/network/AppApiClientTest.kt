@@ -206,7 +206,7 @@ class AppApiClientTest {
     fun `check in posts idempotent action and parses returned status`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"code":0,"message":"ok","data":{"alreadyCheckedIn":false,"overview":{"config":{"enabled":true},"todayCheckedIn":true,"currentStreak":13,"cycleDay":6,"cycleLength":7,"checkedDates":["2026-09-18"],"canCheckIn":true},"record":{"date":"2026-09-18","streak":13},"rewards":[{"day":7,"type":"MEDAL","name":"铜钩钓士","iconKey":"medal_bronze"}]}}""",
+                """{"code":0,"message":"ok","data":{"alreadyCheckedIn":false,"overview":{"config":{"enabled":true},"todayCheckedIn":true,"currentStreak":13,"cycleDay":6,"cycleLength":7,"checkedDates":["2026-09-18"],"canCheckIn":true},"record":{"date":"2026-09-18","streak":13},"rewards":[{"day":7,"type":"MEDAL","name":"铜钩钓士","iconKey":"medal_bronze","milestone":true}]}}""",
             ),
         )
 
@@ -216,6 +216,7 @@ class AppApiClientTest {
         assertTrue(action.overview.checkedInToday)
         assertEquals("2026-09-18", action.record?.date)
         assertEquals("铜钩钓士", action.rewards.single().name)
+        assertTrue(action.rewards.single().milestone)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/api/v1/check-in", request.requestUrl?.encodedPath)

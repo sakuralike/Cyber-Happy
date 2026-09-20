@@ -1,6 +1,9 @@
 package com.cyberfish.app.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +26,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,6 +41,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,9 +52,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import com.cyberfish.app.data.checkin.CHECK_IN_CONFIG_CACHE_TTL_MILLIS
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.CheckInActionResult
 import com.cyberfish.app.network.CheckInHistory
@@ -57,14 +66,31 @@ import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.CheckInRecord
 import com.cyberfish.app.network.CheckInReward
 import com.cyberfish.app.network.UserSession
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.yield
+import java.time.Clock
+import java.time.Duration
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
 import java.time.format.DateTimeFormatter
 
 private val CHECK_IN_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
 private val CHECK_IN_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE
+
+internal fun millisUntilNextCheckInDay(clock: Clock): Long {
+    val now = ZonedDateTime.now(clock.withZone(CHECK_IN_ZONE))
+    val nextDay = now.toLocalDate().plusDays(1).atStartOfDay(CHECK_IN_ZONE)
+    return Duration.between(now, nextDay).toMillis().coerceAtLeast(1L)
+}
+
+internal fun missedCheckInDays(newer: LocalDate, older: LocalDate): Int =
+    (ChronoUnit.DAYS.between(older, newer) - 1L).coerceAtLeast(0L).toInt()
 
 @Composable
 fun CheckInScreen(
@@ -76,19 +102,37 @@ fun CheckInScreen(
     submitCheckIn: suspend () -> ApiResult<CheckInActionResult>,
     loadHistory: suspend (Int, String?) -> ApiResult<CheckInHistory>,
     forceRefreshOverview: (suspend () -> ApiResult<CheckInOverview>)? = null,
+    clock: Clock = Clock.system(CHECK_IN_ZONE),
 ) {
     var overview by remember { mutableStateOf<CheckInOverview?>(null) }
     var history by remember { mutableStateOf<CheckInHistory?>(null) }
+    var historyMonth by remember { mutableStateOf<YearMonth?>(null) }
     var selectedSection by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var historyLoading by remember { mutableStateOf(false) }
-    var calendarMonth by remember { mutableStateOf(YearMonth.now(CHECK_IN_ZONE)) }
+    var today by remember(clock) { mutableStateOf(LocalDate.now(clock)) }
+    var calendarMonth by remember(clock) { mutableStateOf(YearMonth.from(today)) }
     var calendarDates by remember { mutableStateOf<Set<String>>(emptySet()) }
     var rewards by remember { mutableStateOf<List<CheckInReward>>(emptyList()) }
+    var milestoneReward by remember { mutableStateOf<CheckInReward?>(null) }
+    var milestoneVisible by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val currentMonth = remember { YearMonth.now(CHECK_IN_ZONE) }
+    val currentMonth = YearMonth.from(today)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val hapticFeedback = LocalHapticFeedback.current
+
+    fun updateCurrentDate(): Boolean {
+        val currentDate = LocalDate.now(clock)
+        if (currentDate == today) return false
+        today = currentDate
+        calendarMonth = YearMonth.from(currentDate)
+        calendarDates = emptySet()
+        history = null
+        historyMonth = null
+        return true
+    }
 
     suspend fun requestOverview(forceRefresh: Boolean): ApiResult<CheckInOverview> =
         if (forceRefresh) forceRefreshOverview?.invoke() ?: loadOverview() else loadOverview()
@@ -105,13 +149,15 @@ fun CheckInScreen(
         }
     }
 
-    fun applyHistoryResult(page: Int, result: ApiResult<CheckInHistory>) {
+    fun applyHistoryResult(page: Int, requestedMonth: YearMonth, result: ApiResult<CheckInHistory>) {
+        if (requestedMonth != calendarMonth) return
         when (result) {
             is ApiResult.Success -> {
                 history = if (page == 1) result.value else {
-                    val current = history
+                    val current = history.takeIf { historyMonth == requestedMonth }
                     result.value.copy(records = current?.records.orEmpty() + result.value.records)
                 }
+                historyMonth = requestedMonth
                 if (result.cacheFallback) errorMessage = "网络不可用，当前显示最近同步的签到记录"
                 else if (page == 1) errorMessage = null
             }
@@ -131,10 +177,11 @@ fun CheckInScreen(
 
     fun refreshHistory(page: Int = 1, month: String? = null) {
         if (userSession == null) return
+        val requestedMonth = month?.let(YearMonth::parse) ?: calendarMonth
         scope.launch {
             historyLoading = true
             if (page == 1) errorMessage = null
-            applyHistoryResult(page, loadHistory(page, month))
+            applyHistoryResult(page, requestedMonth, loadHistory(page, requestedMonth.toString()))
             historyLoading = false
         }
     }
@@ -142,12 +189,49 @@ fun CheckInScreen(
     LaunchedEffect(userSession?.token) {
         overview = null
         history = null
+        historyMonth = null
         rewards = emptyList()
+        milestoneReward = null
         errorMessage = null
         if (userSession != null) {
             loading = true
-            applyOverviewResult(loadOverview())
+            applyOverviewResult(requestOverview(forceRefresh = true))
             loading = false
+        }
+    }
+
+    LaunchedEffect(userSession?.token) {
+        if (userSession == null) return@LaunchedEffect
+        while (true) {
+            delay(CHECK_IN_CONFIG_CACHE_TTL_MILLIS)
+            updateCurrentDate()
+            applyOverviewResult(requestOverview(forceRefresh = true))
+        }
+    }
+
+    LaunchedEffect(userSession?.token, clock) {
+        if (userSession == null) return@LaunchedEffect
+        while (true) {
+            delay(millisUntilNextCheckInDay(clock))
+            if (updateCurrentDate()) applyOverviewResult(requestOverview(forceRefresh = true))
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, userSession?.token, clock) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && userSession != null && updateCurrentDate()) {
+                refreshOverview(forceRefresh = true)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(milestoneReward) {
+        milestoneVisible = false
+        if (milestoneReward != null) {
+            yield()
+            milestoneVisible = true
         }
     }
 
@@ -169,7 +253,7 @@ fun CheckInScreen(
     }
 
     LaunchedEffect(selectedSection, userSession?.token) {
-        if (selectedSection == 1 && userSession != null && history == null) {
+        if (selectedSection == 1 && userSession != null && historyMonth != calendarMonth) {
             refreshHistory(month = calendarMonth.toString())
         }
     }
@@ -183,7 +267,7 @@ fun CheckInScreen(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text("每日签到", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Text(overview?.activityTitle ?: "每日签到", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Text("坚持签到，记录每天的钓友出勤", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = { refreshOverview(forceRefresh = true); if (selectedSection == 1) refreshHistory(month = calendarMonth.toString()) }) {
@@ -220,6 +304,7 @@ fun CheckInScreen(
                     overview = overview,
                     calendarMonth = calendarMonth,
                     currentMonth = currentMonth,
+                    today = today,
                     calendarDates = calendarDates,
                     onPreviousMonth = { calendarMonth = calendarMonth.minusMonths(1) },
                     onNextMonth = { if (calendarMonth < currentMonth) calendarMonth = calendarMonth.plusMonths(1) },
@@ -235,8 +320,13 @@ fun CheckInScreen(
                                         overview = result.value.overview
                                         calendarDates = result.value.overview.checkedDates
                                         rewards = result.value.rewards
+                                        milestoneReward = result.value.rewards.firstOrNull { it.milestone }
+                                        if (milestoneReward != null) {
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        }
                                         onOverviewChanged(result.value.overview)
-                                        if (selectedSection == 1) refreshHistory(month = calendarMonth.toString())
+                                        history = null
+                                        historyMonth = null
                                     }
                                     is ApiResult.HttpError -> {
                                         errorMessage = result.checkInMessage()
@@ -254,10 +344,28 @@ fun CheckInScreen(
                 CheckInHistoryContent(
                     history = history,
                     loading = historyLoading,
-                    onLoadMore = { refreshHistory((history?.page ?: 0) + 1, calendarMonth.toString()) },
+                    onLoadMore = { refreshHistory((history?.page ?: 0) + 1, (historyMonth ?: calendarMonth).toString()) },
                 )
             }
         }
+    }
+
+    milestoneReward?.let { reward ->
+        AlertDialog(
+            onDismissRequest = { milestoneReward = null },
+            title = { Text("里程碑达成") },
+            text = {
+                AnimatedVisibility(visible = milestoneVisible, enter = fadeIn() + scaleIn(initialScale = 0.8f)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("连续签到 ${overview?.currentStreak ?: reward.day} 天", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(reward.name, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { milestoneReward = null }) { Text("继续签到") }
+            },
+        )
     }
 }
 
@@ -280,6 +388,7 @@ private fun CheckInCalendarContent(
     overview: CheckInOverview?,
     calendarMonth: YearMonth,
     currentMonth: YearMonth,
+    today: LocalDate,
     calendarDates: Set<String>,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
@@ -288,7 +397,6 @@ private fun CheckInCalendarContent(
     onCheckIn: () -> Unit,
     rewards: List<CheckInReward>,
 ) {
-    val today = remember { LocalDate.now(CHECK_IN_ZONE) }
     val month = calendarMonth
     val todayKey = today.format(CHECK_IN_DATE_FORMAT)
     LazyColumn(
@@ -339,6 +447,23 @@ private fun CheckInCalendarContent(
                         }
                     }
                     Text("本周期 $cycleDay / $cycleLength 天", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        if (!overview?.earnedRewards.isNullOrEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("已获荣誉", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        overview?.earnedRewards.orEmpty().forEach { reward ->
+                            Text("第${reward.day}天 · ${reward.name}", color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 }
             }
         }
@@ -445,7 +570,26 @@ private fun CheckInHistoryContent(history: CheckInHistory?, loading: Boolean, on
                 }
             }
         }
-        history?.records?.forEach { record -> item { CheckInHistoryRow(record) } }
+        history?.records?.forEachIndexed { index, record ->
+            item(key = "check-in-${record.date}-$index") { CheckInHistoryRow(record) }
+            val olderRecord = history.records.getOrNull(index + 1)
+            val missedDays = olderRecord?.let { older ->
+                runCatching {
+                    missedCheckInDays(LocalDate.parse(record.date), LocalDate.parse(older.date))
+                }.getOrDefault(0)
+            } ?: 0
+            if (missedDays > 0) {
+                item(key = "break-${record.date}-${olderRecord?.date}") {
+                    Text(
+                        "中断 $missedDays 天",
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
         if (loading) item { Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         else if (history?.hasMore == true) item {
             OutlinedButton(onClick = onLoadMore, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) { Text("加载更多") }

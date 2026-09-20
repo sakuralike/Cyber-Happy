@@ -89,12 +89,12 @@ export const USER_PAGE_DEFAULTS: Record<string, unknown> = {
 };
 
 export const CHECKIN_BASIC_DEFAULTS: Record<string, unknown> = {
-  enabled: true,
+  enabled: false,
   activityTitle: "每日签到",
   timezone: "Asia/Shanghai",
   dailyWindowEnabled: false,
-  dailyWindowStart: "00:00",
-  dailyWindowEnd: "23:59",
+  dailyWindowStart: "06:00",
+  dailyWindowEnd: "23:00",
   activityStartAt: null,
   activityEndAt: null,
   announcement: "",
@@ -523,18 +523,18 @@ async function validateCheckInSettings(
 
   if (scope === ConfigScope.CHECKIN_BASIC) {
     if (merged.dailyWindowEnabled && parseClock(merged.dailyWindowEnd) <= parseClock(merged.dailyWindowStart)) {
-      throw AppError.badRequest('每日结束时间必须晚于开始时间');
+      throw AppError.badRequest('每日结束时间必须晚于开始时间', { field: 'dailyWindowEnd' });
     }
     if (merged.activityStartAt && merged.activityEndAt &&
       new Date(String(merged.activityEndAt)).getTime() <= new Date(String(merged.activityStartAt)).getTime()) {
-      throw AppError.badRequest('活动结束时间必须晚于开始时间');
+      throw AppError.badRequest('活动结束时间必须晚于开始时间', { field: 'activityEndAt' });
     }
   } else {
     const cycleLength = Number(merged.cycleLength);
     const rewards = Array.isArray(merged.rewards) ? merged.rewards as Array<Record<string, unknown>> : [];
-    for (const reward of rewards) {
-      if (Number(reward.day) > cycleLength * 4) throw AppError.badRequest(`奖励天数不能超过周期上限 ${cycleLength * 4} 天`);
-      if (!CHECKIN_ICON_KEYS.has(String(reward.iconKey))) throw AppError.badRequest(`不支持的签到图标：${String(reward.iconKey)}`);
+    for (const [index, reward] of rewards.entries()) {
+      if (Number(reward.day) > cycleLength * 4) throw AppError.badRequest(`奖励天数不能超过周期上限 ${cycleLength * 4} 天`, { field: ['rewards', index, 'day'] });
+      if (!CHECKIN_ICON_KEYS.has(String(reward.iconKey))) throw AppError.badRequest(`不支持的签到图标：${String(reward.iconKey)}`, { field: ['rewards', index, 'iconKey'] });
     }
   }
 }

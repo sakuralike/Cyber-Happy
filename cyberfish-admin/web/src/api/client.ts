@@ -45,8 +45,9 @@ http.interceptors.response.use(
     // 兼容非包裹响应（如 CSV 导出，用单独 axios 处理，不经过这里）
     if (body && typeof body === 'object' && 'code' in body) {
       if (body.code === 0) return body.data;
-      const err = new Error(body.message || '请求失败') as Error & { code?: number };
+      const err = new Error(body.message || '请求失败') as Error & { code?: number; details?: unknown };
       err.code = body.code;
+      err.details = body.data;
       return Promise.reject(err);
     }
     return body;
@@ -61,9 +62,10 @@ http.interceptors.response.use(
         window.location.hash = '#/login';
       }
     }
-    const err = new Error(msg) as Error & { code?: number; status?: number };
+    const err = new Error(msg) as Error & { code?: number; status?: number; details?: unknown };
     err.code = body?.code;
     err.status = status;
+    err.details = body?.data;
     return Promise.reject(err);
   },
 );

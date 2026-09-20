@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Button,
   Card,
@@ -25,7 +26,6 @@ import {
   discardSettings,
   getSettings,
   getCheckInStats,
-  publishSettings,
   saveSettings,
   listCheckInRiskEvents,
 } from "../../api/systemSettings";
@@ -52,11 +52,20 @@ function toTimePickerValue(value: unknown) {
   return dayjs().hour(hour).minute(minute).second(0).millisecond(0);
 }
 
+function applySettingFieldError(error: unknown, form: any): void {
+  const details = (error as { details?: { field?: string | Array<string | number> } })?.details;
+  const field = details?.field;
+  if (!field) return;
+  form.setFields([{ name: Array.isArray(field) ? field : field.split("."), errors: [error instanceof Error ? error.message : "配置校验失败"] }]);
+}
+
 export function CheckinSettingsPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { hasPerm } = useAuth();
   const canWrite = hasPerm("siteConfig:write");
   const canPublish = hasPerm("siteConfig:publish");
+  const canViewRisk = hasPerm("checkInRisk:read");
   const [activeKey, setActiveKey] = useState("basic");
   const [basicForm] = Form.useForm<Values>();
   const [rewardForm] = Form.useForm<Values>();
@@ -70,10 +79,12 @@ export function CheckinSettingsPage() {
   const riskEvents = useQuery({
     queryKey: ["admin", "check-in", "risk-events", riskReason, riskFrom, riskTo],
     queryFn: () => listCheckInRiskEvents({ page: 1, pageSize: 50, reason: riskReason, from: riskFrom, to: `${riskTo}T23:59:59+08:00` }),
+    enabled: canViewRisk,
   });
   const checkInStats = useQuery({
     queryKey: ["admin", "check-in", "stats"],
     queryFn: () => getCheckInStats(),
+    enabled: canViewRisk,
   });
 
   useEffect(() => { if (basic.data) basicForm.setFieldsValue(basic.data.values); }, [basic.data, basicForm]);
@@ -91,27 +102,25 @@ export function CheckinSettingsPage() {
   const saveMutation = useMutation({
     mutationFn: ({ scope, values }: { scope: typeof SCOPES[number]; values: Values }) => saveSettings(scope, values),
     onSuccess: async () => { message.success("签到配置草稿已保存"); await refresh(); },
-    onError: notifyError,
+    onError: (error, variables) => {
+      const form = variables.scope === "CHECKIN_BASIC" ? basicForm : variables.scope === "CHECKIN_REWARD" ? rewardForm : riskForm;
+      applySettingFieldError(error, form);
+      notifyError(error);
+    },
   });
   const discardMutation = useMutation({
     mutationFn: (scope: typeof SCOPES[number]) => discardSettings(scope),
     onSuccess: async () => { message.success("签到配置草稿已放弃"); await refresh(); },
     onError: notifyError,
   });
-  const publishMutation = useMutation({
-    mutationFn: () => publishSettings({ scopes: [...SCOPES], note: "发布签到配置" }),
-    onSuccess: async (revision) => { message.success(`签到配置 v${revision.version} 已发布`); await refresh(); },
-    onError: notifyError,
-  });
-
   const activeForm = activeKey === "basic" ? basicForm : activeKey === "reward" ? rewardForm : riskForm;
   const activeScope = activeKey === "basic" ? "CHECKIN_BASIC" : activeKey === "reward" ? "CHECKIN_REWARD" : "CHECKIN_RISK";
   const submitActive = () => activeForm.submit();
   const tabs = useMemo(() => [
     { key: "basic", label: "基础规则", children: <BasicTab form={basicForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_BASIC", values })} /> },
     { key: "reward", label: "奖励规则", children: <RewardTab form={rewardForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_REWARD", values })} /> },
-    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} riskEvents={riskEvents.data?.list ?? []} riskReason={riskReason} setRiskReason={setRiskReason} riskFrom={riskFrom} setRiskFrom={setRiskFrom} riskTo={riskTo} setRiskTo={setRiskTo} stats={checkInStats.data} statsLoading={checkInStats.isLoading} /> },
-  ], [basicForm, rewardForm, riskForm, canWrite, saveMutation, riskEvents.data?.list, checkInStats.data, checkInStats.isLoading]);
+    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} canViewRisk={canViewRisk} riskEvents={riskEvents.data?.list ?? []} riskReason={riskReason} setRiskReason={setRiskReason} riskFrom={riskFrom} setRiskFrom={setRiskFrom} riskTo={riskTo} setRiskTo={setRiskTo} stats={checkInStats.data} statsLoading={checkInStats.isLoading} /> },
+  ], [basicForm, rewardForm, riskForm, canWrite, canViewRisk, saveMutation, riskEvents.data?.list, checkInStats.data, checkInStats.isLoading]);
 
   return (
     <div className="settings-page">
@@ -119,7 +128,7 @@ export function CheckinSettingsPage() {
         <Space>
           {canWrite && <Button icon={<UndoOutlined />} onClick={() => discardMutation.mutate(activeScope)}>放弃草稿</Button>}
           {canWrite && <Button icon={<SaveOutlined />} onClick={submitActive}>保存草稿</Button>}
-          {canPublish && <Button type="primary" icon={<CloudUploadOutlined />} loading={publishMutation.isPending} onClick={() => publishMutation.mutate()}>发布生效</Button>}
+          {canPublish && <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => navigate("/settings/publish")}>审阅并发布</Button>}
         </Space>
       } />
       <PublishStatusBar />
@@ -129,32 +138,33 @@ export function CheckinSettingsPage() {
 }
 
 function BasicTab({ form, disabled, onSubmit }: { form: any; disabled: boolean; onSubmit: (values: Values) => void }) {
-  return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ timezone: "Asia/Shanghai", dailyWindowStart: "00:00", dailyWindowEnd: "23:59" }}>
+  return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ timezone: "Asia/Shanghai", dailyWindowStart: "06:00", dailyWindowEnd: "23:00" }}>
     <Card title="活动状态"><SettingSwitchRow title="签到功能" description="关闭后 APP 仍可查看历史记录，但不能提交新签到。" control={<Form.Item name="enabled" valuePropName="checked" noStyle><Switch /></Form.Item>} />
       <Form.Item name="activityTitle" label="活动标题" rules={[{ required: true, max: 20 }]}><Input /></Form.Item>
       <Form.Item name="announcement" label="暂停/结束提示"><Input maxLength={100} showCount /></Form.Item>
     </Card>
     <Card title="开放时间" style={{ marginTop: 16 }}>
       <SettingSwitchRow title="限制每日签到时段" description="超出时段时 APP 按钮置灰并展示时间范围。" control={<Form.Item name="dailyWindowEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>} />
-      <Space align="start"><Form.Item name="dailyWindowStart" label="每日开始" getValueProps={(value) => ({ value: toTimePickerValue(value) })} getValueFromEvent={(value) => value?.format("HH:mm")}><TimePicker format="HH:mm" /></Form.Item><Form.Item name="dailyWindowEnd" label="每日结束" getValueProps={(value) => ({ value: toTimePickerValue(value) })} getValueFromEvent={(value) => value?.format("HH:mm")}><TimePicker format="HH:mm" /></Form.Item></Space>
+      <Space align="start"><Form.Item name="dailyWindowStart" label="每日开始" getValueProps={(value) => ({ value: toTimePickerValue(value) })} getValueFromEvent={(value) => value?.format("HH:mm")}><TimePicker format="HH:mm" /></Form.Item><Form.Item name="dailyWindowEnd" label="每日结束" dependencies={["dailyWindowStart", "dailyWindowEnabled"]} rules={[({ getFieldValue }) => ({ validator: async (_, value) => { if (!getFieldValue("dailyWindowEnabled") || !value || value > getFieldValue("dailyWindowStart")) return; throw new Error("每日结束时间必须晚于开始时间"); } })]} getValueProps={(value) => ({ value: toTimePickerValue(value) })} getValueFromEvent={(value) => value?.format("HH:mm")}><TimePicker format="HH:mm" /></Form.Item></Space>
       <Form.Item name="timezone" label="自然日时区"><Input disabled /></Form.Item>
       <Form.Item name="activityStartAt" label="活动开始（可选）"><Input placeholder="2026-10-01T00:00:00+08:00" /></Form.Item>
-      <Form.Item name="activityEndAt" label="活动结束（可选）"><Input placeholder="2026-12-31T23:59:59+08:00" /></Form.Item>
+      <Form.Item name="activityEndAt" label="活动结束（可选）" dependencies={["activityStartAt"]} rules={[({ getFieldValue }) => ({ validator: async (_, value) => { const start = getFieldValue("activityStartAt"); if (!value || !start || (dayjs(value).isValid() && dayjs(value).isAfter(dayjs(start)))) return; throw new Error("活动结束时间必须晚于开始时间"); } })]}><Input placeholder="2026-12-31T23:59:59+08:00" /></Form.Item>
     </Card>
   </Form>;
 }
 
 function RewardTab({ form, disabled, onSubmit }: { form: any; disabled: boolean; onSubmit: (values: Values) => void }) {
+  const cycleLength = Form.useWatch("cycleLength", form) ?? 7;
   return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ rewardMode: "BADGE", cycleLength: 7, cycleStrategy: "LOOP", rewards: [] }}>
     <Card title="奖励模式"><Space><Form.Item name="rewardMode" label="奖励类型"><Select style={{ width: 180 }} options={[{ value: "BADGE", label: "荣誉勋章" }]} /></Form.Item><Form.Item name="cycleLength" label="周期长度"><Select style={{ width: 140 }} options={[7, 14, 30].map((value) => ({ value, label: `${value} 天` }))} /></Form.Item><Form.Item name="cycleStrategy" label="周期策略"><Select style={{ width: 160 }} options={[{ value: "LOOP", label: "循环累计" }, { value: "ONCE", label: "仅首周期" }]} /></Form.Item></Space></Card>
-    <Card title="奖励梯度" style={{ marginTop: 16 }}><Form.List name="rewards">{(fields, { add, remove }) => <>{fields.map((field) => <Space key={field.key} align="baseline"><Form.Item {...field} name={[field.name, "day"]} rules={[{ required: true }]}><InputNumber min={1} max={120} placeholder="天数" /></Form.Item><Form.Item {...field} name={[field.name, "type"]}><Select style={{ width: 120 }} options={["STAMP", "MEDAL", "TITLE"].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item {...field} name={[field.name, "name"]}><Input placeholder="奖励名称" /></Form.Item><Form.Item {...field} name={[field.name, "iconKey"]}><Select style={{ width: 180 }} options={ICON_OPTIONS} placeholder="预置图标" /></Form.Item><Form.Item {...field} name={[field.name, "milestone"]} valuePropName="checked"><Switch checkedChildren="里程碑" /></Form.Item><Button type="link" onClick={() => remove(field.name)}>删除</Button></Space>)}<Button onClick={() => add({ type: "STAMP", milestone: false })}>添加奖励</Button></>}</Form.List></Card>
+    <Card title="奖励梯度" style={{ marginTop: 16 }}><Form.List name="rewards" rules={[{ validator: async (_, rewards = []) => { const days = rewards.map((item: Values) => item?.day).filter(Boolean); const names = rewards.map((item: Values) => item?.name?.trim()).filter(Boolean); if (new Set(days).size !== days.length) throw new Error("奖励天数不能重复"); if (new Set(names).size !== names.length) throw new Error("奖励名称不能重复"); if (rewards.filter((item: Values) => item?.milestone).length > 6) throw new Error("里程碑奖励最多 6 项"); } }]}>{(fields, { add, remove }, { errors }) => <>{fields.map((field) => <Space key={field.key} align="baseline"><Form.Item {...field} name={[field.name, "day"]} rules={[{ required: true, message: "请输入奖励天数" }]}><InputNumber min={1} max={cycleLength * 4} placeholder="天数" /></Form.Item><Form.Item {...field} name={[field.name, "type"]} rules={[{ required: true, message: "请选择奖励类型" }]}><Select style={{ width: 120 }} options={["STAMP", "MEDAL", "TITLE"].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item {...field} name={[field.name, "name"]} rules={[{ required: true, message: "请输入奖励名称" }]}><Input placeholder="奖励名称" /></Form.Item><Form.Item {...field} name={[field.name, "iconKey"]} rules={[{ required: true, message: "请选择预置图标" }]}><Select style={{ width: 180 }} options={ICON_OPTIONS} placeholder="预置图标" /></Form.Item><Form.Item {...field} name={[field.name, "milestone"]} valuePropName="checked"><Switch checkedChildren="里程碑" /></Form.Item><Button type="link" onClick={() => remove(field.name)}>删除</Button></Space>)}<Form.ErrorList errors={errors} /><Button onClick={() => add({ type: "STAMP", milestone: false })}>添加奖励</Button></>}</Form.List></Card>
   </Form>;
 }
 
-function RiskTab({ form, disabled, onSubmit, riskEvents, riskReason, setRiskReason, riskFrom, setRiskFrom, riskTo, setRiskTo, stats, statsLoading }: { form: any; disabled: boolean; onSubmit: (values: Values) => void; riskEvents: Array<{ id: string; createdAt: string; reason: string; username: string | null; deviceId: string | null; ip: string | null; metadata?: Record<string, unknown> }>; riskReason?: string; setRiskReason: (value?: string) => void; riskFrom: string; setRiskFrom: (value: string) => void; riskTo: string; setRiskTo: (value: string) => void; stats?: { daily: Array<{ date: string; attempts: number; success: number; uniqueUsers: number; riskEvents: number }>; totals: { attempts: number; success: number; uniqueUsers: number; riskEvents: number } }; statsLoading: boolean }) {
+function RiskTab({ form, disabled, onSubmit, canViewRisk, riskEvents, riskReason, setRiskReason, riskFrom, setRiskFrom, riskTo, setRiskTo, stats, statsLoading }: { form: any; disabled: boolean; onSubmit: (values: Values) => void; canViewRisk: boolean; riskEvents: Array<{ id: string; createdAt: string; reason: string; username: string | null; deviceId: string | null; ip: string | null; metadata?: Record<string, unknown> }>; riskReason?: string; setRiskReason: (value?: string) => void; riskFrom: string; setRiskFrom: (value: string) => void; riskTo: string; setRiskTo: (value: string) => void; stats?: { daily: Array<{ date: string; attempts: number; success: number; uniqueUsers: number; riskEvents: number }>; totals: { attempts: number; success: number; uniqueUsers: number; riskEvents: number } }; statsLoading: boolean }) {
   return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ maxDevicePerUser: 3, ipRateLimitPerMin: 10, suspiciousThreshold: 5, auditReplayEnabled: true, backfillEnabled: false }}>
     <Card title="频次与风控"><Form.Item name="maxDevicePerUser" label="单账号设备上限"><InputNumber min={1} max={10} /></Form.Item><Form.Item name="ipRateLimitPerMin" label="单 IP 每分钟上限"><InputNumber min={1} max={60} /></Form.Item><Form.Item name="suspiciousThreshold" label="同设备多账号阈值"><InputNumber min={2} max={20} /></Form.Item><SettingSwitchRow title="异常请求全量日志" description="记录签到接口失败请求，便于审计排查。" control={<Form.Item name="auditReplayEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>} /><SettingSwitchRow title="补签功能（二期）" description="当前版本锁定关闭。" control={<Form.Item name="backfillEnabled" valuePropName="checked" noStyle><Switch disabled /></Form.Item>} /></Card>
-    <Card title="近 7 日运营统计" style={{ marginTop: 16 }}>
+    {canViewRisk && <Card title="近 7 日运营统计" style={{ marginTop: 16 }}>
       <Space size="large" wrap style={{ marginBottom: 16 }}>
         <Statistic title="签到请求" value={stats?.totals.attempts ?? 0} />
         <Statistic title="签到成功" value={stats?.totals.success ?? 0} />
@@ -162,14 +172,14 @@ function RiskTab({ form, disabled, onSubmit, riskEvents, riskReason, setRiskReas
         <Statistic title="风控事件" value={stats?.totals.riskEvents ?? 0} />
       </Space>
       <Table rowKey="date" size="small" pagination={false} loading={statsLoading} dataSource={stats?.daily ?? []} columns={[{ title: "日期", dataIndex: "date" }, { title: "签到请求", dataIndex: "attempts" }, { title: "签到成功", dataIndex: "success" }, { title: "去重用户", dataIndex: "uniqueUsers" }, { title: "风控事件", dataIndex: "riskEvents" }]} />
-    </Card>
-    <Card title="风控事件" style={{ marginTop: 16 }}>
+    </Card>}
+    {canViewRisk && <Card title="风控事件" style={{ marginTop: 16 }}>
       <Space wrap style={{ marginBottom: 12 }}>
         <Input type="date" value={riskFrom} onChange={(event) => setRiskFrom(event.target.value)} />
         <Input type="date" value={riskTo} onChange={(event) => setRiskTo(event.target.value)} />
-        <Select allowClear placeholder="事件类型" style={{ width: 180 }} value={riskReason} onChange={setRiskReason} options={["CHECK_IN_ATTEMPT", "IP_RATE_LIMIT", "DEVICE_LIMIT", "DEVICE_MULTI_ACCOUNT"].map((value) => ({ value, label: value }))} />
+        <Select allowClear placeholder="事件类型" style={{ width: 220 }} value={riskReason} onChange={setRiskReason} options={["CHECKIN_DISABLED", "OUT_OF_WINDOW", "ALREADY_CHECKED_IN", "IP_RATE_LIMIT", "DEVICE_LIMIT", "DEVICE_MULTI_ACCOUNT", "CHECK_IN_FAILED", "CHECK_IN_ATTEMPT"].map((value) => ({ value, label: value }))} />
       </Space>
       <Table rowKey="id" size="small" pagination={false} loading={false} dataSource={riskEvents} expandable={{ expandedRowRender: (record) => <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(record.metadata ?? {}, null, 2)}</pre> }} columns={[{ title: "时间", dataIndex: "createdAt", render: (value: string) => new Date(value).toLocaleString("zh-CN") }, { title: "原因", dataIndex: "reason" }, { title: "账号", dataIndex: "username", render: (value: string | null) => value ?? "-" }, { title: "设备", dataIndex: "deviceId", render: (value: string | null) => value ?? "-" }, { title: "IP", dataIndex: "ip", render: (value: string | null) => value ?? "-" }]} />
-    </Card>
+    </Card>}
   </Form>;
 }

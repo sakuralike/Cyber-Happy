@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { AppError } from '../../lib/errors';
+import { AppError, ErrorCode } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import type { CheckInStatsQuery, HistoryQuery, RiskEventQuery } from './schema';
 import {
@@ -16,12 +16,12 @@ const CYCLE_LENGTH = 7;
 export const LEGACY_CHECK_IN_DEVICE_ID = '__legacy_unknown__';
 
 export const DEFAULT_CHECK_IN_CONFIG = {
-  enabled: true,
+  enabled: false,
   activityTitle: '每日签到',
   timezone: TIMEZONE,
   dailyWindowEnabled: false,
-  dailyWindowStart: '00:00',
-  dailyWindowEnd: '23:59',
+  dailyWindowStart: '06:00',
+  dailyWindowEnd: '23:00',
   activityStartAt: null as string | null,
   activityEndAt: null as string | null,
   announcement: '',
@@ -38,6 +38,14 @@ const DEFAULT_RISK_CONFIG = {
   maxDevicePerUser: 3,
   ipRateLimitPerMin: 10,
   suspiciousThreshold: 5,
+  auditReplayEnabled: true,
+};
+
+export type CheckInRequestContext = {
+  ip?: string;
+  userAgent?: string;
+  requestId?: string;
+  now?: Date;
 };
 
 type CheckInRecord = {
@@ -139,7 +147,7 @@ async function recordRisk(input: {
   }
 }
 
-async function enforceRisk(userId: string, body: CheckInBody, ip?: string) {
+async function enforceIpRateLimit(userId: string, body: CheckInBody, context: CheckInRequestContext) {
   try {
     const configured = await checkInRiskConfig();
     const config = { ...DEFAULT_RISK_CONFIG, ...configured };
@@ -148,18 +156,40 @@ async function enforceRisk(userId: string, body: CheckInBody, ip?: string) {
     const deviceId = body.deviceId && body.deviceId !== LEGACY_CHECK_IN_DEVICE_ID
       ? body.deviceId
       : undefined;
+    const ip = context.ip;
     if (ip) {
       const recent = await prisma.checkInRiskEvent.count({
         where: { ip, reason: 'CHECK_IN_ATTEMPT', createdAt: { gte: recentFrom } },
       });
-      if (recent >= Number(config.ipRateLimitPerMin)) {
-        await recordRisk({ userId, deviceId, ip, reason: 'IP_RATE_LIMIT', metadata: { limit: config.ipRateLimitPerMin } });
+      if (recent > Number(config.ipRateLimitPerMin)) {
+        await recordRisk({
+          userId,
+          deviceId,
+          ip,
+          reason: 'IP_RATE_LIMIT',
+          metadata: {
+            limit: config.ipRateLimitPerMin,
+            errorCode: ErrorCode.RATE_LIMITED,
+            userAgent: context.userAgent ?? '',
+            requestId: context.requestId ?? '',
+          },
+        });
         throw AppError.rateLimited('签到请求过于频繁，请稍后再试');
       }
     }
-    if (deviceId) {
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    logger.warn({ err: error }, '[check-in] IP 频控检查失败，继续签到');
+  }
+}
+
+async function recordDeviceRisks(userId: string, deviceId: string, currentRecordId: string, ip?: string) {
+  try {
+    const configured = await checkInRiskConfig();
+    const config = { ...DEFAULT_RISK_CONFIG, ...configured };
+    if (deviceId !== LEGACY_CHECK_IN_DEVICE_ID) {
       const records = await prisma.checkInRecord.findMany({
-        where: { userId, deviceId: { not: null, notIn: [LEGACY_CHECK_IN_DEVICE_ID] } },
+        where: { userId, id: { not: currentRecordId }, deviceId: { notIn: [LEGACY_CHECK_IN_DEVICE_ID] } },
         select: { deviceId: true },
       });
       const devices = new Set(records.map((record) => record.deviceId).filter(Boolean));
@@ -172,21 +202,24 @@ async function enforceRisk(userId: string, body: CheckInBody, ip?: string) {
         distinct: ['userId'],
       });
       const otherAccounts = new Set(otherAccountRecords.map((record) => record.userId).filter(Boolean)).size;
-      if (otherAccounts >= Number(config.suspiciousThreshold)) {
+      const accountCount = otherAccounts + 1;
+      if (accountCount >= Number(config.suspiciousThreshold)) {
         await recordRisk({
           userId,
           deviceId,
           ip,
           reason: 'DEVICE_MULTI_ACCOUNT',
-          metadata: { otherAccountRecords: otherAccounts },
+          metadata: { accountCount },
         });
       }
     }
-    await recordRisk({ userId, deviceId, ip, reason: 'CHECK_IN_ATTEMPT' });
   } catch (error) {
-    if (error instanceof AppError) throw error;
-    logger.warn({ err: error }, '[check-in] 风控检查失败，继续签到');
+    logger.warn({ err: error }, '[check-in] 设备风控检查失败，不阻断签到');
   }
+}
+
+function scheduleDeviceRisks(userId: string, deviceId: string, currentRecordId: string, ip?: string) {
+  setImmediate(() => void recordDeviceRisks(userId, deviceId, currentRecordId, ip));
 }
 
 async function grantRewards(
@@ -199,30 +232,35 @@ async function grantRewards(
   const config = { ...DEFAULT_REWARD_CONFIG, ...configured };
   const cycleLength = Number(config.cycleLength) || CYCLE_LENGTH;
   const cycleStrategy = config.cycleStrategy === 'ONCE' ? 'ONCE' : 'LOOP';
-  const rewardDay = cycleStrategy === 'ONCE'
-    ? (streak <= cycleLength ? streak : 0)
-    : ((streak - 1) % cycleLength) + 1;
-  if (!rewardDay || !Array.isArray(config.rewards)) return [];
-  const rewards = (config.rewards as Array<Record<string, unknown>>)
-    .filter((reward) => Number(reward.day) === rewardDay)
+  if (!Array.isArray(config.rewards)) return [];
+  const configuredRewards = config.rewards as Array<Record<string, unknown>>;
+  const absoluteRewards = configuredRewards.filter((reward) => Number(reward.day) === streak);
+  const cycleDay = ((streak - 1) % cycleLength) + 1;
+  const matchingRewards = cycleStrategy === 'ONCE'
+    ? configuredRewards.filter((reward) => streak <= cycleLength && Number(reward.day) === streak)
+    : (absoluteRewards.length > 0
+      ? absoluteRewards
+      : configuredRewards.filter((reward) => Number(reward.day) === cycleDay && Number(reward.day) <= cycleLength));
+  const rewards = matchingRewards
     .map((reward) => ({
-      day: rewardDay,
+      day: Number(reward.day),
       type: String(reward.type ?? 'STAMP'),
       name: String(reward.name ?? ''),
       iconKey: String(reward.iconKey ?? ''),
+      milestone: Boolean(reward.milestone),
     }))
     .filter((reward) => reward.name && reward.iconKey);
   const granted = [];
   for (const reward of rewards) {
     try {
       granted.push(await db.checkInRewardLog.create({
-        data: { userId, checkinDate, rewardDay: reward.day, rewardType: reward.type, rewardName: reward.name, iconKey: reward.iconKey, streak },
+        data: { userId, checkinDate, rewardDay: reward.day, rewardType: reward.type, rewardName: reward.name, iconKey: reward.iconKey, milestone: reward.milestone, streak },
       }));
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
     }
   }
-  return granted.map((reward) => ({ day: reward.rewardDay, type: reward.rewardType, name: reward.rewardName, iconKey: reward.iconKey }));
+  return granted.map((reward) => ({ day: reward.rewardDay, type: reward.rewardType, name: reward.rewardName, iconKey: reward.iconKey, milestone: reward.milestone }));
 }
 
 function availability(now: Date, config: typeof DEFAULT_CHECK_IN_CONFIG) {
@@ -262,12 +300,13 @@ function validateWindow(now: Date, config: typeof DEFAULT_CHECK_IN_CONFIG): void
   }
 }
 
-function rewardDtos(rewards: Array<{ rewardDay: number; rewardType: string; rewardName: string; iconKey: string }>) {
+function rewardDtos(rewards: Array<{ rewardDay: number; rewardType: string; rewardName: string; iconKey: string; milestone: boolean }>) {
   return rewards.map((reward) => ({
     day: reward.rewardDay,
     type: reward.rewardType,
     name: reward.rewardName,
     iconKey: reward.iconKey,
+    milestone: reward.milestone,
   }));
 }
 
@@ -281,8 +320,7 @@ async function readConfig() {
   };
 }
 
-export async function overview(userId: string) {
-  const now = new Date();
+export async function overview(userId: string, now = new Date()) {
   const config = await readConfig();
   const rewardConfig = { ...DEFAULT_REWARD_CONFIG, ...(await checkInRewardConfig()) };
   const cycleLength = Number(rewardConfig.cycleLength) || CYCLE_LENGTH;
@@ -291,7 +329,7 @@ export async function overview(userId: string) {
   const yesterday = shiftDateKey(today, -1);
   const month = today.slice(0, 7);
   const bounds = monthBounds(month);
-  const [todayRecord, yesterdayRecord, longest, monthRecords] = await prisma.$transaction([
+  const [todayRecord, yesterdayRecord, longest, monthRecords, earnedRewardRows] = await prisma.$transaction([
     prisma.checkInRecord.findUnique({ where: { userId_checkinDate: { userId, checkinDate: today } } }),
     prisma.checkInRecord.findUnique({ where: { userId_checkinDate: { userId, checkinDate: yesterday } } }),
     prisma.checkInRecord.aggregate({ where: { userId }, _max: { streak: true } }),
@@ -300,9 +338,16 @@ export async function overview(userId: string) {
       select: { checkinDate: true },
       orderBy: { checkinDate: 'asc' },
     }),
+    prisma.checkInRewardLog.findMany({
+      where: { userId, milestone: true },
+      orderBy: [{ rewardDay: 'asc' }, { grantedAt: 'asc' }],
+    }),
   ]);
   const activeRecord = todayRecord ?? yesterdayRecord;
   const currentStreak = activeRecord?.streak ?? 0;
+  const earnedRewards = [...new Map(
+    rewardDtos(earnedRewardRows).map((reward) => [`${reward.type}:${reward.name}`, reward]),
+  ).values()];
 
   return {
     config,
@@ -318,60 +363,100 @@ export async function overview(userId: string) {
     cycleDay: cycleDay(currentStreak, cycleLength),
     cycleLength,
     checkedDates: monthRecords.map((record) => record.checkinDate),
+    earnedRewards,
   };
 }
 
-export async function checkIn(userId: string, body: CheckInBody = {}, ip?: string) {
-  const now = new Date();
+export async function checkIn(
+  userId: string,
+  body: CheckInBody,
+  requestContext: string | CheckInRequestContext = {},
+) {
+  const context = typeof requestContext === 'string' ? { ip: requestContext } : requestContext;
+  const now = context.now ?? new Date();
   const config = await readConfig();
   const rewardConfig = { ...DEFAULT_REWARD_CONFIG, ...(await checkInRewardConfig()) };
+  const riskConfig = { ...DEFAULT_RISK_CONFIG, ...(await checkInRiskConfig()) };
   const cycleLength = Number(rewardConfig.cycleLength) || CYCLE_LENGTH;
-  validateWindow(now, config);
-  const today = localDateKey(now);
-  const yesterday = shiftDateKey(today, -1);
-
-  await enforceRisk(userId, body, ip);
-
-  const existing = await prisma.checkInRecord.findUnique({
-    where: { userId_checkinDate: { userId, checkinDate: today } },
+  await recordRisk({
+    userId,
+    deviceId: body.deviceId,
+    ip: context.ip,
+    reason: 'CHECK_IN_ATTEMPT',
+    metadata: riskConfig.auditReplayEnabled
+      ? { userAgent: context.userAgent ?? '', requestId: context.requestId ?? '' }
+      : undefined,
   });
-  if (existing) {
-    const rewards = await prisma.checkInRewardLog.findMany({ where: { userId, checkinDate: today } });
-    throw AppError.checkInAlreadyCheckedIn('今日已签到', {
-      alreadyCheckedIn: true,
-      record: recordDto(existing, cycleLength),
-      rewards: rewardDtos(rewards),
-      overview: await overview(userId),
-    });
-  }
-
-  const previous = await prisma.checkInRecord.findUnique({
-    where: { userId_checkinDate: { userId, checkinDate: yesterday } },
-  });
-  const streak = previous ? previous.streak + 1 : 1;
-
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const created = await tx.checkInRecord.create({
-        data: { userId, checkinDate: today, deviceId: body.deviceId ?? null, checkedAt: now, streak },
-      });
-      const rewards = await grantRewards(tx, userId, today, streak, rewardConfig);
-      return { created, rewards };
-    });
-    return { alreadyCheckedIn: false, record: recordDto(result.created, cycleLength), rewards: result.rewards, overview: await overview(userId) };
-  } catch (error) {
-    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
-    const concurrent = await prisma.checkInRecord.findUnique({
+    await enforceIpRateLimit(userId, body, context);
+    validateWindow(now, config);
+    const today = localDateKey(now);
+    const yesterday = shiftDateKey(today, -1);
+
+    const existing = await prisma.checkInRecord.findUnique({
       where: { userId_checkinDate: { userId, checkinDate: today } },
     });
-    if (!concurrent) throw error;
-    const rewards = await prisma.checkInRewardLog.findMany({ where: { userId, checkinDate: today } });
-    throw AppError.checkInAlreadyCheckedIn('今日已签到', {
-      alreadyCheckedIn: true,
-      record: recordDto(concurrent, cycleLength),
-      rewards: rewardDtos(rewards),
-      overview: await overview(userId),
+    if (existing) {
+      const rewards = await prisma.checkInRewardLog.findMany({ where: { userId, checkinDate: today } });
+      throw AppError.checkInAlreadyCheckedIn('今日已签到', {
+        alreadyCheckedIn: true,
+        record: recordDto(existing, cycleLength),
+        rewards: rewardDtos(rewards),
+        overview: await overview(userId, now),
+      });
+    }
+
+    const previous = await prisma.checkInRecord.findUnique({
+      where: { userId_checkinDate: { userId, checkinDate: yesterday } },
     });
+    const streak = previous ? previous.streak + 1 : 1;
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const created = await tx.checkInRecord.create({
+          data: { userId, checkinDate: today, deviceId: body.deviceId, checkedAt: now, streak },
+        });
+        const rewards = await grantRewards(tx, userId, today, streak, rewardConfig);
+        return { created, rewards };
+      });
+      scheduleDeviceRisks(userId, body.deviceId, result.created.id, context.ip);
+      return { alreadyCheckedIn: false, record: recordDto(result.created, cycleLength), rewards: result.rewards, overview: await overview(userId, now) };
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
+      const concurrent = await prisma.checkInRecord.findUnique({
+        where: { userId_checkinDate: { userId, checkinDate: today } },
+      });
+      if (!concurrent) throw error;
+      const rewards = await prisma.checkInRewardLog.findMany({ where: { userId, checkinDate: today } });
+      throw AppError.checkInAlreadyCheckedIn('今日已签到', {
+        alreadyCheckedIn: true,
+        record: recordDto(concurrent, cycleLength),
+        rewards: rewardDtos(rewards),
+        overview: await overview(userId, now),
+      });
+    }
+  } catch (error) {
+    if (riskConfig.auditReplayEnabled && error instanceof AppError && error.code !== 42900) {
+      const reason = error.code === 40910
+        ? 'CHECKIN_DISABLED'
+        : error.code === 40911
+          ? 'OUT_OF_WINDOW'
+          : error.code === 40912
+            ? 'ALREADY_CHECKED_IN'
+            : 'CHECK_IN_FAILED';
+      await recordRisk({
+        userId,
+        deviceId: body.deviceId,
+        ip: context.ip,
+        reason,
+        metadata: {
+          errorCode: error.code,
+          userAgent: context.userAgent ?? '',
+          requestId: context.requestId ?? '',
+        },
+      });
+    }
+    throw error;
   }
 }
 
@@ -407,8 +492,8 @@ export async function stats(query: CheckInStatsQuery = {}) {
   for (const event of riskEvents) {
     const bucket = buckets.get(localDateKey(event.createdAt));
     if (!bucket) continue;
-    bucket.riskEvents += 1;
     if (event.reason === 'CHECK_IN_ATTEMPT') bucket.attempts += 1;
+    else bucket.riskEvents += 1;
   }
 
   const daily = [...buckets.entries()].map(([date, bucket]) => ({
@@ -461,7 +546,7 @@ export async function riskEvents(query: RiskEventQuery) {
   const from = query.from ? new Date(query.from) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const to = query.to ? new Date(query.to) : undefined;
   const where = {
-    ...(query.reason ? { reason: query.reason } : {}),
+    ...(query.reason ? { reason: query.reason } : { reason: { not: 'CHECK_IN_ATTEMPT' } }),
     createdAt: { gte: from, ...(to ? { lte: to } : {}) },
   };
   const [rows, total] = await prisma.$transaction([

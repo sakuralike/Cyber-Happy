@@ -92,7 +92,12 @@ const routes: FastifyPluginAsync = async (app) => {
         targetType: "ConfigRevision",
         targetId: result.id,
         targetName: `v${result.version}`,
-        after: { rollbackTo: id, version: result.version },
+        before: result.changes.map((change) => ({ scope: change.scope, key: change.key, value: change.oldValue })),
+        after: {
+          rollbackTo: id,
+          version: result.version,
+          values: result.changes.map((change) => ({ scope: change.scope, key: change.key, value: change.newValue })),
+        },
       };
       return sendOk(reply, result);
     },
@@ -109,10 +114,11 @@ const routes: FastifyPluginAsync = async (app) => {
         targetType: "ConfigRevision",
         targetId: result.id,
         targetName: `v${result.version}`,
+        before: result.changes.map((change) => ({ scope: change.scope, key: change.key, value: change.oldValue })),
         after: {
           scopes: result.scopes,
           effectiveAt: result.effectiveAt,
-          changes: result.changes.length,
+          values: result.changes.map((change) => ({ scope: change.scope, key: change.key, value: change.newValue })),
         },
       };
       return sendCreated(reply, result);
@@ -193,7 +199,12 @@ const routes: FastifyPluginAsync = async (app) => {
         targetType: "ConfigRevision",
         targetId: result.id,
         targetName: `v${result.version}`,
-        after: { scopes: result.scopes, effectiveAt: result.effectiveAt },
+        before: result.changes.map((change) => ({ scope: change.scope, key: change.key, value: change.oldValue })),
+        after: {
+          scopes: result.scopes,
+          effectiveAt: result.effectiveAt,
+          values: result.changes.map((change) => ({ scope: change.scope, key: change.key, value: change.newValue })),
+        },
       };
       return sendCreated(reply, result);
     },

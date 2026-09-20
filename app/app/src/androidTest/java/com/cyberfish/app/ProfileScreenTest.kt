@@ -10,6 +10,9 @@ import com.cyberfish.app.ui.screens.ProfileScreen
 import com.cyberfish.app.ui.theme.CyberFishTheme
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.SupportContent
+import com.cyberfish.app.network.CheckInOverview
+import com.cyberfish.app.network.UserAccount
+import com.cyberfish.app.network.UserSession
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -108,5 +111,45 @@ class ProfileScreenTest {
         composeRule.onNodeWithText("识别默认在设备本地完成。", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("返回").performClick()
         composeRule.onNodeWithText("模型运行时：LiteRT v3", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun checkInCardShowsTodayStatusAndOpensTheCheckInPage() {
+        var opened = false
+        val session = UserSession(
+            token = "test-token",
+            user = UserAccount("user-1", "angler", "钓友", null),
+        )
+        composeRule.activity.runOnUiThread {
+            composeRule.activity.setContent {
+                CyberFishTheme {
+                    ProfileScreen(
+                        records = emptyList(),
+                        favoriteSpots = emptySet(),
+                        userSession = session,
+                        checkInOverview = CheckInOverview(
+                            enabled = true,
+                            checkedInToday = false,
+                            currentStreak = 12,
+                            canCheckIn = true,
+                        ),
+                        supportContent = SupportContent(),
+                        onOpenFishingSpots = {},
+                        onOpenCheckIn = { opened = true },
+                        onExportRecords = {},
+                        onLogin = { _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onRegister = { _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onLogout = {},
+                        onSubmitFeedback = { _, _ -> ApiResult.HttpError(401, "未登录") },
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("连续 12 天 · 今日未签").assertIsDisplayed()
+        composeRule.onNodeWithText("立即签到").performClick()
+
+        assertTrue(opened)
     }
 }
