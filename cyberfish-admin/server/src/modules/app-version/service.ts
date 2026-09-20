@@ -34,7 +34,7 @@ async function resolveDownload(input: DownloadInput) {
     if (file.bizType !== 'APK') throw AppError.badRequest('文件类型不是 APK');
     return {
       downloadMode: AppDownloadMode.SERVER,
-      apkUrl: `/api/v1/files/${file.id}/download`,
+      apkUrl: file.url,
       apkSize: file.size,
       apkSha256: file.sha256.toLowerCase(),
       apkFileId: file.id,

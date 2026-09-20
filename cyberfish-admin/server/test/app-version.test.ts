@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,13 +8,16 @@ import { createAppVersionSchema } from '../src/modules/app-version/schema';
 const serverDir = process.cwd();
 const testDir = mkdtempSync(join(serverDir, 'prisma', 'cyberfish-app-version-'));
 const testDatabase = join(testDir, 'app-version.db');
+const testUploadDir = join(testDir, 'uploads');
 writeFileSync(testDatabase, '');
 const databasePath = `./${relative(join(serverDir, 'prisma'), testDatabase).replaceAll('\\', '/')}`;
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = `file:${databasePath}`;
+process.env.UPLOAD_DIR = testUploadDir;
 
 let prisma: any;
 let service: typeof import('../src/modules/app-version/service');
+let buildApp: typeof import('../src/app').buildApp;
 
 before(async () => {
   const prismaCli = join(serverDir, '..', 'node_modules/prisma/build/index.js');
@@ -25,6 +28,7 @@ before(async () => {
   });
   ({ prisma } = await import('../src/lib/prisma'));
   service = await import('../src/modules/app-version/service');
+  ({ buildApp } = await import('../src/app'));
 });
 
 after(async () => {
@@ -79,9 +83,23 @@ describe('app version download modes', () => {
     await service.doAction(server.id, { action: 'PUBLISH_ONLINE' });
     const serverCheck = await service.checkUpdate({ versionCode: 219, deviceId: 'server-device', platform: 'ANDROID', channel: 'official' });
     assert.equal(serverCheck.latest?.downloadMode, 'SERVER');
-    assert.equal(serverCheck.latest?.apkUrl, `/api/v1/files/${apk.id}/download`);
+    assert.equal(serverCheck.latest?.apkUrl, '/files/apk/server-release.apk');
     assert.equal(serverCheck.latest?.apkSize, 1234);
     assert.equal(serverCheck.latest?.sha256, 'b'.repeat(64));
+  });
+
+  it('serves hosted APK files without an admin or APP token', async () => {
+    const apkPath = join(testUploadDir, 'apk', 'public-release.apk');
+    mkdirSync(join(testUploadDir, 'apk'), { recursive: true });
+    writeFileSync(apkPath, 'signed-apk');
+    const app = await buildApp();
+    try {
+      const response = await app.inject({ method: 'GET', url: '/files/apk/public-release.apk' });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.body, 'signed-apk');
+    } finally {
+      await app.close();
+    }
   });
 
   it('clears mode-specific metadata when switching back to an external link', async () => {
