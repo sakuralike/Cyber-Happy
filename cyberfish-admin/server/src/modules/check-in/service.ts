@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { ZodError } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { AppError, ErrorCode } from '../../lib/errors';
 import { logger } from '../../lib/logger';
@@ -31,7 +32,14 @@ const DEFAULT_REWARD_CONFIG = {
   rewardMode: 'BADGE',
   cycleLength: CYCLE_LENGTH,
   cycleStrategy: 'LOOP',
-  rewards: [] as Array<{ day: number; type: string; name: string; iconKey: string; milestone: boolean }>,
+  rewards: [
+    { day: 1, type: 'STAMP', name: '初竿', iconKey: 'stamp_rod', milestone: false },
+    { day: 3, type: 'STAMP', name: '常客', iconKey: 'stamp_regular', milestone: false },
+    { day: 7, type: 'MEDAL', name: '铜钩钓士', iconKey: 'medal_bronze', milestone: true },
+    { day: 14, type: 'MEDAL', name: '银钩钓士', iconKey: 'medal_silver', milestone: true },
+    { day: 21, type: 'MEDAL', name: '金钩钓士', iconKey: 'medal_gold', milestone: true },
+    { day: 28, type: 'TITLE', name: '钓神出勤', iconKey: 'title_master', milestone: true },
+  ] as Array<{ day: number; type: string; name: string; iconKey: string; milestone: boolean }>,
 };
 
 const DEFAULT_RISK_CONFIG = {
@@ -47,6 +55,26 @@ export type CheckInRequestContext = {
   requestId?: string;
   now?: Date;
 };
+
+function checkInAuditErrorCode(error: unknown): number {
+  if (error instanceof AppError) return error.code;
+  if (error instanceof ZodError) return ErrorCode.VALIDATION;
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === 'FST_JWT_NO_AUTHORIZATION_IN_HEADER' || code === 'FST_JWT_AUTHORIZATION_TOKEN_EXPIRED') {
+    return ErrorCode.UNAUTHORIZED;
+  }
+  if (code === 'FST_ERR_VALIDATION') return ErrorCode.VALIDATION;
+  return ErrorCode.INTERNAL;
+}
+
+function checkInAuditReason(errorCode: number): string {
+  if (errorCode === ErrorCode.CHECKIN_DISABLED) return 'CHECKIN_DISABLED';
+  if (errorCode === ErrorCode.CHECKIN_OUT_OF_WINDOW) return 'OUT_OF_WINDOW';
+  if (errorCode === ErrorCode.CHECKIN_ALREADY_CHECKED_IN) return 'ALREADY_CHECKED_IN';
+  if (errorCode === ErrorCode.UNAUTHORIZED) return 'UNAUTHORIZED';
+  if (errorCode === ErrorCode.VALIDATION) return 'INVALID_REQUEST';
+  return 'CHECK_IN_FAILED';
+}
 
 type CheckInRecord = {
   id: string;
@@ -145,6 +173,32 @@ async function recordRisk(input: {
   } catch (error) {
     logger.warn({ err: error, reason: input.reason }, '[check-in] 风控记录写入失败');
   }
+}
+
+export async function recordCheckInHttpFailure(
+  context: CheckInRequestContext & { userId?: string; deviceId?: string },
+  error: unknown,
+): Promise<void> {
+  let auditReplayEnabled = DEFAULT_RISK_CONFIG.auditReplayEnabled;
+  try {
+    const configured = await checkInRiskConfig();
+    auditReplayEnabled = configured.auditReplayEnabled !== false;
+  } catch (configError) {
+    logger.warn({ err: configError }, '[check-in] 读取回放审计配置失败，使用默认开启');
+  }
+  if (!auditReplayEnabled) return;
+  const errorCode = checkInAuditErrorCode(error);
+  await recordRisk({
+    userId: context.userId,
+    deviceId: context.deviceId,
+    ip: context.ip,
+    reason: checkInAuditReason(errorCode),
+    metadata: {
+      errorCode,
+      userAgent: context.userAgent ?? '',
+      requestId: context.requestId ?? '',
+    },
+  });
 }
 
 async function enforceIpRateLimit(userId: string, body: CheckInBody, context: CheckInRequestContext) {
@@ -374,9 +428,17 @@ export async function checkIn(
 ) {
   const context = typeof requestContext === 'string' ? { ip: requestContext } : requestContext;
   const now = context.now ?? new Date();
-  const config = await readConfig();
-  const rewardConfig = { ...DEFAULT_REWARD_CONFIG, ...(await checkInRewardConfig()) };
-  const riskConfig = { ...DEFAULT_RISK_CONFIG, ...(await checkInRiskConfig()) };
+  let config: Awaited<ReturnType<typeof readConfig>>;
+  let rewardConfig: Record<string, unknown>;
+  let riskConfig = { ...DEFAULT_RISK_CONFIG };
+  try {
+    config = await readConfig();
+    rewardConfig = { ...DEFAULT_REWARD_CONFIG, ...(await checkInRewardConfig()) };
+    riskConfig = { ...DEFAULT_RISK_CONFIG, ...(await checkInRiskConfig()) };
+  } catch (error) {
+    await recordCheckInHttpFailure({ ...context, userId, deviceId: body.deviceId }, error);
+    throw error;
+  }
   const cycleLength = Number(rewardConfig.cycleLength) || CYCLE_LENGTH;
   await recordRisk({
     userId,
@@ -436,26 +498,8 @@ export async function checkIn(
       });
     }
   } catch (error) {
-    if (riskConfig.auditReplayEnabled && error instanceof AppError && error.code !== 42900) {
-      const reason = error.code === 40910
-        ? 'CHECKIN_DISABLED'
-        : error.code === 40911
-          ? 'OUT_OF_WINDOW'
-          : error.code === 40912
-            ? 'ALREADY_CHECKED_IN'
-            : 'CHECK_IN_FAILED';
-      await recordRisk({
-        userId,
-        deviceId: body.deviceId,
-        ip: context.ip,
-        reason,
-        metadata: {
-          errorCode: error.code,
-          userAgent: context.userAgent ?? '',
-          requestId: context.requestId ?? '',
-        },
-      });
-    }
+    if (riskConfig.auditReplayEnabled && (!(error instanceof AppError) || error.code !== ErrorCode.RATE_LIMITED))
+      await recordCheckInHttpFailure({ ...context, userId, deviceId: body.deviceId }, error);
     throw error;
   }
 }

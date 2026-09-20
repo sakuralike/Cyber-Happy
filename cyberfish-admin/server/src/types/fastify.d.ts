@@ -19,6 +19,7 @@ declare module 'fastify' {
   interface FastifyRequest {
     currentUser?: CurrentUser;
     currentAppUser?: CurrentAppUser;
+    checkInAuditHandled?: boolean;
     /** 业务 Handler 注入的审计补充信息 */
     auditExtra?: {
       module?: string;
