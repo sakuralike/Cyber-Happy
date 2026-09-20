@@ -49,6 +49,8 @@ const DEFAULT_RISK_CONFIG = {
   auditReplayEnabled: true,
 };
 
+const ipRateLimitQueues = new Map<string, Promise<void>>();
+
 export type CheckInRequestContext = {
   ip?: string;
   userAgent?: string;
@@ -201,9 +203,50 @@ export async function recordCheckInHttpFailure(
   });
 }
 
-async function enforceIpRateLimit(userId: string, body: CheckInBody, context: CheckInRequestContext) {
+async function withIpRateLimitLock<T>(ip: string, action: () => Promise<T>): Promise<T> {
+  const previous = ipRateLimitQueues.get(ip) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  ipRateLimitQueues.set(ip, queued);
+  await previous;
   try {
-    const configured = await checkInRiskConfig();
+    return await action();
+  } finally {
+    release();
+    if (ipRateLimitQueues.get(ip) === queued) ipRateLimitQueues.delete(ip);
+  }
+}
+
+async function recordAttemptAndEnforceIpRateLimit(
+  userId: string,
+  body: CheckInBody,
+  context: CheckInRequestContext,
+  riskConfig: Record<string, unknown>,
+) {
+  const attempt = async () => {
+    await recordRisk({
+      userId,
+      deviceId: body.deviceId,
+      ip: context.ip,
+      reason: 'CHECK_IN_ATTEMPT',
+      metadata: riskConfig.auditReplayEnabled
+        ? { userAgent: context.userAgent ?? '', requestId: context.requestId ?? '' }
+        : undefined,
+    });
+    if (!context.ip) return;
+    await enforceIpRateLimit(userId, body, context, riskConfig);
+  };
+  return context.ip ? withIpRateLimitLock(context.ip, attempt) : attempt();
+}
+
+async function enforceIpRateLimit(
+  userId: string,
+  body: CheckInBody,
+  context: CheckInRequestContext,
+  configured: Record<string, unknown>,
+) {
+  try {
     const config = { ...DEFAULT_RISK_CONFIG, ...configured };
     const now = Date.now();
     const recentFrom = new Date(now - 60_000);
@@ -440,17 +483,8 @@ export async function checkIn(
     throw error;
   }
   const cycleLength = Number(rewardConfig.cycleLength) || CYCLE_LENGTH;
-  await recordRisk({
-    userId,
-    deviceId: body.deviceId,
-    ip: context.ip,
-    reason: 'CHECK_IN_ATTEMPT',
-    metadata: riskConfig.auditReplayEnabled
-      ? { userAgent: context.userAgent ?? '', requestId: context.requestId ?? '' }
-      : undefined,
-  });
   try {
-    await enforceIpRateLimit(userId, body, context);
+    await recordAttemptAndEnforceIpRateLimit(userId, body, context, riskConfig);
     validateWindow(now, config);
     const today = localDateKey(now);
     const yesterday = shiftDateKey(today, -1);

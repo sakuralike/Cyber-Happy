@@ -296,7 +296,7 @@ after(async () => {
   });
 
   it('rate-limits repeated attempts from one IP', async () => {
-    const ip = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
+    const ip = '198.51.100.77';
     await service.checkIn(await createUser('ip-one'), { deviceId: 'ip-device-one' }, { ip });
     await service.checkIn(await createUser('ip-two'), { deviceId: 'ip-device-two' }, { ip });
 
@@ -320,7 +320,7 @@ after(async () => {
   });
 
   it('enforces the per-IP limit under concurrent requests', async () => {
-    const ip = `203.0.113.${Math.floor(Math.random() * 200) + 1}`;
+    const ip = '192.0.2.77';
     const userIds = await Promise.all([
       createUser('concurrent-ip-one'),
       createUser('concurrent-ip-two'),
