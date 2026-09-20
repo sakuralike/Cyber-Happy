@@ -13,7 +13,11 @@ const routes: FastifyPluginAsync = async (app) => {
     sendOk(reply, await service.checkIn(
       request.currentAppUser!.id,
       parseOrThrow(checkInBodySchema, request.body ?? {}),
-      request.ip,
+      {
+        ip: request.ip,
+        userAgent: String(request.headers['user-agent'] ?? '').slice(0, 500),
+        requestId: request.id,
+      },
     )),
   );
 
@@ -22,12 +26,12 @@ const routes: FastifyPluginAsync = async (app) => {
     return sendPage(reply, result.list, result.total, result.page, result.pageSize);
   });
 
-  app.get('/admin/check-in/risk-events', { onRequest: [app.authenticate, app.requirePermission('siteConfig:read')] }, async (request, reply) => {
+  app.get('/admin/check-in/risk-events', { onRequest: [app.authenticate, app.requirePermission('checkInRisk:read')] }, async (request, reply) => {
     const result = await service.riskEvents(parseOrThrow(riskEventQuerySchema, request.query));
     return sendPage(reply, result.list, result.total, result.page, result.pageSize);
   });
 
-  app.get('/admin/check-in/stats', { onRequest: [app.authenticate, app.requirePermission('siteConfig:read')] }, async (request, reply) =>
+  app.get('/admin/check-in/stats', { onRequest: [app.authenticate, app.requirePermission('checkInRisk:read')] }, async (request, reply) =>
     sendOk(reply, await service.stats(parseOrThrow(checkInStatsQuerySchema, request.query))),
   );
 };

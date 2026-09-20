@@ -7,6 +7,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.cyberfish.app.network.CheckInHistory
 import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.CheckInRecord
+import com.cyberfish.app.network.CheckInReward
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
@@ -74,6 +75,7 @@ class CheckInCacheStore(private val context: Context) {
 
 private fun encodeOverview(overview: CheckInOverview, savedAtMillis: Long): String = JSONObject()
     .put("savedAtMillis", savedAtMillis)
+    .put("activityTitle", overview.activityTitle)
     .put("enabled", overview.enabled)
     .put("checkedInToday", overview.checkedInToday)
     .put("currentStreak", overview.currentStreak)
@@ -82,6 +84,16 @@ private fun encodeOverview(overview: CheckInOverview, savedAtMillis: Long): Stri
     .put("cycleLength", overview.cycleLength)
     .put("checkedDates", JSONArray().apply { overview.checkedDates.sorted().forEach(::put) })
     .put("canCheckIn", overview.canCheckIn)
+    .put("earnedRewards", JSONArray().apply {
+        overview.earnedRewards.forEach { reward ->
+            put(JSONObject()
+                .put("day", reward.day)
+                .put("type", reward.type)
+                .put("name", reward.name)
+                .put("iconKey", reward.iconKey)
+                .put("milestone", reward.milestone))
+        }
+    })
     .apply {
         overview.windowLabel?.let { put("windowLabel", it) }
         overview.notice?.let { put("notice", it) }
@@ -96,7 +108,8 @@ private fun decodeOverview(raw: String): CachedCheckInValue<CheckInOverview>? = 
     }
     CachedCheckInValue(
         value = CheckInOverview(
-            enabled = json.optBoolean("enabled", true),
+            activityTitle = json.optString("activityTitle", "每日签到"),
+            enabled = json.optBoolean("enabled", false),
             checkedInToday = json.optBoolean("checkedInToday", false),
             currentStreak = json.optInt("currentStreak", 0).coerceAtLeast(0),
             longestStreak = json.optInt("longestStreak", 0).coerceAtLeast(0),
@@ -106,6 +119,15 @@ private fun decodeOverview(raw: String): CachedCheckInValue<CheckInOverview>? = 
             canCheckIn = json.optBoolean("canCheckIn", true),
             windowLabel = json.optNullableString("windowLabel"),
             notice = json.optNullableString("notice"),
+            earnedRewards = buildList {
+                val values = json.optJSONArray("earnedRewards") ?: return@buildList
+                for (index in 0 until values.length()) {
+                    val item = values.optJSONObject(index) ?: continue
+                    val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
+                    val iconKey = item.optString("iconKey").takeIf { it.isNotBlank() } ?: continue
+                    add(CheckInReward(item.optInt("day"), item.optString("type", "STAMP"), name, iconKey, item.optBoolean("milestone")))
+                }
+            },
         ),
         savedAtMillis = json.optLong("savedAtMillis", 0L),
     )

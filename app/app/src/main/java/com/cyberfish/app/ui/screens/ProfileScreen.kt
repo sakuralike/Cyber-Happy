@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.cyberfish.app.BuildConfig
 import com.cyberfish.app.data.model.FishRecord
 import com.cyberfish.app.network.ApiResult
+import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.UserSession
 import com.cyberfish.app.ui.components.ScreenTitle
@@ -61,6 +62,7 @@ fun ProfileScreen(
     records: List<FishRecord>,
     favoriteSpots: Set<String>,
     userSession: UserSession?,
+    checkInOverview: CheckInOverview? = null,
     supportContent: SupportContent,
     onOpenFishingSpots: () -> Unit,
     onOpenCheckIn: () -> Unit = {},
@@ -89,6 +91,40 @@ fun ProfileScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         item { ScreenTitle("我的", "账户与设备") }
+        item {
+            val checkInStatus = when {
+                account == null -> "登录后参与每日签到"
+                checkInOverview == null -> "查看今日签到状态"
+                !checkInOverview.enabled -> "签到活动已暂停"
+                checkInOverview.checkedInToday -> "今日已签到 · 连续 ${checkInOverview.currentStreak} 天"
+                else -> "连续 ${checkInOverview.currentStreak} 天 · 今日未签"
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).clickable(onClick = onOpenCheckIn),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                shape = RoundedCornerShape(20.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("每日签到", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(checkInStatus, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyMedium)
+                        checkInOverview?.earnedRewards?.lastOrNull { it.type == "TITLE" }?.let { title ->
+                            Text("称号 · ${title.name}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    Text(
+                        if (account != null && checkInOverview?.checkedInToday == false && checkInOverview.enabled) "立即签到" else "查看",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
         item {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -150,7 +186,6 @@ fun ProfileScreen(
                 shape = RoundedCornerShape(20.dp),
             ) {
                 val entries = listOf(
-                    "每日签到" to ProfileAction.CheckIn,
                     "数据导出" to ProfileAction.Export,
                     "钓场收藏" to ProfileAction.Favorites,
                     "反馈与帮助" to ProfileAction.Feedback,
