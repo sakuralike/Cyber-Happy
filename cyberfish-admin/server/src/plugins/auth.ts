@@ -39,7 +39,10 @@ const PUBLIC_PATHS = [
 
 function isPublic(url: string): boolean {
   const path = url.split('?')[0] ?? url;
-  return PUBLIC_PATHS.includes(path) || path.startsWith('/api/v1/public/') || path.startsWith('/api/v1/users/');
+  return PUBLIC_PATHS.includes(path)
+    || path.startsWith('/api/v1/public/')
+    || path.startsWith('/api/v1/users/')
+    || path.startsWith('/files/apk/');
 }
 
 const authPlugin: FastifyPluginAsync = async (app) => {
