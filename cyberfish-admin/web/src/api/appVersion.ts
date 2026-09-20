@@ -1,5 +1,5 @@
 import { http } from './client';
-import type { AppVersion, PageData, ListParams, UpdateType, Platform } from './types';
+import type { AppDownloadMode, AppVersion, PageData, ListParams, UpdateType, Platform } from './types';
 
 export async function listAppVersions(params: ListParams): Promise<PageData<AppVersion>> {
   return http.get('/app-versions', { params }) as Promise<PageData<AppVersion>>;
@@ -17,8 +17,11 @@ export interface CreateAppVersionInput {
   updateType?: UpdateType;
   releaseNotes?: string;
   minSupportedCode?: number;
+  downloadMode: AppDownloadMode;
   apkUrl?: string | null;
-  apkFileId?: string;
+  apkSize?: number | null;
+  apkSha256?: string | null;
+  apkFileId?: string | null;
 }
 
 export async function createAppVersion(input: CreateAppVersionInput): Promise<AppVersion> {

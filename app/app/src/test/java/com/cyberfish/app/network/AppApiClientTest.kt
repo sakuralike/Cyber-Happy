@@ -32,7 +32,7 @@ class AppApiClientTest {
     fun `version check sends app token and parses update response`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"code":0,"message":"ok","data":{"hasUpdate":true,"updateType":"OPTIONAL","latest":{"versionName":"1.2.0","versionCode":12,"releaseNotes":"修复识别稳定性"}}}""",
+                """{"code":0,"message":"ok","data":{"hasUpdate":true,"updateType":"OPTIONAL","latest":{"versionName":"1.2.0","versionCode":12,"releaseNotes":"修复识别稳定性","downloadMode":"SERVER","apkUrl":"https://download.example/app.apk","apkSize":1234,"sha256":"${"a".repeat(64)}"}}}""",
             ),
         )
 
@@ -42,11 +42,33 @@ class AppApiClientTest {
         assertTrue(success.value.hasUpdate)
         assertEquals("1.2.0", success.value.versionName)
         assertEquals(12, success.value.versionCode)
+        assertEquals(AppDownloadMode.SERVER, success.value.downloadMode)
+        assertEquals("https://download.example/app.apk", success.value.apkUrl)
+        assertEquals("a".repeat(64), success.value.apkSha256)
         val request = server.takeRequest()
         assertEquals("/api/v1/app-versions/check", request.requestUrl?.encodedPath)
         assertEquals("test-app-token", request.getHeader("X-App-Token"))
         assertEquals("ANDROID", request.requestUrl?.queryParameter("platform"))
         assertEquals("device-123", request.requestUrl?.queryParameter("deviceId"))
+    }
+
+    @Test
+    fun `legacy update without mode falls back to external unless a checksum is present`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"hasUpdate":true,"latest":{"versionName":"1.2.0","versionCode":12,"apkUrl":"https://disk.example/app"}}}""",
+            ),
+        )
+        val external = (client().checkForUpdate() as ApiResult.Success).value
+        assertEquals(AppDownloadMode.EXTERNAL, external.downloadMode)
+
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"hasUpdate":true,"latest":{"versionName":"1.2.1","versionCode":13,"apkUrl":"https://download.example/app.apk","sha256":"${"b".repeat(64)}"}}}""",
+            ),
+        )
+        val serverUpdate = (client().checkForUpdate() as ApiResult.Success).value
+        assertEquals(AppDownloadMode.SERVER, serverUpdate.downloadMode)
     }
 
     @Test

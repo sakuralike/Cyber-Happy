@@ -11,6 +11,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:check-in": "tsx --test test/check-in.test.ts",
+    "test:app-version": "tsx --test test/app-version.test.ts",
     "db:push": "prisma db push --skip-generate",
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts",

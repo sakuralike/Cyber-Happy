@@ -15,6 +15,7 @@ import {
   Tag,
   Typography,
   Tooltip,
+  Segmented,
 } from 'antd';
 import {
   PlusOutlined,
@@ -25,7 +26,7 @@ import {
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
 import * as appVersionApi from '../api/appVersion';
-import type { AppVersion, ReleaseStatus } from '../api/types';
+import type { AppDownloadMode, AppVersion, ReleaseStatus } from '../api/types';
 import { EnumTag } from '../components/EnumTag';
 import {
   RELEASE_STATUS_MAP,
@@ -36,6 +37,7 @@ import {
 import { formatDateTime, formatSize, formatNumber } from '../utils/format';
 import { notifyError } from '../api/client';
 import { useAuth } from '../store/auth';
+import { FileUpload } from '../components/FileUpload';
 
 export function AppVersionPage() {
   const { hasPerm } = useAuth();
@@ -45,6 +47,8 @@ export function AppVersionPage() {
   const [editing, setEditing] = useState<AppVersion | null>(null);
   const [grayTarget, setGrayTarget] = useState<AppVersion | null>(null);
   const [form] = Form.useForm();
+  const downloadMode = Form.useWatch('downloadMode', form) as AppDownloadMode | undefined;
+  const apkFileId = Form.useWatch('apkFileId', form) as string | undefined;
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['appVersions', params],
@@ -96,7 +100,7 @@ export function AppVersionPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ platform: 'ANDROID', channel: 'official', updateType: 'OPTIONAL' });
+    form.setFieldsValue({ platform: 'ANDROID', channel: 'official', updateType: 'OPTIONAL', downloadMode: 'EXTERNAL' });
     setModalOpen(true);
   };
   const openEdit = (row: AppVersion) => {
@@ -110,14 +114,20 @@ export function AppVersionPage() {
       updateType: row.updateType,
       releaseNotes: row.releaseNotes,
       minSupportedCode: row.minSupportedCode ?? undefined,
-      apkUrl: row.apkUrl ?? undefined,
+      downloadMode: row.downloadMode ?? (row.apkSha256 ? 'SERVER' : 'EXTERNAL'),
+      apkUrl: row.apkUrl?.startsWith('/') ? `${window.location.origin}${row.apkUrl}` : row.apkUrl ?? undefined,
+      apkSize: row.apkSize ?? undefined,
+      apkSha256: row.apkSha256 ?? undefined,
       apkFileId: row.apkFileId ?? undefined,
     });
     setModalOpen(true);
   };
 
   const submit = async () => {
-    const v = await form.validateFields();
+    const values = await form.validateFields();
+    const v = values.downloadMode === 'EXTERNAL'
+      ? { ...values, apkSize: null, apkSha256: null, apkFileId: null }
+      : { ...values, apkUrl: null, apkSize: null, apkSha256: null };
     if (editing) {
       const { versionCode: _ignore, ...rest } = v;
       updateMut.mutate({ id: editing.id, v: rest });
@@ -187,6 +197,12 @@ export function AppVersionPage() {
         ),
       },
       { title: '安装包', dataIndex: 'apkSize', width: 110, render: (v) => (v ? formatSize(v) : '-') },
+      {
+        title: '下载方式',
+        dataIndex: 'downloadMode',
+        width: 110,
+        render: (v: AppDownloadMode) => <Tag color={v === 'SERVER' ? 'green' : 'blue'}>{v === 'SERVER' ? '服务器' : '网盘'}</Tag>,
+      },
       { title: '下载量', dataIndex: 'downloadCount', width: 90, render: (v) => formatNumber(v) },
       {
         title: '更新说明',
@@ -326,12 +342,51 @@ export function AppVersionPage() {
           <Form.Item name="releaseNotes" label="更新说明">
             <Input.TextArea rows={3} maxLength={5000} />
           </Form.Item>
-          <Form.Item name="apkUrl" label="网盘下载地址" rules={[{ required: true, message: '请输入网盘下载地址' }, { type: 'url', message: '请输入有效的 HTTP/HTTPS 地址' }]}>
-            <Input placeholder="https://网盘.example.com/app" />
+          <Form.Item name="downloadMode" label="下载方式" rules={[{ required: true }]}>
+            <Segmented
+              block
+              options={[
+                { label: '网盘外部链接', value: 'EXTERNAL' },
+                { label: '服务器上传 APK', value: 'SERVER' },
+              ]}
+              onChange={(value) => {
+                form.setFieldValue('apkFileId', null);
+                form.setFieldValue('apkUrl', null);
+                if (value === 'EXTERNAL') {
+                  form.setFieldValue('apkSha256', null);
+                  form.setFieldValue('apkSize', null);
+                }
+              }}
+            />
           </Form.Item>
-          <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 8 }}>
-            APP 更新时只会检测版本并跳转此地址，不会把 APK 下载到服务器或 APP 内部。
-          </Typography.Text>
+          {downloadMode === 'SERVER' ? (
+            <>
+              <Form.Item name="apkFileId" label="APK 文件" rules={[{ required: true, message: '请上传 APK' }]}>
+                <FileUpload bizType="APK" accept=".apk" />
+              </Form.Item>
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 8 }}>
+                上传完成后自动生成更新地址、文件大小和 SHA-256；APP 将校验后打开系统安装器。
+              </Typography.Text>
+              {apkFileId && (
+                <Typography.Text copyable type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  更新地址：{`${window.location.origin}/api/v1/files/${apkFileId}/download`}
+                </Typography.Text>
+              )}
+            </>
+          ) : (
+            <>
+              <Form.Item
+                name="apkUrl"
+                label="网盘外部链接"
+                rules={[{ required: true, message: '请输入网盘外部链接' }, { type: 'url', message: '请输入有效的 HTTP/HTTPS 地址' }]}
+              >
+                <Input placeholder="https://网盘.example.com/app" />
+              </Form.Item>
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 8 }}>
+                APP 将提示打开网盘，并跳转系统浏览器。
+              </Typography.Text>
+            </>
+          )}
           {editing?.apkUrl && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               当前下载地址：{editing.apkUrl}
