@@ -70,6 +70,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
 import java.time.Clock
 import java.time.Duration
@@ -102,6 +104,8 @@ fun CheckInScreen(
     submitCheckIn: suspend () -> ApiResult<CheckInActionResult>,
     loadHistory: suspend (Int, String?) -> ApiResult<CheckInHistory>,
     forceRefreshOverview: (suspend () -> ApiResult<CheckInOverview>)? = null,
+    onMilestoneShown: (CheckInReward) -> Unit = {},
+    onCheckInLoadFailure: (String) -> Unit = {},
     clock: Clock = Clock.system(CHECK_IN_ZONE),
 ) {
     var overview by remember { mutableStateOf<CheckInOverview?>(null) }
@@ -112,13 +116,14 @@ fun CheckInScreen(
     var submitting by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var historyLoading by remember { mutableStateOf(false) }
-    var today by remember(clock) { mutableStateOf(LocalDate.now(clock)) }
-    var calendarMonth by remember(clock) { mutableStateOf(YearMonth.from(today)) }
+    var today by remember { mutableStateOf(LocalDate.now(clock)) }
+    var calendarMonth by remember { mutableStateOf(YearMonth.from(today)) }
     var calendarDates by remember { mutableStateOf<Set<String>>(emptySet()) }
     var rewards by remember { mutableStateOf<List<CheckInReward>>(emptyList()) }
     var milestoneReward by remember { mutableStateOf<CheckInReward?>(null) }
     var milestoneVisible by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val overviewRefreshMutex = remember { Mutex() }
     val currentMonth = YearMonth.from(today)
     val lifecycleOwner = LocalLifecycleOwner.current
     val hapticFeedback = LocalHapticFeedback.current
@@ -141,11 +146,14 @@ fun CheckInScreen(
         when (result) {
             is ApiResult.Success -> {
                 overview = result.value
-                if (calendarMonth == currentMonth) calendarDates = result.value.checkedDates
+                if (calendarMonth == YearMonth.from(today)) calendarDates = result.value.checkedDates
                 onOverviewChanged(result.value)
                 errorMessage = if (result.cacheFallback) "网络不可用，当前显示最近同步的签到数据" else null
             }
-            else -> errorMessage = result.checkInMessage()
+            else -> {
+                errorMessage = result.checkInMessage()
+                onCheckInLoadFailure(result.checkInFailureCode())
+            }
         }
     }
 
@@ -161,18 +169,25 @@ fun CheckInScreen(
                 if (result.cacheFallback) errorMessage = "网络不可用，当前显示最近同步的签到记录"
                 else if (page == 1) errorMessage = null
             }
-            else -> errorMessage = result.checkInMessage()
+            else -> {
+                errorMessage = result.checkInMessage()
+                onCheckInLoadFailure(result.checkInFailureCode())
+            }
         }
     }
 
-    fun refreshOverview(forceRefresh: Boolean = true) {
-        if (userSession == null) return
-        scope.launch {
+    suspend fun refreshOverviewNow(forceRefresh: Boolean) {
+        overviewRefreshMutex.withLock {
             loading = true
             errorMessage = null
             applyOverviewResult(requestOverview(forceRefresh))
             loading = false
         }
+    }
+
+    fun refreshOverview(forceRefresh: Boolean = true) {
+        if (userSession == null) return
+        scope.launch { refreshOverviewNow(forceRefresh) }
     }
 
     fun refreshHistory(page: Int = 1, month: String? = null) {
@@ -194,30 +209,20 @@ fun CheckInScreen(
         milestoneReward = null
         errorMessage = null
         if (userSession != null) {
-            loading = true
-            applyOverviewResult(requestOverview(forceRefresh = true))
-            loading = false
+            refreshOverviewNow(forceRefresh = true)
         }
     }
 
     LaunchedEffect(userSession?.token) {
         if (userSession == null) return@LaunchedEffect
         while (true) {
-            delay(CHECK_IN_CONFIG_CACHE_TTL_MILLIS)
+            delay(minOf(CHECK_IN_CONFIG_CACHE_TTL_MILLIS, millisUntilNextCheckInDay(clock)))
             updateCurrentDate()
-            applyOverviewResult(requestOverview(forceRefresh = true))
+            refreshOverviewNow(forceRefresh = true)
         }
     }
 
-    LaunchedEffect(userSession?.token, clock) {
-        if (userSession == null) return@LaunchedEffect
-        while (true) {
-            delay(millisUntilNextCheckInDay(clock))
-            if (updateCurrentDate()) applyOverviewResult(requestOverview(forceRefresh = true))
-        }
-    }
-
-    DisposableEffect(lifecycleOwner, userSession?.token, clock) {
+    DisposableEffect(lifecycleOwner, userSession?.token) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && userSession != null && updateCurrentDate()) {
                 refreshOverview(forceRefresh = true)
@@ -232,6 +237,7 @@ fun CheckInScreen(
         if (milestoneReward != null) {
             yield()
             milestoneVisible = true
+            milestoneReward?.let(onMilestoneShown)
         }
     }
 
@@ -247,7 +253,10 @@ fun CheckInScreen(
                 calendarDates = result.value.records.map { it.date }.toSet()
                 if (result.cacheFallback) errorMessage = "网络不可用，当前显示最近同步的签到记录"
             }
-            else -> errorMessage = result.checkInMessage()
+            else -> {
+                errorMessage = result.checkInMessage()
+                onCheckInLoadFailure(result.checkInFailureCode())
+            }
         }
         historyLoading = false
     }
@@ -310,6 +319,7 @@ fun CheckInScreen(
                     onNextMonth = { if (calendarMonth < currentMonth) calendarMonth = calendarMonth.plusMonths(1) },
                     loading = loading,
                     submitting = submitting,
+                    canCheckInCurrentMonth = calendarMonth == currentMonth,
                     onCheckIn = {
                         if (!submitting) {
                             scope.launch {
@@ -394,6 +404,7 @@ private fun CheckInCalendarContent(
     onNextMonth: () -> Unit,
     loading: Boolean,
     submitting: Boolean,
+    canCheckInCurrentMonth: Boolean,
     onCheckIn: () -> Unit,
     rewards: List<CheckInReward>,
 ) {
@@ -489,7 +500,7 @@ private fun CheckInCalendarContent(
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Button(
                     onClick = onCheckIn,
-                    enabled = overview != null && overview.enabled && overview.canCheckIn && !overview.checkedInToday && !submitting,
+                    enabled = canCheckInCurrentMonth && overview != null && overview.enabled && overview.canCheckIn && !overview.checkedInToday && !submitting,
                     modifier = Modifier.fillMaxWidth().height(54.dp).testTag("check-in-button"),
                     shape = RoundedCornerShape(14.dp),
                 ) {
@@ -500,6 +511,7 @@ private fun CheckInCalendarContent(
                         when {
                             loading -> "加载中"
                             overview == null -> "暂无法获取签到状态"
+                            !canCheckInCurrentMonth -> "仅可在当前月份签到"
                             !overview.enabled -> "签到活动已暂停"
                             overview.checkedInToday -> "今日已签到，明天见"
                             !overview.canCheckIn -> overview.windowLabel ?: "当前不在签到时间"
@@ -621,5 +633,13 @@ private fun <T> ApiResult<T>.checkInMessage(): String = when (this) {
     }
     is ApiResult.NetworkError -> "网络不可用，请检查网络后重试"
     is ApiResult.ParseError -> message.ifBlank { "签到数据解析失败" }
+    is ApiResult.Success -> ""
+}
+
+private fun <T> ApiResult<T>.checkInFailureCode(): String = when (this) {
+    ApiResult.NotConfigured -> "NOT_CONFIGURED"
+    is ApiResult.HttpError -> (errorCode ?: statusCode).toString()
+    is ApiResult.NetworkError -> "NETWORK"
+    is ApiResult.ParseError -> "PARSE"
     is ApiResult.Success -> ""
 }

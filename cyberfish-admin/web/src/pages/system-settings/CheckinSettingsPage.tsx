@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Button,
   Card,
+  Alert,
   Form,
   Input,
   InputNumber,
@@ -18,7 +19,10 @@ import {
 import dayjs from "dayjs";
 import {
   CloudUploadOutlined,
+  CrownOutlined,
+  TagOutlined,
   SaveOutlined,
+  TrophyOutlined,
   UndoOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -40,11 +44,21 @@ import {
 
 type Values = Record<string, any>;
 const SCOPES = ["CHECKIN_BASIC", "CHECKIN_REWARD", "CHECKIN_RISK"] as const;
-const ICON_OPTIONS = [
+const ICON_KEYS = [
   "stamp_rod", "stamp_regular", "stamp_expert", "stamp_master",
   "medal_bronze", "medal_silver", "medal_gold", "medal_platinum",
   "title_beginner", "title_regular", "title_master", "title_fishing_god",
-].map((value) => ({ value, label: value }));
+];
+
+const ICON_OPTIONS = ICON_KEYS.map((value) => ({
+  value,
+  label: (
+    <Space size={6}>
+      {value.startsWith("medal_") ? <TrophyOutlined /> : value.startsWith("title_") ? <CrownOutlined /> : <TagOutlined />}
+      <span>{value}</span>
+    </Space>
+  ),
+}));
 
 function toTimePickerValue(value: unknown) {
   if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return value;
@@ -52,11 +66,66 @@ function toTimePickerValue(value: unknown) {
   return dayjs().hour(hour).minute(minute).second(0).millisecond(0);
 }
 
-function applySettingFieldError(error: unknown, form: any): void {
-  const details = (error as { details?: { field?: string | Array<string | number> } })?.details;
-  const field = details?.field;
-  if (!field) return;
-  form.setFields([{ name: Array.isArray(field) ? field : field.split("."), errors: [error instanceof Error ? error.message : "配置校验失败"] }]);
+function formPath(value: string | Array<string | number>): Array<string | number> {
+  return Array.isArray(value) ? value : value.split(".").filter(Boolean);
+}
+
+function applySettingFieldError(error: unknown, form: any, values?: Values): void {
+  const details = (error as {
+    details?: {
+      field?: string | Array<string | number>;
+      issues?: Array<{ path?: string | Array<string | number>; message?: string }>;
+    };
+  })?.details;
+  const fallbackMessage = error instanceof Error ? error.message : "配置校验失败";
+  const fields: Array<{ name: Array<string | number>; errors: string[] }> = [];
+
+  if (details?.field) {
+    fields.push({ name: formPath(details.field), errors: [fallbackMessage] });
+  }
+  for (const issue of details?.issues ?? []) {
+    if (!issue.path) continue;
+    const path = formPath(issue.path);
+    if (path[0] === "items" && typeof path[1] === "number" && values) {
+      const key = Object.keys(values)[path[1]];
+      if (key) fields.push({ name: [key], errors: [issue.message ?? fallbackMessage] });
+    } else if (typeof path[0] === "number" && Array.isArray(values?.rewards)) {
+      fields.push({ name: ["rewards", ...path], errors: [issue.message ?? fallbackMessage] });
+    } else if (path.length > 0) {
+      fields.push({ name: path, errors: [issue.message ?? fallbackMessage] });
+    }
+  }
+  if (fields.length > 0) form.setFields(fields);
+}
+
+function mergedSettingsValues(data: { values: Values; drafts: Values }): Values {
+  const merged = { ...data.values, ...data.drafts };
+  if (Array.isArray(merged.rewards)) {
+    merged.rewards = [...merged.rewards].sort((left, right) => Number(left?.day ?? 0) - Number(right?.day ?? 0));
+  }
+  return merged;
+}
+
+function shanghaiDateKey(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftDateKey(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return shifted.toISOString().slice(0, 10);
+}
+
+function shanghaiBoundary(date: string, endOfDay: boolean): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
+  return `${date}T${endOfDay ? "23:59:59.999" : "00:00:00"}+08:00`;
 }
 
 export function CheckinSettingsPage() {
@@ -74,22 +143,29 @@ export function CheckinSettingsPage() {
   const reward = useQuery({ queryKey: ["admin", "settings", "CHECKIN_REWARD"], queryFn: () => getSettings("CHECKIN_REWARD") });
   const risk = useQuery({ queryKey: ["admin", "settings", "CHECKIN_RISK"], queryFn: () => getSettings("CHECKIN_RISK") });
   const [riskReason, setRiskReason] = useState<string>();
-  const [riskFrom, setRiskFrom] = useState(() => dayjs().subtract(7, "day").format("YYYY-MM-DD"));
-  const [riskTo, setRiskTo] = useState(() => dayjs().format("YYYY-MM-DD"));
+  const [riskTo, setRiskTo] = useState(() => shanghaiDateKey());
+  const [riskFrom, setRiskFrom] = useState(() => shiftDateKey(shanghaiDateKey(), -6));
+  const riskRangeInvalid = Boolean(riskFrom && riskTo && riskFrom > riskTo);
   const riskEvents = useQuery({
     queryKey: ["admin", "check-in", "risk-events", riskReason, riskFrom, riskTo],
-    queryFn: () => listCheckInRiskEvents({ page: 1, pageSize: 50, reason: riskReason, from: riskFrom, to: `${riskTo}T23:59:59+08:00` }),
-    enabled: canViewRisk,
+    queryFn: () => listCheckInRiskEvents({
+      page: 1,
+      pageSize: 50,
+      ...(riskReason ? { reason: riskReason } : {}),
+      ...(shanghaiBoundary(riskFrom, false) ? { from: shanghaiBoundary(riskFrom, false) } : {}),
+      ...(shanghaiBoundary(riskTo, true) ? { to: shanghaiBoundary(riskTo, true) } : {}),
+    }),
+    enabled: canViewRisk && !riskRangeInvalid,
   });
   const checkInStats = useQuery({
-    queryKey: ["admin", "check-in", "stats"],
-    queryFn: () => getCheckInStats(),
-    enabled: canViewRisk,
+    queryKey: ["admin", "check-in", "stats", riskFrom, riskTo],
+    queryFn: () => getCheckInStats({ from: riskFrom, to: riskTo }),
+    enabled: canViewRisk && !riskRangeInvalid,
   });
 
-  useEffect(() => { if (basic.data) basicForm.setFieldsValue(basic.data.values); }, [basic.data, basicForm]);
-  useEffect(() => { if (reward.data) rewardForm.setFieldsValue(reward.data.values); }, [reward.data, rewardForm]);
-  useEffect(() => { if (risk.data) riskForm.setFieldsValue(risk.data.values); }, [risk.data, riskForm]);
+  useEffect(() => { if (basic.data) basicForm.setFieldsValue(mergedSettingsValues(basic.data)); }, [basic.data, basicForm]);
+  useEffect(() => { if (reward.data) rewardForm.setFieldsValue(mergedSettingsValues(reward.data)); }, [reward.data, rewardForm]);
+  useEffect(() => { if (risk.data) riskForm.setFieldsValue(mergedSettingsValues(risk.data)); }, [risk.data, riskForm]);
 
   const refresh = () => Promise.all([
     ...SCOPES.map((scope) => queryClient.invalidateQueries({ queryKey: ["admin", "settings", scope] })),
@@ -100,11 +176,16 @@ export function CheckinSettingsPage() {
   ]);
 
   const saveMutation = useMutation({
-    mutationFn: ({ scope, values }: { scope: typeof SCOPES[number]; values: Values }) => saveSettings(scope, values),
+    mutationFn: ({ scope, values }: { scope: typeof SCOPES[number]; values: Values }) => saveSettings(
+      scope,
+      scope === "CHECKIN_REWARD" && Array.isArray(values.rewards)
+        ? { ...values, rewards: [...values.rewards].sort((left, right) => Number(left?.day ?? 0) - Number(right?.day ?? 0)) }
+        : values,
+    ),
     onSuccess: async () => { message.success("签到配置草稿已保存"); await refresh(); },
     onError: (error, variables) => {
       const form = variables.scope === "CHECKIN_BASIC" ? basicForm : variables.scope === "CHECKIN_REWARD" ? rewardForm : riskForm;
-      applySettingFieldError(error, form);
+      applySettingFieldError(error, form, variables.values);
       notifyError(error);
     },
   });
@@ -119,8 +200,8 @@ export function CheckinSettingsPage() {
   const tabs = useMemo(() => [
     { key: "basic", label: "基础规则", children: <BasicTab form={basicForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_BASIC", values })} /> },
     { key: "reward", label: "奖励规则", children: <RewardTab form={rewardForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_REWARD", values })} /> },
-    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} canViewRisk={canViewRisk} riskEvents={riskEvents.data?.list ?? []} riskReason={riskReason} setRiskReason={setRiskReason} riskFrom={riskFrom} setRiskFrom={setRiskFrom} riskTo={riskTo} setRiskTo={setRiskTo} stats={checkInStats.data} statsLoading={checkInStats.isLoading} /> },
-  ], [basicForm, rewardForm, riskForm, canWrite, canViewRisk, saveMutation, riskEvents.data?.list, checkInStats.data, checkInStats.isLoading]);
+    { key: "risk", label: "风控与异常", children: <RiskTab form={riskForm} disabled={!canWrite} onSubmit={(values) => saveMutation.mutate({ scope: "CHECKIN_RISK", values })} canViewRisk={canViewRisk} riskEvents={riskEvents.data?.list ?? []} riskReason={riskReason} setRiskReason={setRiskReason} riskFrom={riskFrom} setRiskFrom={setRiskFrom} riskTo={riskTo} setRiskTo={setRiskTo} riskRangeInvalid={riskRangeInvalid} riskEventsLoading={riskEvents.isLoading || riskEvents.isFetching} riskEventsError={riskEvents.error} stats={checkInStats.data} statsLoading={checkInStats.isLoading || checkInStats.isFetching} statsError={checkInStats.error} /> },
+  ], [basicForm, rewardForm, riskForm, canWrite, canViewRisk, saveMutation, riskEvents.data?.list, riskEvents.isLoading, riskEvents.isFetching, riskEvents.error, checkInStats.data, checkInStats.isLoading, checkInStats.isFetching, checkInStats.error, riskRangeInvalid, riskFrom, riskTo]);
 
   return (
     <div className="settings-page">
@@ -161,17 +242,21 @@ function RewardTab({ form, disabled, onSubmit }: { form: any; disabled: boolean;
   </Form>;
 }
 
-function RiskTab({ form, disabled, onSubmit, canViewRisk, riskEvents, riskReason, setRiskReason, riskFrom, setRiskFrom, riskTo, setRiskTo, stats, statsLoading }: { form: any; disabled: boolean; onSubmit: (values: Values) => void; canViewRisk: boolean; riskEvents: Array<{ id: string; createdAt: string; reason: string; username: string | null; deviceId: string | null; ip: string | null; metadata?: Record<string, unknown> }>; riskReason?: string; setRiskReason: (value?: string) => void; riskFrom: string; setRiskFrom: (value: string) => void; riskTo: string; setRiskTo: (value: string) => void; stats?: { daily: Array<{ date: string; attempts: number; success: number; uniqueUsers: number; riskEvents: number }>; totals: { attempts: number; success: number; uniqueUsers: number; riskEvents: number } }; statsLoading: boolean }) {
+function RiskTab({ form, disabled, onSubmit, canViewRisk, riskEvents, riskReason, setRiskReason, riskFrom, setRiskFrom, riskTo, setRiskTo, riskRangeInvalid, riskEventsLoading, riskEventsError, stats, statsLoading, statsError }: { form: any; disabled: boolean; onSubmit: (values: Values) => void; canViewRisk: boolean; riskEvents: Array<{ id: string; createdAt: string; reason: string; username: string | null; deviceId: string | null; ip: string | null; metadata?: Record<string, unknown> }>; riskReason?: string; setRiskReason: (value?: string) => void; riskFrom: string; setRiskFrom: (value: string) => void; riskTo: string; setRiskTo: (value: string) => void; riskRangeInvalid: boolean; riskEventsLoading: boolean; riskEventsError: unknown; stats?: { daily: Array<{ date: string; attempts: number; success: number; uniqueUsers: number; riskEvents: number }>; totals: { attempts: number; success: number; uniqueUsers: number; riskEvents: number } }; statsLoading: boolean; statsError: unknown }) {
   return <Form form={form} layout="vertical" disabled={disabled} onFinish={onSubmit} initialValues={{ maxDevicePerUser: 3, ipRateLimitPerMin: 10, suspiciousThreshold: 5, auditReplayEnabled: true, backfillEnabled: false }}>
     <Card title="频次与风控"><Form.Item name="maxDevicePerUser" label="单账号设备上限"><InputNumber min={1} max={10} /></Form.Item><Form.Item name="ipRateLimitPerMin" label="单 IP 每分钟上限"><InputNumber min={1} max={60} /></Form.Item><Form.Item name="suspiciousThreshold" label="同设备多账号阈值"><InputNumber min={2} max={20} /></Form.Item><SettingSwitchRow title="异常请求全量日志" description="记录签到接口失败请求，便于审计排查。" control={<Form.Item name="auditReplayEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>} /><SettingSwitchRow title="补签功能（二期）" description="当前版本锁定关闭。" control={<Form.Item name="backfillEnabled" valuePropName="checked" noStyle><Switch disabled /></Form.Item>} /></Card>
     {canViewRisk && <Card title="近 7 日运营统计" style={{ marginTop: 16 }}>
-      <Space size="large" wrap style={{ marginBottom: 16 }}>
-        <Statistic title="签到请求" value={stats?.totals.attempts ?? 0} />
-        <Statistic title="签到成功" value={stats?.totals.success ?? 0} />
-        <Statistic title="去重用户" value={stats?.totals.uniqueUsers ?? 0} />
-        <Statistic title="风控事件" value={stats?.totals.riskEvents ?? 0} />
-      </Space>
-      <Table rowKey="date" size="small" pagination={false} loading={statsLoading} dataSource={stats?.daily ?? []} columns={[{ title: "日期", dataIndex: "date" }, { title: "签到请求", dataIndex: "attempts" }, { title: "签到成功", dataIndex: "success" }, { title: "去重用户", dataIndex: "uniqueUsers" }, { title: "风控事件", dataIndex: "riskEvents" }]} />
+      {riskRangeInvalid && <Alert type="warning" showIcon message="开始日期不能晚于结束日期" />}
+      {!riskRangeInvalid && statsError != null && <Alert type="error" showIcon message={`统计加载失败：${statsError instanceof Error ? statsError.message : "请稍后重试"}`} />}
+      {!riskRangeInvalid && !statsError && <>
+        <Space size="large" wrap style={{ marginBottom: 16 }}>
+          <Statistic title="签到请求" value={statsLoading ? "加载中" : (stats?.totals.attempts ?? "—")} />
+          <Statistic title="签到成功" value={statsLoading ? "加载中" : (stats?.totals.success ?? "—")} />
+          <Statistic title="去重用户" value={statsLoading ? "加载中" : (stats?.totals.uniqueUsers ?? "—")} />
+          <Statistic title="风控事件" value={statsLoading ? "加载中" : (stats?.totals.riskEvents ?? "—")} />
+        </Space>
+        <Table rowKey="date" size="small" pagination={false} loading={statsLoading} dataSource={stats?.daily ?? []} columns={[{ title: "日期", dataIndex: "date" }, { title: "签到请求", dataIndex: "attempts" }, { title: "签到成功", dataIndex: "success" }, { title: "去重用户", dataIndex: "uniqueUsers" }, { title: "风控事件", dataIndex: "riskEvents" }]} />
+      </>}
     </Card>}
     {canViewRisk && <Card title="风控事件" style={{ marginTop: 16 }}>
       <Space wrap style={{ marginBottom: 12 }}>
@@ -179,7 +264,9 @@ function RiskTab({ form, disabled, onSubmit, canViewRisk, riskEvents, riskReason
         <Input type="date" value={riskTo} onChange={(event) => setRiskTo(event.target.value)} />
         <Select allowClear placeholder="事件类型" style={{ width: 220 }} value={riskReason} onChange={setRiskReason} options={["CHECKIN_DISABLED", "OUT_OF_WINDOW", "ALREADY_CHECKED_IN", "IP_RATE_LIMIT", "DEVICE_LIMIT", "DEVICE_MULTI_ACCOUNT", "CHECK_IN_FAILED", "CHECK_IN_ATTEMPT"].map((value) => ({ value, label: value }))} />
       </Space>
-      <Table rowKey="id" size="small" pagination={false} loading={false} dataSource={riskEvents} expandable={{ expandedRowRender: (record) => <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(record.metadata ?? {}, null, 2)}</pre> }} columns={[{ title: "时间", dataIndex: "createdAt", render: (value: string) => new Date(value).toLocaleString("zh-CN") }, { title: "原因", dataIndex: "reason" }, { title: "账号", dataIndex: "username", render: (value: string | null) => value ?? "-" }, { title: "设备", dataIndex: "deviceId", render: (value: string | null) => value ?? "-" }, { title: "IP", dataIndex: "ip", render: (value: string | null) => value ?? "-" }]} />
+      {riskRangeInvalid && <Alert type="warning" showIcon message="开始日期不能晚于结束日期" />}
+      {!riskRangeInvalid && riskEventsError != null && <Alert type="error" showIcon message={`风控事件加载失败：${riskEventsError instanceof Error ? riskEventsError.message : "请稍后重试"}`} />}
+      {!riskRangeInvalid && riskEventsError == null && <Table rowKey="id" size="small" pagination={false} loading={riskEventsLoading} dataSource={riskEvents} expandable={{ expandedRowRender: (record) => <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(record.metadata ?? {}, null, 2)}</pre> }} columns={[{ title: "时间", dataIndex: "createdAt", render: (value: string) => new Date(value).toLocaleString("zh-CN") }, { title: "原因", dataIndex: "reason" }, { title: "账号", dataIndex: "username", render: (value: string | null) => value ?? "-" }, { title: "设备", dataIndex: "deviceId", render: (value: string | null) => value ?? "-" }, { title: "IP", dataIndex: "ip", render: (value: string | null) => value ?? "-" }]} />}
     </Card>}
   </Form>;
 }

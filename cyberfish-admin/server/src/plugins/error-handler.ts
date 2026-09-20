@@ -4,10 +4,27 @@ import { ZodError } from 'zod';
 import { AppError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { fail } from '../lib/response';
+import { recordCheckInHttpFailure } from '../modules/check-in/service';
 
 const errorHandlerPlugin: FastifyPluginAsync = async (app) => {
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler(async (error, request, reply) => {
     const requestId = request.id;
+
+    if (
+      request.method === 'POST' &&
+      request.url.split('?')[0] === '/api/v1/check-in' &&
+      !request.checkInAuditHandled
+    ) {
+      const body = request.body as { deviceId?: unknown } | undefined;
+      await recordCheckInHttpFailure({
+        userId: request.currentAppUser?.id,
+        deviceId: typeof body?.deviceId === 'string' ? body.deviceId.trim().slice(0, 200) : undefined,
+        ip: request.ip,
+        userAgent: String(request.headers['user-agent'] ?? '').slice(0, 500),
+        requestId,
+      }, error);
+      request.checkInAuditHandled = true;
+    }
 
     // ---- 应用自定义错误 ----
     if (error instanceof AppError) {
