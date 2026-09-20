@@ -12,11 +12,13 @@ import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.ApiConfig
 import com.cyberfish.app.network.AppApiClient
 import com.cyberfish.app.network.AppUpdateInfo
+import com.cyberfish.app.network.AppDownloadMode
 import com.cyberfish.app.network.DeviceIdentityStore
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 
 class AppUpdateWorker(
     appContext: android.content.Context,
@@ -41,8 +43,10 @@ class AppUpdateWorker(
             part.delete()
             return when (result) {
                 is ApiResult.NetworkError -> Result.retry()
-                is ApiResult.HttpError -> if (result.statusCode >= 500) Result.retry() else Result.failure()
-                else -> Result.failure()
+                is ApiResult.HttpError -> if (result.statusCode >= 500) Result.retry() else failure("APK 下载失败（${result.statusCode}）")
+                ApiResult.NotConfigured -> failure("APP 更新服务未配置")
+                is ApiResult.ParseError -> failure(result.message.ifBlank { "APK 下载响应无效" })
+                is ApiResult.Success -> failure("APK 下载失败")
             }
         }
         if (!sha256(part).equals(expectedSha256, ignoreCase = true)) {
@@ -56,6 +60,10 @@ class AppUpdateWorker(
         }
         return Result.success(Data.Builder().putString(KEY_APK_PATH, apk.absolutePath).build())
     }
+
+    private fun failure(message: String): Result = Result.failure(
+        Data.Builder().putString(KEY_ERROR, message).build(),
+    )
 
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -79,15 +87,19 @@ class AppUpdateWorker(
         const val KEY_APK_PATH = "apk_path"
         const val KEY_ERROR = "error"
 
-        fun enqueue(context: android.content.Context, update: AppUpdateInfo) {
-            val url = update.apkUrl ?: return
-            val sha256 = update.apkSha256 ?: return
+        fun enqueue(context: android.content.Context, update: AppUpdateInfo): UUID? {
+            if (update.downloadMode != AppDownloadMode.SERVER) return null
+            val url = update.apkUrl ?: return null
+            val sha256 = update.apkSha256 ?: return null
+            if (sha256.length != 64 || sha256.any { !it.isDigit() && it.lowercaseChar() !in 'a'..'f' }) return null
+            if (update.apkSizeBytes == null || update.apkSizeBytes <= 0L) return null
+            val versionCode = update.versionCode ?: return null
             val request = OneTimeWorkRequestBuilder<AppUpdateWorker>()
                 .setInputData(
                     Data.Builder()
                         .putString(KEY_URL, url)
                         .putString(KEY_SHA256, sha256)
-                        .putInt(KEY_VERSION_CODE, update.versionCode ?: 0)
+                        .putInt(KEY_VERSION_CODE, versionCode)
                         .build(),
                 )
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -98,6 +110,14 @@ class AppUpdateWorker(
                 androidx.work.ExistingWorkPolicy.REPLACE,
                 request,
             )
+            return request.id
+        }
+
+        fun downloadedApkPath(context: android.content.Context, versionCode: Int?): String? {
+            versionCode ?: return null
+            return File(context.applicationContext.filesDir, "updates/app-$versionCode.apk")
+                .takeIf(File::isFile)
+                ?.absolutePath
         }
     }
 }

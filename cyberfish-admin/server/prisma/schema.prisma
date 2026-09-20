@@ -147,10 +147,11 @@ model AppVersion {
   releaseNotes String @default("")
 
   // 安装包
-  apkUrl    String?
-  apkSize   BigInt?
-  apkSha256 String?
-  apkFileId String?
+  downloadMode String  @default("EXTERNAL") // AppDownloadMode
+  apkUrl       String?
+  apkSize      BigInt?
+  apkSha256    String?
+  apkFileId    String?
 
   minSupportedCode Int? // 低于此版本强制升级
 

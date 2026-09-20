@@ -1,8 +1,28 @@
 import { z } from 'zod';
-import { Platform, UpdateType } from '../../lib/enums';
+import { AppDownloadMode, Platform, UpdateType } from '../../lib/enums';
 import { listQuerySchema, dateStr } from '../../lib/zod';
 
-const externalUrlSchema = z.string().trim().url().max(500).refine((value) => /^https?:\/\//i.test(value), '仅支持 HTTP 或 HTTPS 下载地址');
+const downloadUrlSchema = z.string().trim().url().max(500).refine((value) => /^https?:\/\//i.test(value), '仅支持 HTTP 或 HTTPS 下载地址');
+const sha256Schema = z.string().trim().regex(/^[a-f0-9]{64}$/i, 'SHA-256 必须是 64 位十六进制字符串');
+
+export const appVersionDownloadSchema = z.object({
+  downloadMode: z.nativeEnum(AppDownloadMode).optional(),
+  apkUrl: downloadUrlSchema.optional().nullable(),
+  apkSize: z.number().int().positive().optional().nullable(),
+  apkSha256: sha256Schema.optional().nullable(),
+  apkFileId: z.string().min(1).optional().nullable(),
+}).superRefine((value, ctx) => {
+  const downloadMode = value.downloadMode ?? (value.apkFileId ? AppDownloadMode.SERVER : AppDownloadMode.EXTERNAL);
+  if (downloadMode === AppDownloadMode.EXTERNAL && !value.apkUrl) {
+    ctx.addIssue({ code: 'custom', message: '必须配置网盘外部链接', path: ['apkUrl'] });
+  }
+  if (downloadMode === AppDownloadMode.SERVER && !value.apkFileId) {
+    ctx.addIssue({ code: 'custom', message: '服务器模式必须上传 APK', path: ['apkFileId'] });
+  }
+  if (downloadMode === AppDownloadMode.EXTERNAL && value.apkFileId) {
+    ctx.addIssue({ code: 'custom', message: '网盘外部链接不能选择服务器文件', path: ['apkFileId'] });
+  }
+});
 
 export const appVersionListSchema = listQuerySchema.extend({
   status: z.string().trim().optional(),
@@ -13,7 +33,7 @@ export const appVersionListSchema = listQuerySchema.extend({
   createdTo: dateStr,
 });
 
-const appVersionBaseSchema = z.object({
+const appVersionBaseFields = {
   versionName: z
     .string()
     .trim()
@@ -24,14 +44,18 @@ const appVersionBaseSchema = z.object({
   updateType: z.nativeEnum(UpdateType).default(UpdateType.OPTIONAL),
   releaseNotes: z.string().max(5000).default(''),
   minSupportedCode: z.number().int().nonnegative().optional(),
-  apkUrl: externalUrlSchema.optional().nullable(),
-  apkFileId: z.string().min(1).optional(),
-});
+  downloadMode: z.nativeEnum(AppDownloadMode).optional(),
+  apkUrl: downloadUrlSchema.optional().nullable(),
+  apkSize: z.number().int().positive().optional().nullable(),
+  apkSha256: sha256Schema.optional().nullable(),
+  apkFileId: z.string().min(1).optional().nullable(),
+};
+
+const appVersionBaseSchema = z.object(appVersionBaseFields);
 
 export const createAppVersionSchema = appVersionBaseSchema.superRefine((value, ctx) => {
-  if (value.apkUrl && value.apkFileId) {
-    ctx.addIssue({ code: 'custom', message: '外部下载地址与上传 APK 不能同时填写', path: ['apkUrl'] });
-  }
+  const result = appVersionDownloadSchema.safeParse(value);
+  if (!result.success) result.error.issues.forEach((issue) => ctx.addIssue(issue));
 });
 
 export const updateAppVersionSchema = appVersionBaseSchema

@@ -36,6 +36,7 @@ sealed interface ApiResult<out T> {
 data class AppUpdateInfo(
     val hasUpdate: Boolean,
     val updateType: String? = null,
+    val downloadMode: AppDownloadMode = AppDownloadMode.EXTERNAL,
     val versionName: String? = null,
     val versionCode: Int? = null,
     val releaseNotes: String? = null,
@@ -43,6 +44,8 @@ data class AppUpdateInfo(
     val apkSizeBytes: Long? = null,
     val apkSha256: String? = null,
 )
+
+enum class AppDownloadMode { EXTERNAL, SERVER }
 
 data class SupportContent(
     val feedbackTitle: String = "意见反馈",
@@ -442,15 +445,22 @@ class AppApiClient(
         executeJson(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()) { data ->
             val hasUpdate = data.optBoolean("hasUpdate", false)
             val latest = data.optJSONObject("latest")
+            val apkSha256 = latest?.optString("sha256")?.takeIf { it.isNotBlank() }
+            val downloadMode = when (latest?.optString("downloadMode")) {
+                AppDownloadMode.SERVER.name -> AppDownloadMode.SERVER
+                AppDownloadMode.EXTERNAL.name -> AppDownloadMode.EXTERNAL
+                else -> if (apkSha256 != null) AppDownloadMode.SERVER else AppDownloadMode.EXTERNAL
+            }
             AppUpdateInfo(
                 hasUpdate = hasUpdate,
                 updateType = data.optString("updateType").takeIf { it.isNotBlank() },
+                downloadMode = downloadMode,
                 versionName = latest?.optString("versionName")?.takeIf { it.isNotBlank() },
                 versionCode = latest?.takeIf { it.has("versionCode") }?.optInt("versionCode"),
                 releaseNotes = latest?.optString("releaseNotes")?.takeIf { it.isNotBlank() },
                 apkUrl = latest?.optString("apkUrl")?.takeIf { it.isNotBlank() }?.let(config::resolve),
                 apkSizeBytes = latest?.optLong("apkSize", Long.MIN_VALUE)?.takeIf { it != Long.MIN_VALUE },
-                apkSha256 = latest?.optString("sha256")?.takeIf { it.isNotBlank() },
+                apkSha256 = apkSha256,
             )
         }
     }
