@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -25,11 +27,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -41,10 +46,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -53,7 +62,15 @@ import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.alert.AndroidAlertNotifier
 import com.cyberfish.app.capture.CameraFrameSource
 import com.cyberfish.app.capture.CaptureStatus
+import com.cyberfish.app.capture.DefaultDetectionModeController
+import com.cyberfish.app.capture.DetectionMode
+import com.cyberfish.app.capture.DetectionModeEffect
+import com.cyberfish.app.capture.DetectionModeIntent
+import com.cyberfish.app.capture.DetectionModeSnapshot
+import com.cyberfish.app.capture.DetectionRegionState
+import com.cyberfish.app.capture.DetectionTrackingMetrics
 import com.cyberfish.app.capture.FrameMetrics
+import com.cyberfish.app.capture.NormalizedPreviewRect
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.MockDetector
 import com.cyberfish.app.inference.Detector
@@ -89,6 +106,10 @@ fun CameraPreviewCard(
     var captureStatus by remember { mutableStateOf(CaptureStatus.Idle) }
     var maxZoomRatio by remember { mutableFloatStateOf(1f) }
     var selectedZoomRatio by rememberSaveable { mutableFloatStateOf(1f) }
+    val detectionModeController = remember { DefaultDetectionModeController() }
+    var detectionModeSnapshot by remember { mutableStateOf(detectionModeController.snapshot()) }
+    var lastPreviewSize by remember { mutableStateOf(IntSize.Zero) }
+    var geometryEpoch by remember { mutableLongStateOf(detectionModeSnapshot.geometryEpoch) }
     val notifier = remember(context, alertPreferences) { AndroidAlertNotifier(context.applicationContext, alertPreferences) }
     val triggerPipeline = remember(triggerConfig, notifier, detector) {
         TriggerPipeline(config = triggerConfig) { event ->
@@ -111,15 +132,47 @@ fun CameraPreviewCard(
                 }
             },
             onStatusChanged = { captureStatus = it },
-            onDetection = { detection, timestampMillis -> triggerPipeline.accept(detection, timestampMillis) },
+            onDetection = { detection, timestampMillis ->
+                triggerPipeline.accept(detection, timestampMillis)?.let { snapshot ->
+                    DetectionTrackingMetrics(
+                        confidence = snapshot.confidence,
+                        widthRatioFromBaseline = snapshot.bboxWidthRatioFromBaseline,
+                        heightRatioFromBaseline = snapshot.bboxHeightRatioFromBaseline,
+                        areaRatioFromBaseline = snapshot.bboxAreaRatioFromBaseline,
+                    )
+                }
+            },
             snapshotDir = snapshotDir,
             onSnapshotReady = { latestSnapshot.set(it) },
             onZoomCapabilitiesChanged = { maxZoom ->
                 maxZoomRatio = maxZoom.coerceAtLeast(1f)
                 if (selectedZoomRatio > maxZoomRatio) selectedZoomRatio = 1f
             },
+            onDetectionReset = {
+                triggerPipeline.reset()
+            },
         )
     }
+
+    fun dispatchModeIntent(intent: DetectionModeIntent) {
+        val previous = detectionModeSnapshot
+        val effect = detectionModeController.dispatch(intent)
+        val next = detectionModeController.snapshot()
+        detectionModeSnapshot = next
+        if (
+            effect == DetectionModeEffect.ResetTracking ||
+            effect == DetectionModeEffect.SuspendTrigger ||
+            previous.mode != next.mode ||
+            previous.state != next.state ||
+            previous.region != next.region ||
+            previous.revision != next.revision
+        ) {
+            triggerPipeline.reset()
+            metrics = metrics?.copy(trackingMetrics = null)
+        }
+    }
+
+    SideEffect { frameSource.setDetectionMode(detectionModeSnapshot) }
 
     LaunchedEffect(captureStatus, selectedZoomRatio, maxZoomRatio, frameSource) {
         if (captureStatus == CaptureStatus.Running) frameSource.setZoomRatio(selectedZoomRatio)
@@ -147,15 +200,28 @@ fun CameraPreviewCard(
 
     val status = monitorStatus(monitoring, permissionGranted, permissionDenied, captureStatus, metrics?.detection)
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("camera-preview"),
+        modifier = Modifier.fillMaxWidth().testTag("camera-preview"),
         colors = CardDefaults.cardColors(containerColor = CameraPanel),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(0.dp),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(modifier = Modifier.fillMaxWidth().height(264.dp).clip(RoundedCornerShape(20.dp))) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(264.dp)
+                    .onSizeChanged { size ->
+                        if (size != lastPreviewSize && size.width > 0 && size.height > 0) {
+                            lastPreviewSize = size
+                            geometryEpoch += 1L
+                            dispatchModeIntent(DetectionModeIntent.GeometryChanged(geometryEpoch))
+                            previewView?.let(frameSource::refreshPreviewGeometry)
+                        }
+                    }
+                    .clip(RoundedCornerShape(0.dp)),
+            ) {
                 if (permissionGranted) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
@@ -172,6 +238,12 @@ fun CameraPreviewCard(
                 }
 
                 DetectionOverlay(metrics)
+                DetectionRegionOverlay(
+                    snapshot = detectionModeSnapshot,
+                    onDraftChanged = { region ->
+                        dispatchModeIntent(DetectionModeIntent.UpdateDraft(region))
+                    },
+                )
             }
 
             Column(
@@ -184,15 +256,24 @@ fun CameraPreviewCard(
                     metrics = metrics,
                     modelVersion = detector.modelVersion,
                     captureStatus = captureStatus,
+                    detectorInputSize = detector.inputSize,
                 )
-                ZoomControls(
+                DetectionModeControls(
                     modifier = Modifier.fillMaxWidth(),
+                    snapshot = detectionModeSnapshot,
+                    onIntent = { intent -> dispatchModeIntent(intent) },
                     selectedZoomRatio = selectedZoomRatio,
                     maxZoomRatio = maxZoomRatio,
-                    enabled = permissionGranted,
+                    zoomEnabled = permissionGranted,
                     onZoomSelected = { ratio ->
-                        selectedZoomRatio = ratio.coerceIn(1f, maxZoomRatio)
-                        frameSource.setZoomRatio(selectedZoomRatio)
+                        val nextRatio = ratio.coerceIn(1f, maxZoomRatio)
+                        if (selectedZoomRatio != nextRatio) {
+                            selectedZoomRatio = nextRatio
+                            triggerPipeline.reset()
+                            metrics = metrics?.copy(trackingMetrics = null)
+                            previewView?.let(frameSource::refreshPreviewGeometry)
+                        }
+                        frameSource.setZoomRatio(nextRatio)
                     },
                 )
                 if (!permissionGranted || !monitoring || captureStatus == CaptureStatus.Failed) {
@@ -204,28 +285,203 @@ fun CameraPreviewCard(
 }
 
 @Composable
-private fun ZoomControls(
+private fun DetectionModeControls(
     modifier: Modifier,
+    snapshot: DetectionModeSnapshot,
+    onIntent: (DetectionModeIntent) -> Unit,
     selectedZoomRatio: Float,
     maxZoomRatio: Float,
-    enabled: Boolean,
+    zoomEnabled: Boolean,
     onZoomSelected: (Float) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        listOf(1f, 2f, 3f).forEach { ratio ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             FilterChip(
-                selected = selectedZoomRatio == ratio,
-                onClick = { onZoomSelected(ratio) },
-                enabled = enabled && ratio <= maxZoomRatio + 0.001f,
-                label = { Text("${ratio.toInt()}x") },
+                modifier = Modifier.weight(1f).testTag("detection-mode-intelligent"),
+                selected = snapshot.mode == DetectionMode.Intelligent,
+                onClick = { onIntent(DetectionModeIntent.SelectMode(DetectionMode.Intelligent)) },
+                label = { Text("智能") },
             )
+            FilterChip(
+                modifier = Modifier.weight(1f).testTag("detection-mode-manual"),
+                selected = snapshot.mode == DetectionMode.ManualRegion,
+                onClick = { onIntent(DetectionModeIntent.SelectMode(DetectionMode.ManualRegion)) },
+                label = { Text("框选") },
+            )
+            listOf(1f, 2f, 3f).forEach { ratio ->
+                FilterChip(
+                    modifier = Modifier.weight(1f),
+                    selected = selectedZoomRatio == ratio,
+                    onClick = { onZoomSelected(ratio) },
+                    enabled = zoomEnabled && ratio <= maxZoomRatio + 0.001f,
+                    label = { Text("${ratio.toInt()}x") },
+                )
+            }
+        }
+        if (snapshot.mode == DetectionMode.ManualRegion) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                when (snapshot.state) {
+                    DetectionRegionState.Editing -> {
+                        val validDraft = snapshot.draft?.let(::isUsableDetectionRegion) == true
+                        Button(
+                            modifier = Modifier.testTag("detection-region-confirm"),
+                            onClick = { onIntent(DetectionModeIntent.ConfirmSelection) },
+                            enabled = validDraft,
+                        ) { Text("确认") }
+                        TextButton(
+                            modifier = Modifier.testTag("detection-region-cancel"),
+                            onClick = { onIntent(DetectionModeIntent.CancelSelection) },
+                        ) { Text("取消") }
+                    }
+
+                    else -> {
+                        Button(
+                            modifier = Modifier.testTag("detection-region-edit"),
+                            onClick = { onIntent(DetectionModeIntent.BeginSelection) },
+                        ) {
+                            Text(if (snapshot.region == null) "开始框选" else "编辑区域")
+                        }
+                        if (snapshot.region != null) {
+                            TextButton(
+                                modifier = Modifier.testTag("detection-region-clear"),
+                                onClick = { onIntent(DetectionModeIntent.ClearSelection) },
+                            ) { Text("清除") }
+                        }
+                    }
+                }
+            }
+            when (snapshot.state) {
+                DetectionRegionState.Empty ->
+                    Text(
+                        "请在画面内拖动框选监测区域",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                DetectionRegionState.NeedsReview ->
+                    Text(
+                        "画面变化，请重新确认区域",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                DetectionRegionState.Editing,
+                DetectionRegionState.Applied,
+                DetectionRegionState.Intelligent,
+                -> Unit
+            }
         }
     }
 }
+
+@Composable
+private fun DetectionRegionOverlay(
+    snapshot: DetectionModeSnapshot,
+    onDraftChanged: (NormalizedPreviewRect?) -> Unit,
+) {
+    val editing = snapshot.mode == DetectionMode.ManualRegion && snapshot.state == DetectionRegionState.Editing
+    val currentOnDraftChanged = rememberUpdatedState(onDraftChanged)
+    val appliedColor = MaterialTheme.colorScheme.primary.copy(alpha = if (editing) 0.42f else 0.9f)
+    val draftColor = MaterialTheme.colorScheme.tertiary
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("detection-region-overlay")
+            .pointerInput(snapshot.mode, snapshot.state, snapshot.revision) {
+                if (editing) {
+                    var start: Offset? = null
+                    detectDragGestures(
+                        onDragStart = { position ->
+                            start = position
+                            currentOnDraftChanged.value(null)
+                        },
+                        onDrag = { change, _ ->
+                            val origin = start ?: return@detectDragGestures
+                            val candidate = normalizedPreviewRectForDrag(
+                                startX = origin.x,
+                                startY = origin.y,
+                                endX = change.position.x,
+                                endY = change.position.y,
+                                widthPx = size.width.toFloat(),
+                                heightPx = size.height.toFloat(),
+                            )
+                            change.consume()
+                            currentOnDraftChanged.value(candidate)
+                        },
+                        onDragEnd = { start = null },
+                        onDragCancel = { start = null },
+                    )
+                }
+            },
+    ) {
+        val applied = snapshot.region
+        if (applied != null) {
+            drawNormalizedRegion(
+                region = applied,
+                color = appliedColor,
+                widthPx = size.width.toFloat(),
+                heightPx = size.height.toFloat(),
+            )
+        }
+        if (editing) {
+            snapshot.draft?.let { draft ->
+                drawNormalizedRegion(
+                    region = draft,
+                    color = draftColor,
+                    widthPx = size.width.toFloat(),
+                    heightPx = size.height.toFloat(),
+                )
+            }
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNormalizedRegion(
+    region: NormalizedPreviewRect,
+    color: Color,
+    widthPx: Float,
+    heightPx: Float,
+) {
+    drawRect(
+        color = color,
+        topLeft = Offset(region.left * widthPx, region.top * heightPx),
+        size = Size(region.width * widthPx, region.height * heightPx),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+    )
+}
+
+internal fun normalizedPreviewRectForDrag(
+    startX: Float,
+    startY: Float,
+    endX: Float,
+    endY: Float,
+    widthPx: Float,
+    heightPx: Float,
+): NormalizedPreviewRect? {
+    if (!widthPx.isFinite() || !heightPx.isFinite() || widthPx <= 0f || heightPx <= 0f) return null
+    return NormalizedPreviewRect.fromUnordered(
+        startX = startX / widthPx,
+        startY = startY / heightPx,
+        endX = endX / widthPx,
+        endY = endY / heightPx,
+    )
+}
+
+private fun isUsableDetectionRegion(region: NormalizedPreviewRect): Boolean =
+    region.width >= MINIMUM_REGION_SIZE && region.height >= MINIMUM_REGION_SIZE
+
+private const val MINIMUM_REGION_SIZE = 0.05f
 
 private fun Context.findLifecycleOwner(): LifecycleOwner? = when (this) {
     is LifecycleOwner -> this
@@ -312,6 +568,7 @@ private fun PreviewStatus(
     metrics: FrameMetrics?,
     modelVersion: String,
     captureStatus: CaptureStatus,
+    detectorInputSize: Int,
 ) {
     Surface(
         modifier = modifier,
@@ -331,19 +588,63 @@ private fun PreviewStatus(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Text(
-                    metrics?.let { "${it.framesPerSecond} FPS · ${it.latencyMillis}ms" } ?: "FPS -- · --ms",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                )
             }
             Text(
-                metrics?.detection?.let { "检测置信度 %.0f%%".format(it.confidence * 100) } ?: "后置相机",
+                formatDetectionTelemetry(metrics?.displayDetection, metrics?.trackingMetrics),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
             )
+            Text(
+                formatInputTelemetry(metrics, detectorInputSize),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                formatPerformanceTelemetry(metrics),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
+}
+
+internal fun formatDetectionTelemetry(
+    displayDetection: com.cyberfish.app.capture.DisplayDetection?,
+    trackingMetrics: DetectionTrackingMetrics?,
+): String {
+    if (displayDetection == null) return "暂无检测"
+    val currentHeight = displayDetection.heightPx.coerceAtLeast(0f).roundToInt()
+    if (trackingMetrics == null) {
+        return "浮漂 %.0f%% · 当前高 %dpx · 基准建立中".format(
+            displayDetection.confidence * 100f,
+            currentHeight,
+        )
+    }
+    val ratio = trackingMetrics.heightRatioFromBaseline
+    if (!ratio.isFinite() || ratio <= 0f) return "浮漂检测中 · 基准建立中"
+    val baselineHeight = (displayDetection.heightPx / ratio).coerceAtLeast(0f).roundToInt()
+    val deltaPercent = ((ratio - 1f) * 100f).roundToInt()
+    val signedDelta = if (deltaPercent >= 0) "+$deltaPercent%" else "$deltaPercent%"
+    return "浮漂 %.0f%% · 当前高 %dpx · 基准高 %dpx · %s".format(
+        trackingMetrics.confidence * 100f,
+        currentHeight,
+        baselineHeight,
+        signedDelta,
+    )
+}
+
+internal fun formatInputTelemetry(metrics: FrameMetrics?, detectorInputSize: Int): String =
+    if (metrics == null) "分析 -- · 模型输入 ${detectorInputSize}²"
+    else "分析 ${metrics.sourceWidthPx}×${metrics.sourceHeightPx} · 模型输入 ${detectorInputSize}²"
+
+internal fun formatPerformanceTelemetry(metrics: FrameMetrics?): String {
+    if (metrics == null) return "预处理 -- · 推理 -- · 总计 -- · FPS --"
+    return "预处理 ${metrics.preprocessingMillis}ms · 推理 ${metrics.inferenceMillis}ms · " +
+        "总计 ${metrics.latencyMillis}ms · ${metrics.framesPerSecond} FPS"
 }
 
 private fun monitorStatus(

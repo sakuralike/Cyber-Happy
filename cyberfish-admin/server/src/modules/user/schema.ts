@@ -10,6 +10,7 @@ export const registerSchema = z.object({
   password: passwordSchema,
   displayName: z.string().trim().min(1, '昵称不能为空').max(80).optional(),
   email: emailSchema.optional(),
+  inviteCode: z.string().trim().max(80).optional(),
 });
 
 export const loginSchema = z.object({

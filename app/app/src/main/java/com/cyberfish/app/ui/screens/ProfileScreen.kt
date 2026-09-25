@@ -69,7 +69,7 @@ fun ProfileScreen(
     openLogin: Boolean = false,
     onExportRecords: () -> Unit,
     onLogin: suspend (String, String) -> ApiResult<UserSession>,
-    onRegister: suspend (String, String, String, String) -> ApiResult<UserSession>,
+    onRegister: suspend (String, String, String, String, String?) -> ApiResult<UserSession>,
     onLogout: suspend () -> Unit,
     onPickAvatar: () -> Unit = {},
     onUpdateProfile: suspend (String, String) -> ApiResult<com.cyberfish.app.network.UserAccount> = { _, _ -> ApiResult.NotConfigured },
@@ -217,7 +217,7 @@ fun ProfileScreen(
         }
         item {
             Text(
-                "版本 ${BuildConfig.VERSION_NAME} · 模型 LiteRT v3",
+                "版本 ${BuildConfig.VERSION_NAME} · 模型 NCNN",
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
@@ -231,6 +231,7 @@ fun ProfileScreen(
             onDismiss = { action = ProfileAction.None },
             onLogin = onLogin,
             onRegister = onRegister,
+            authPolicy = supportContent,
         ) { action = ProfileAction.None }
         ProfileAction.EditProfile -> EditProfileDialog(
             user = account,
@@ -369,7 +370,8 @@ private fun ChangePasswordDialog(
 private fun LoginDialog(
     onDismiss: () -> Unit,
     onLogin: suspend (String, String) -> ApiResult<UserSession>,
-    onRegister: suspend (String, String, String, String) -> ApiResult<UserSession>,
+    onRegister: suspend (String, String, String, String, String?) -> ApiResult<UserSession>,
+    authPolicy: SupportContent,
     onSuccess: () -> Unit,
 ) {
     var registerMode by remember { mutableStateOf(false) }
@@ -377,6 +379,7 @@ private fun LoginDialog(
     var password by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
+    var inviteCode by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -386,22 +389,25 @@ private fun LoginDialog(
         title = { Text(if (registerMode) "注册账号" else "登录账号") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (!registerMode && !authPolicy.loginEnabled) Text(authPolicy.loginDisabledMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                if (!authPolicy.registrationEnabled && registerMode) Text(authPolicy.registrationDisabledMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (registerMode) OutlinedTextField(value = displayName, onValueChange = { displayName = it }, label = { Text("昵称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (registerMode) OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("邮箱（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (registerMode && authPolicy.inviteRequired) OutlinedTextField(value = inviteCode, onValueChange = { inviteCode = it }, label = { Text("邀请码") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("密码") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                TextButton(onClick = { registerMode = !registerMode; error = null }) { Text(if (registerMode) "已有账号，去登录" else "没有账号，去注册") }
+                if (authPolicy.registrationEnabled) TextButton(onClick = { registerMode = !registerMode; error = null }) { Text(if (registerMode) "已有账号，去登录" else "没有账号，去注册") }
             }
         },
         confirmButton = {
             Button(
-                enabled = !submitting && username.trim().length >= 2 && password.length >= 6,
+                enabled = !submitting && (if (registerMode) authPolicy.registrationEnabled else authPolicy.loginEnabled) && username.trim().length >= 2 && password.length >= 6 && (!registerMode || !authPolicy.inviteRequired || inviteCode.trim().isNotEmpty()),
                 onClick = {
                     submitting = true
                     error = null
                     scope.launch {
-                        val result = if (registerMode) onRegister(username.trim(), password, displayName.trim().ifBlank { username.trim() }, email.trim()) else onLogin(username.trim(), password)
+                        val result = if (registerMode) onRegister(username.trim(), password, displayName.trim().ifBlank { username.trim() }, email.trim(), inviteCode.trim().takeIf { it.isNotEmpty() }) else onLogin(username.trim(), password)
                         submitting = false
                         if (result is ApiResult.Success) onSuccess() else error = result.message()
                     }
@@ -479,7 +485,7 @@ private fun AboutDialog(supportContent: SupportContent, onDismiss: () -> Unit) {
         title = { Text(if (showPrivacy) "隐私说明" else supportContent.aboutTitle) },
         text = {
             Text(
-                if (showPrivacy) supportContent.privacyContent else "${supportContent.aboutContent}\n\n赛博鱼乐 ${BuildConfig.VERSION_NAME}\n模型运行时：LiteRT v3",
+                if (showPrivacy) supportContent.privacyContent else "${supportContent.aboutContent}\n\n赛博鱼乐 ${BuildConfig.VERSION_NAME}\n模型运行时：NCNN",
             )
         },
         confirmButton = {

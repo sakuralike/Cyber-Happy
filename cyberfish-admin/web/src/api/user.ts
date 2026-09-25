@@ -101,7 +101,7 @@ export const login = (username: string, password: string) =>
 export const forgotPassword = (input: { username: string; email: string; newPassword: string }) =>
   userHttp.post('/users/forgot-password', input) as Promise<{ reset: boolean }>;
 
-export const register = (input: { username: string; password: string; displayName?: string; email?: string }) =>
+export const register = (input: { username: string; password: string; displayName?: string; email?: string; inviteCode?: string }) =>
   userHttp.post('/users/register', input) as Promise<UserSession>;
 
 export const fetchMe = () => userHttp.get('/users/me') as Promise<UserAccount>;

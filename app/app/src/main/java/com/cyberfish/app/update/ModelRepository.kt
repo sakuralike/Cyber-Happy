@@ -2,9 +2,9 @@ package com.cyberfish.app.update
 
 import com.cyberfish.app.inference.CloseableDetector
 import com.cyberfish.app.inference.DetectorSlot
-import com.cyberfish.app.inference.LiteRtDetector
-import com.cyberfish.app.inference.LiteRtModelContract
-import com.cyberfish.app.inference.LiteRtModelDescriptor
+import com.cyberfish.app.inference.NcnnDetector
+import com.cyberfish.app.inference.NcnnModelContract
+import com.cyberfish.app.inference.NcnnModelDescriptor
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.ModelCheckInfo
 import com.cyberfish.app.network.ModelApi
@@ -50,7 +50,7 @@ data class ModelInstallResult(
 )
 
 fun interface ModelSignatureVerifier {
-    fun verify(file: File, descriptor: LiteRtModelDescriptor): Boolean
+    fun verify(file: File, descriptor: NcnnModelDescriptor): Boolean
 }
 
 class PublicKeyModelSignatureVerifier(
@@ -58,7 +58,7 @@ class PublicKeyModelSignatureVerifier(
 ) : ModelSignatureVerifier {
     private val publicKeys = publicKeys.toMap()
 
-    override fun verify(file: File, descriptor: LiteRtModelDescriptor): Boolean {
+    override fun verify(file: File, descriptor: NcnnModelDescriptor): Boolean {
         if (!file.isFile) return false
         val signatureText = descriptor.signature ?: return false
         val keyText = publicKeys[descriptor.publicKeyId] ?: return false
@@ -105,7 +105,9 @@ class ModelRepository(
     private val storageDir: File,
     val detectorSlot: DetectorSlot = DetectorSlot(),
     private val signatureVerifier: ModelSignatureVerifier = ModelSignatureVerifier { _, _ -> false },
-    private val detectorFactory: (File, LiteRtModelDescriptor) -> CloseableDetector = ::LiteRtDetector,
+    private val detectorFactory: (File, NcnnModelDescriptor) -> CloseableDetector = { file, descriptor ->
+        NcnnDetector.fromBundle(file, descriptor)
+    },
     private val allowInsecureHttp: Boolean = false,
 ) {
     private val stateFlow = MutableStateFlow(readState())
@@ -194,15 +196,15 @@ class ModelRepository(
 
     private suspend fun installUnlocked(update: ModelUpdateInfo): ModelInstallResult {
         val descriptor = update.descriptor
-        val contract = LiteRtModelContract.validate(descriptor)
+        val contract = NcnnModelContract.validate(descriptor)
         if (!contract.isValid) return fail("CONTRACT_INVALID", contract.errors.joinToString("；"), false)
         val downloadUrl = update.downloadUrl.trim()
         if (!isAllowedUrl(downloadUrl)) return fail("INSECURE_URL", "模型下载必须使用 HTTPS", false)
 
-        val modelFile = File(storageDir, "active.tflite")
-        val partFile = File(storageDir, "${safeName(descriptor.modelVersion)}.tflite.part")
+        val modelFile = File(storageDir, "active.bin")
+        val partFile = File(storageDir, "${safeName(descriptor.modelVersion)}.bin.part")
         val metadataFile = File(storageDir, "active.json")
-        val previousFile = File(storageDir, "previous.tflite")
+        val previousFile = File(storageDir, "previous.bin")
         val previousMetadataFile = File(storageDir, "previous.json")
         partFile.delete()
         report(update.dispatchId, ModelDispatchStatus.PENDING)
@@ -273,14 +275,14 @@ class ModelRepository(
     }
 
     private suspend fun rollbackUnlocked(dispatchId: String?): ModelInstallResult {
-        val activeFile = File(storageDir, "active.tflite")
-        val previousFile = File(storageDir, "previous.tflite")
+        val activeFile = File(storageDir, "active.bin")
+        val previousFile = File(storageDir, "previous.bin")
         val activeMetadata = File(storageDir, "active.json")
         val previousMetadata = File(storageDir, "previous.json")
         if (!previousFile.isFile || !previousMetadata.isFile) return fail("NO_PREVIOUS_MODEL", "没有可回滚的上一模型", false)
         return try {
-            val descriptor = liteRtModelDescriptorFromJson(previousMetadata.readText())
-            val contract = LiteRtModelContract.validate(descriptor)
+            val descriptor = ncnnModelDescriptorFromJson(previousMetadata.readText())
+            val contract = NcnnModelContract.validate(descriptor)
             require(contract.isValid) { contract.errors.joinToString("；") }
             require(sha256(previousFile).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
             require(signatureVerifier.verify(previousFile, descriptor)) { "模型签名校验失败" }
@@ -298,11 +300,11 @@ class ModelRepository(
     fun activeVersion(): String? = readDescriptor()?.modelVersion
 
     private fun loadActive() {
-        val modelFile = File(storageDir, "active.tflite")
+        val modelFile = File(storageDir, "active.bin")
         val descriptor = readDescriptor() ?: return
         if (!modelFile.isFile) return
         try {
-            val contract = LiteRtModelContract.validate(descriptor)
+            val contract = NcnnModelContract.validate(descriptor)
             require(contract.isValid) { contract.errors.joinToString("；") }
             require(sha256(modelFile).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
             require(signatureVerifier.verify(modelFile, descriptor)) { "模型签名校验失败" }
@@ -333,9 +335,9 @@ class ModelRepository(
 
     private fun readState(): ModelState = readDescriptor()?.let { ModelState(ModelInstallStatus.READY, it.modelVersion, 100) } ?: ModelState()
 
-    private fun readDescriptor(): LiteRtModelDescriptor? = try {
+    private fun readDescriptor(): NcnnModelDescriptor? = try {
         val file = File(storageDir, "active.json")
-        if (file.isFile) liteRtModelDescriptorFromJson(file.readText()) else null
+        if (file.isFile) ncnnModelDescriptorFromJson(file.readText()) else null
     } catch (_: Exception) {
         null
     }
@@ -406,7 +408,7 @@ class ModelRepository(
     }
 }
 
-private fun LiteRtModelDescriptor.toJson(): String = org.json.JSONObject()
+private fun NcnnModelDescriptor.toJson(): String = org.json.JSONObject()
     .put("modelVersion", modelVersion)
     .put("architecture", architecture)
     .put("quantization", quantization)
@@ -418,18 +420,12 @@ private fun LiteRtModelDescriptor.toJson(): String = org.json.JSONObject()
     .put("signatureAlgorithm", signatureAlgorithm)
     .put("publicKeyId", publicKeyId)
     .put("signatureExpiresAtMillis", signatureExpiresAtMillis)
-    .put("runtimeSignatureName", runtimeSignatureName)
-    .put("inputName", inputName)
-    .put("inputLayout", inputLayout)
-    .put("outputName", outputName)
-    .put("coordinatesNormalized", coordinatesNormalized)
-    .put("valuesPerDetection", valuesPerDetection)
     .toString()
 
-private fun liteRtModelDescriptorFromJson(raw: String): LiteRtModelDescriptor {
+private fun ncnnModelDescriptorFromJson(raw: String): NcnnModelDescriptor {
     val data = org.json.JSONObject(raw)
     val labels = data.optJSONArray("labels")?.let { array -> List(array.length()) { index -> array.optString(index) } }.orEmpty()
-    return LiteRtModelDescriptor(
+    return NcnnModelDescriptor(
         modelVersion = data.optString("modelVersion"),
         architecture = data.optString("architecture"),
         quantization = data.optString("quantization"),
@@ -441,11 +437,5 @@ private fun liteRtModelDescriptorFromJson(raw: String): LiteRtModelDescriptor {
         signatureAlgorithm = data.optString("signatureAlgorithm").takeIf { it.isNotBlank() },
         publicKeyId = data.optString("publicKeyId").takeIf { it.isNotBlank() },
         signatureExpiresAtMillis = data.optLong("signatureExpiresAtMillis", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE },
-        runtimeSignatureName = data.optString("runtimeSignatureName").takeIf { it.isNotBlank() },
-        inputName = data.optString("inputName").takeIf { it.isNotBlank() },
-        inputLayout = data.optString("inputLayout", "NCHW"),
-        outputName = data.optString("outputName").takeIf { it.isNotBlank() },
-        coordinatesNormalized = data.optBoolean("coordinatesNormalized", false),
-        valuesPerDetection = data.optInt("valuesPerDetection", 6),
     )
 }

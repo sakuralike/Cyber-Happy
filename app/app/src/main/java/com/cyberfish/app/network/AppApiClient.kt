@@ -2,7 +2,7 @@ package com.cyberfish.app.network
 
 import com.cyberfish.app.BuildConfig
 import com.cyberfish.app.data.local.FishRecordEntity
-import com.cyberfish.app.inference.LiteRtModelDescriptor
+import com.cyberfish.app.inference.NcnnModelDescriptor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -56,6 +56,12 @@ data class SupportContent(
     val aboutTitle: String = "关于赛博鱼乐",
     val aboutContent: String = "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。",
     val privacyContent: String = "识别默认在设备本地完成。只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。",
+    val loginEnabled: Boolean = true,
+    val registrationEnabled: Boolean = true,
+    val inviteRequired: Boolean = false,
+    val loginDisabledMessage: String = "用户登录暂未开放，请稍后再试",
+    val registrationDisabledMessage: String = "用户注册暂未开放，请联系管理员",
+    val inviteRequiredMessage: String = "当前注册需要邀请码",
 )
 
 data class CheckInRecord(
@@ -121,7 +127,7 @@ data class ModelCheckInfo(
 )
 
 data class ModelUpdateInfo(
-    val descriptor: LiteRtModelDescriptor,
+    val descriptor: NcnnModelDescriptor,
     val downloadUrl: String,
     val sizeBytes: Long? = null,
     val dispatchId: String? = null,
@@ -167,14 +173,16 @@ class AppApiClient(
         password: String,
         displayName: String,
         email: String,
+        inviteCode: String? = null,
     ): ApiResult<UserSession> = authenticate(
         "register",
         JSONObject()
             .put("username", username)
             .put("password", password)
             .put("displayName", displayName)
-            .put("email", email),
-        )
+            .put("email", email)
+            .apply { inviteCode?.takeIf { it.isNotBlank() }?.let { put("inviteCode", it) } },
+    )
 
     suspend fun updateMe(displayName: String, email: String): ApiResult<UserAccount> = withContext(Dispatchers.IO) {
         val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
@@ -229,6 +237,12 @@ class AppApiClient(
                 aboutTitle = userPage.optString("about.title", "关于赛博鱼乐"),
                 aboutContent = userPage.optString("about.content", "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。"),
                 privacyContent = userPage.optString("about.privacy", "识别默认在设备本地完成。只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。"),
+                loginEnabled = userPage.optBoolean("auth.loginEnabled", true),
+                registrationEnabled = userPage.optBoolean("auth.registrationEnabled", true),
+                inviteRequired = userPage.optBoolean("auth.inviteRequired", false),
+                loginDisabledMessage = userPage.optString("auth.loginDisabledMessage", "用户登录暂未开放，请稍后再试"),
+                registrationDisabledMessage = userPage.optString("auth.registrationDisabledMessage", "用户注册暂未开放，请联系管理员"),
+                inviteRequiredMessage = userPage.optString("auth.inviteRequiredMessage", "当前注册需要邀请码"),
             )
         }
     }
@@ -573,7 +587,7 @@ class AppApiClient(
             ModelCheckInfo(
                 hasUpdate = true,
                 update = ModelUpdateInfo(
-                descriptor = LiteRtModelDescriptor(
+                descriptor = NcnnModelDescriptor(
                     modelVersion = model.optString("modelVersion"),
                     architecture = model.optString("arch"),
                     quantization = model.optString("quant"),
@@ -586,12 +600,6 @@ class AppApiClient(
                     publicKeyId = model.optNullableString("publicKeyId"),
                     signatureExpiresAtMillis = model.optLong("signatureExpiresAtMillis", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }
                         ?: model.optString("signatureExpiresAt").toEpochMillisOrNull(),
-                    runtimeSignatureName = model.optNullableString("runtimeSignatureName"),
-                    inputName = model.optNullableString("inputName"),
-                    inputLayout = model.optString("inputLayout", "NCHW"),
-                    outputName = model.optNullableString("outputName"),
-                    coordinatesNormalized = model.optBoolean("coordinatesNormalized", false),
-                    valuesPerDetection = model.optInt("valuesPerDetection", 6),
                 ),
                 downloadUrl = config.resolve(downloadUrl),
                 sizeBytes = model.optLong("size", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE },

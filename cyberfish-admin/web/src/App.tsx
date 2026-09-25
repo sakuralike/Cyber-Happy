@@ -14,6 +14,7 @@ import { HomePage } from './pages/HomePage';
 import { AccountPage } from './pages/AccountPage';
 import { AccountLoginPage } from './pages/AccountLoginPage';
 import { SystemSettingsPage } from './pages/system-settings/SystemSettingsPage';
+import { InviteCodePage } from './pages/InviteCodePage';
 
 export default function App() {
   return (
@@ -80,6 +81,7 @@ export default function App() {
                 </RequirePerm>
               }
             />
+            <Route path="/invite-codes" element={<InviteCodePage />} />
             <Route path="/site-config" element={<Navigate to="/settings/site" replace />} />
             <Route path="/settings" element={<RequirePerm perm="siteConfig:read"><SystemSettingsPage /></RequirePerm>} />
             <Route path="/settings/:section" element={<RequirePerm perm="siteConfig:read"><SystemSettingsPage /></RequirePerm>} />

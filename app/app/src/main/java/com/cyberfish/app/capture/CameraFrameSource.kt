@@ -17,6 +17,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.doOnLayout
 import androidx.lifecycle.LifecycleOwner
 import com.cyberfish.app.inference.CameraFrame
+import com.cyberfish.app.inference.DetectionBounds
+import com.cyberfish.app.inference.DetectionRegionGate
 import com.cyberfish.app.inference.Detector
 import java.io.File
 import java.util.concurrent.ExecutorService
@@ -28,10 +30,14 @@ class CameraFrameSource(
     private val detector: Detector,
     private val onFrame: (FrameMetrics) -> Unit,
     private val onStatusChanged: (CaptureStatus) -> Unit,
-    private val onDetection: (detection: com.cyberfish.app.inference.Detection?, timestampMillis: Long) -> Unit = { _, _ -> },
+    private val onDetection: (
+        detection: com.cyberfish.app.inference.Detection?,
+        timestampMillis: Long,
+    ) -> DetectionTrackingMetrics? = { _, _ -> null },
     private val snapshotDir: File? = null,
     private val onSnapshotReady: (File) -> Unit = {},
     private val onZoomCapabilitiesChanged: (Float) -> Unit = {},
+    private val onDetectionReset: () -> Unit = {},
 ) : FrameSource {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -52,8 +58,27 @@ class CameraFrameSource(
     private var latestSnapshotFile: File? = null
     @Volatile
     private var previewOutputTransform: OutputTransform? = null
+    @Volatile
+    private var detectionModeSnapshot = DetectionModeSnapshot(
+        mode = DetectionMode.Intelligent,
+        state = DetectionRegionState.Intelligent,
+        region = null,
+        draft = null,
+        revision = 0L,
+        geometryEpoch = 0L,
+        triggerEnabled = true,
+    )
+    private var lastDetectionScopeRevision = Long.MIN_VALUE
 
     fun latestSnapshot(): File? = latestSnapshotFile?.takeIf { it.isFile }
+
+    fun setDetectionMode(snapshot: DetectionModeSnapshot) {
+        detectionModeSnapshot = snapshot
+    }
+
+    fun refreshPreviewGeometry(previewView: PreviewView) {
+        refreshPreviewOutputTransform(previewView, generation)
+    }
 
     override fun start(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val currentGeneration = ++generation
@@ -125,6 +150,7 @@ class CameraFrameSource(
         camera = null
         previewOutputTransform = null
         maxZoomRatio = 1f
+        lastDetectionScopeRevision = Long.MIN_VALUE
         onZoomCapabilitiesChanged(1f)
         cameraProvider?.unbindAll()
         onStatusChanged(CaptureStatus.Idle)
@@ -163,19 +189,38 @@ class CameraFrameSource(
         try {
             if (expectedGeneration != generation) return
             val frameTransform = coordinateMapper.capture(image)
+            val scope = detectionModeSnapshot
+            if (scope.revision != lastDetectionScopeRevision) {
+                lastDetectionScopeRevision = scope.revision
+                onDetectionReset()
+            }
+            val sourceRegion = sourceRegion(scope, frameTransform, previewView)
+            val detectionEnabled = scope.mode == DetectionMode.Intelligent ||
+                (scope.triggerEnabled && sourceRegion != null)
+            val preprocessingStartedAt = SystemClock.elapsedRealtimeNanos()
             val preparedInput = if (detector.requiresPixelData) image.toModelInput(detector.inputSize) else null
             val normalizedRgb = preparedInput?.normalizedRgb
             val sourceWidthPx = preparedInput?.transform?.sourceWidthPx ?: frameTransform.orientedWidthPx
             val sourceHeightPx = preparedInput?.transform?.sourceHeightPx ?: frameTransform.orientedHeightPx
-            val detection = detector.detect(
-                CameraFrame(
-                    width = sourceWidthPx,
-                    height = sourceHeightPx,
-                    timestampNanos = image.imageInfo.timestamp,
-                    normalizedRgb = normalizedRgb,
-                    inputTransform = preparedInput?.transform,
-                ),
-            )
+            val preprocessingMillis = elapsedMillisSince(preprocessingStartedAt)
+            val inferenceStartedAt = SystemClock.elapsedRealtimeNanos()
+            val detection = if (detectionEnabled) {
+                detector.detect(
+                    CameraFrame(
+                        width = sourceWidthPx,
+                        height = sourceHeightPx,
+                        timestampNanos = image.imageInfo.timestamp,
+                        normalizedRgb = normalizedRgb,
+                        inputTransform = preparedInput?.transform,
+                        detectionRegion = sourceRegion,
+                        detectionScopeRevision = scope.revision,
+                    ),
+                )?.takeIf { sourceRegion == null || DetectionRegionGate.accepts(it, sourceRegion) }
+            } else {
+                null
+            }
+            val inferenceMillis = if (detectionEnabled) elapsedMillisSince(inferenceStartedAt) else 0L
+            if (scope.revision != detectionModeSnapshot.revision) return
             val now = SystemClock.elapsedRealtime()
             val snapshotDirectory = snapshotDir
             if (normalizedRgb != null && snapshotDirectory != null && now - lastSnapshotAt >= SNAPSHOT_INTERVAL_MILLIS) {
@@ -191,30 +236,34 @@ class CameraFrameSource(
                         ?.forEach(File::delete)
                 }
             }
-            onDetection(detection, now)
+            val trackingMetrics = onDetection(detection, now)
             updateFrameRate(now)
             if (now - lastReportedAt >= REPORT_INTERVAL_MILLIS) {
                 lastReportedAt = now
                 val latencyMillis = ((SystemClock.elapsedRealtimeNanos() - startedAt) / NANOS_PER_MILLISECOND).coerceAtLeast(1)
                 mainExecutor.execute {
                     if (expectedGeneration == generation) {
+                        val displayDetection = previewOutputTransform?.let { target ->
+                            coordinateMapper.map(
+                                detection = detection,
+                                source = frameTransform,
+                                target = target,
+                                previewWidthPx = previewView.width.toFloat(),
+                                previewHeightPx = previewView.height.toFloat(),
+                            )
+                        }
                         onFrame(
                             FrameMetrics(
                                 detection = detection,
-                                displayDetection = previewOutputTransform?.let { target ->
-                                    coordinateMapper.map(
-                                        detection = detection,
-                                        source = frameTransform,
-                                        target = target,
-                                        previewWidthPx = previewView.width.toFloat(),
-                                        previewHeightPx = previewView.height.toFloat(),
-                                    )
-                                },
+                                displayDetection = displayDetection,
                                 framesPerSecond = framesPerSecond.coerceAtLeast(1),
                                 latencyMillis = latencyMillis,
                                 timestampMillis = now,
                                 sourceWidthPx = sourceWidthPx,
                                 sourceHeightPx = sourceHeightPx,
+                                preprocessingMillis = preprocessingMillis,
+                                inferenceMillis = inferenceMillis,
+                                trackingMetrics = trackingMetrics,
                             ),
                         )
                     }
@@ -223,6 +272,33 @@ class CameraFrameSource(
         } finally {
             image.close()
         }
+    }
+
+    private fun sourceRegion(
+        scope: DetectionModeSnapshot,
+        frameTransform: CameraXFrameTransform,
+        previewView: PreviewView,
+    ): DetectionBounds? {
+        if (scope.mode != DetectionMode.ManualRegion || !scope.triggerEnabled) return null
+        val region = scope.region ?: return null
+        val target = previewOutputTransform ?: return null
+        val previewWidthPx = previewView.width.toFloat()
+        val previewHeightPx = previewView.height.toFloat()
+        if (!previewWidthPx.isFinite() || !previewHeightPx.isFinite() || previewWidthPx <= 0f || previewHeightPx <= 0f) {
+            return null
+        }
+        return coordinateMapper.mapPreviewToSource(
+            boundsInPreview = PreviewRect(
+                left = region.left * previewWidthPx,
+                top = region.top * previewHeightPx,
+                right = region.right * previewWidthPx,
+                bottom = region.bottom * previewHeightPx,
+            ),
+            source = frameTransform,
+            target = target,
+            previewWidthPx = previewWidthPx,
+            previewHeightPx = previewHeightPx,
+        )
     }
 
     private fun updateFrameRate(now: Long) {
@@ -234,6 +310,9 @@ class CameraFrameSource(
             windowStartedAt = now
         }
     }
+
+    private fun elapsedMillisSince(startedAtNanos: Long): Long =
+        ((SystemClock.elapsedRealtimeNanos() - startedAtNanos) / NANOS_PER_MILLISECOND).coerceAtLeast(0L)
 
     private companion object {
         const val NANOS_PER_MILLISECOND = 1_000_000L
