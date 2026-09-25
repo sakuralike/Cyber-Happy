@@ -24,9 +24,9 @@ import {
 
 type UserPageValues = Record<string, any>;
 
-export function UserPageSettingsPage() {
+export function UserPageSettingsPage({ initialTab = "profile" }: { initialTab?: "profile" | "auth" }) {
   const [form] = Form.useForm<UserPageValues>();
-  const [tab, setTab] = useState<"profile" | "auth">("profile");
+  const [tab, setTab] = useState<"profile" | "auth">(initialTab);
   const queryClient = useQueryClient();
   const { hasPerm } = useAuth();
   const canWrite = hasPerm("siteConfig:write");
@@ -82,6 +82,7 @@ export function UserPageSettingsPage() {
   useEffect(() => {
     if (data) form.setFieldsValue({ ...data.values, ...data.drafts });
   }, [data, form]);
+  useEffect(() => setTab(initialTab), [initialTab]);
   const welcome =
     Form.useWatch("user.welcome.template", form) ??
     "{nickname}，本周已识别 {weekCount} 次";
