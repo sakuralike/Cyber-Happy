@@ -14,6 +14,7 @@ import {
   PictureOutlined,
   AppstoreOutlined,
   UserOutlined,
+  LoginOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -44,6 +45,7 @@ export function AppLayout() {
       hasPerm('siteConfig:read') && { key: '/settings/banners', icon: <PictureOutlined />, label: '首页轮播图' },
       hasPerm('siteConfig:read') && { key: '/settings/landing', icon: <AppstoreOutlined />, label: '落地页内容编排' },
       hasPerm('siteConfig:read') && { key: '/settings/user-page', icon: <UserOutlined />, label: '用户页面设置' },
+      hasPerm('siteConfig:read') && { key: '/settings/auth', icon: <LoginOutlined />, label: '登录与注册' },
       hasPerm('siteConfig:read') && { key: '/settings/check-in', icon: <UserOutlined />, label: '签到设置' },
       hasPerm('siteConfig:read') && { key: '/settings/publish', icon: <CloudUploadOutlined />, label: '配置发布' },
     ].filter(Boolean);
@@ -53,7 +55,7 @@ export function AppLayout() {
     ];
   }, [hasPerm]);
 
-  const selectedKey = ['/dashboard', '/app-versions', '/models', '/misreports', '/audit-logs', '/admins', '/invite-codes', '/settings/site', '/settings/banners', '/settings/landing', '/settings/user-page', '/settings/check-in', '/settings/publish', '/settings']
+  const selectedKey = ['/dashboard', '/app-versions', '/models', '/misreports', '/audit-logs', '/admins', '/invite-codes', '/settings/site', '/settings/banners', '/settings/landing', '/settings/user-page', '/settings/auth', '/settings/check-in', '/settings/publish', '/settings']
     .find((key) => location.pathname === key || location.pathname.startsWith(`${key}/`)) ?? '/dashboard';
   const roleMeta = user ? ROLE_MAP[user.role] : null;
 
