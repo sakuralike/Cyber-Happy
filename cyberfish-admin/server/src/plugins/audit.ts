@@ -62,6 +62,8 @@ export async function writeAudit(input: WriteAuditInput): Promise<void> {
 function moduleFromUrl(url: string): AuditModule | null {
   const p = url.split('?')[0] ?? '';
   if (p.includes('/auth/')) return AuditModule.AUTH;
+  if (p.includes('/users/login') || p.includes('/users/register')) return AuditModule.AUTH;
+  if (p.includes('/admin/invite-codes')) return AuditModule.ADMIN;
   if (p.includes('/admins')) return AuditModule.ADMIN;
   if (p.includes('/files')) return AuditModule.FILE;
   if (p.includes('/app-versions')) return AuditModule.APP_VERSION;
@@ -78,6 +80,7 @@ function actionFromMethod(method: string, url: string): AuditAction | null {
   const p = url.split('?')[0] ?? '';
   if (p.endsWith('/login')) return AuditAction.LOGIN;
   if (p.endsWith('/logout')) return AuditAction.LOGOUT;
+  if (p.endsWith('/revoke')) return AuditAction.UPDATE;
   if (p.includes('/actions')) {
     if (p.includes('publish-gray')) return AuditAction.PUBLISH_GRAY;
     if (p.includes('publish-online')) return AuditAction.PUBLISH_ONLINE;

@@ -9,7 +9,7 @@ import type { CurrentAppUser, CurrentUser } from '../types/fastify';
 /** 角色 → 权限点映射 */
 const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   ADMIN: [
-    'appVersion:read', 'appVersion:write', 'appVersion:publish', 'appVersion:delete',
+    'appVersion:read', 'appVersion:write', 'appVersion:publish', 'appVersion:delete', 'inviteCode:read', 'inviteCode:write', 'inviteCode:revoke',
     'model:read', 'model:write', 'model:dispatch', 'model:rollback',
     'misreport:read', 'misreport:review', 'misreport:assign', 'misreport:export',
     'dashboard:read', 'auditLog:read', 'admin:read', 'admin:write', 'siteConfig:read', 'siteConfig:write', 'siteConfig:publish', 'checkInRisk:read', 'file:read', 'file:upload',

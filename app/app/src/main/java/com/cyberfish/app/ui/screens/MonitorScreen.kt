@@ -101,6 +101,24 @@ fun MonitorScreen(
                 },
             )
         }
+        item {
+            Button(
+                onClick = {
+                    if (permissionGranted) {
+                        if (monitoring) triggerEvent = null
+                        monitoring = !monitoring
+                    }
+                    else permissionLauncher.launch(Manifest.permission.CAMERA)
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).height(56.dp).testTag("monitor-control"),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface, contentColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Icon(if (monitoring && permissionGranted) Icons.Filled.Close else Icons.Filled.PlayArrow, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text(monitorActionLabel(monitoring, permissionGranted, permissionDenied), style = MaterialTheme.typography.titleMedium)
+            }
+        }
         triggerEvent?.let { event ->
             item {
                 TriggerHeroCard(
@@ -128,24 +146,6 @@ fun MonitorScreen(
                 }
                 Slider(value = sensitivity, onValueChange = { sensitivity = it }, valueRange = 0.30f..0.95f, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                 Text("灵敏度越高，轻微点动也会触发提醒", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        item {
-            Button(
-                onClick = {
-                    if (permissionGranted) {
-                        if (monitoring) triggerEvent = null
-                        monitoring = !monitoring
-                    }
-                    else permissionLauncher.launch(Manifest.permission.CAMERA)
-                },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).height(56.dp).testTag("monitor-control"),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface, contentColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Icon(if (monitoring && permissionGranted) Icons.Filled.Close else Icons.Filled.PlayArrow, contentDescription = null)
-                Spacer(Modifier.size(8.dp))
-                Text(monitorActionLabel(monitoring, permissionGranted, permissionDenied), style = MaterialTheme.typography.titleMedium)
             }
         }
     }

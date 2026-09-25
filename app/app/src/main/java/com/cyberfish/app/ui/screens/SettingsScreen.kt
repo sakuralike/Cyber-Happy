@@ -424,7 +424,7 @@ private fun modelStateSubtitle(state: ModelState) = when (state.status) {
     ModelInstallStatus.UPDATE_AVAILABLE -> "发现新模型，等待手动更新"
     ModelInstallStatus.DOWNLOADING -> "正在下载模型 · ${state.progress}%"
     ModelInstallStatus.VERIFYING -> "正在校验模型完整性"
-    ModelInstallStatus.READY -> "LiteRT · 已就绪"
+    ModelInstallStatus.READY -> "NCNN · 已就绪"
     ModelInstallStatus.FAILED -> "模型更新失败"
     ModelInstallStatus.ROLLED_BACK -> "已回滚上一模型"
 }

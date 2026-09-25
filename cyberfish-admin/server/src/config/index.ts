@@ -42,6 +42,7 @@ const raw = {
   maxUploadSize: Number(process.env.MAX_UPLOAD_SIZE || 209715200),
   logLevel: process.env.LOG_LEVEL || 'info',
   appApiToken: process.env.APP_API_TOKEN || 'cyberfish-app-token-dev',
+  inviteCodeSecret: process.env.INVITE_CODE_SECRET || process.env.JWT_SECRET || 'cyberfish-invite-secret-dev',
   corsOrigin: process.env.CORS_ORIGIN || '*',
 };
 

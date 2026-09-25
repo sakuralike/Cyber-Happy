@@ -52,7 +52,7 @@ class LiteRtDetector(
                 inputBuffers[0].writeFloat(input)
                 runtimeSignature?.let { model.run(inputBuffers, outputBuffers, it) }
                     ?: model.run(inputBuffers, outputBuffers)
-                parseDetection(outputBuffers[0].readFloat(), frame.inputTransform)
+                parseDetection(outputBuffers[0].readFloat(), frame.inputTransform, frame.detectionRegion)
             } catch (_: Exception) {
                 null
             }
@@ -93,8 +93,12 @@ class LiteRtDetector(
         val buffers: Pair<List<TensorBuffer>, List<TensorBuffer>>,
     )
 
-    private fun parseDetection(values: FloatArray, inputTransform: ModelInputTransform?): Detection? {
-        var best: Detection? = null
+    private fun parseDetection(
+        values: FloatArray,
+        inputTransform: ModelInputTransform?,
+        detectionRegion: DetectionBounds?,
+    ): Detection? {
+        val candidates = mutableListOf<Detection>()
         for (offset in values.indices step descriptor.valuesPerDetection) {
             if (offset + descriptor.valuesPerDetection > values.size) break
             val confidence = values[offset + CONFIDENCE_INDEX]
@@ -116,11 +120,9 @@ class LiteRtDetector(
                 )
             }
             val bounds = mapModelBoundsToSource(modelBounds, inputTransform) ?: continue
-            if (best == null || confidence > best.confidence) {
-                best = Detection(bounds = bounds, confidence = confidence)
-            }
+            candidates += Detection(bounds = bounds, confidence = confidence)
         }
-        return best
+        return DetectionRegionGate.selectBest(candidates, detectionRegion)
     }
 
     private companion object {

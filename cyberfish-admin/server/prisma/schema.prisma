@@ -44,6 +44,7 @@ model AdminUser {
   landingModules   LandingModule[]    @relation("LandingModuleUpdater")
   publishedConfigRevisions ConfigRevision[] @relation("ConfigRevisionPublisher")
   rolledBackConfigRevisions ConfigRevision[] @relation("ConfigRevisionRoller")
+  createdInviteCodes InviteCode[] @relation("InviteCodeCreator")
 
   @@index([role])
   @@index([status])
@@ -65,8 +66,48 @@ model UserAccount {
   checkIns          CheckInRecord[]
   checkInRewards    CheckInRewardLog[]
   checkInRiskEvents CheckInRiskEvent[]
+  inviteCodeRedemptions InviteCodeRedemption[]
 
   @@index([status])
+}
+
+model InviteCode {
+  id          String   @id @default(cuid())
+  codeHash    String   @unique
+  codePrefix  String
+  mode        String
+  maxUses     Int
+  usedCount   Int      @default(0)
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  note        String?
+  createdById String?
+  createdBy   AdminUser? @relation("InviteCodeCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime?
+  updatedAt   DateTime @updatedAt
+  redemptions InviteCodeRedemption[]
+
+  @@index([createdAt])
+  @@index([revokedAt, expiresAt, usedCount, maxUses])
+  @@index([createdById, createdAt])
+}
+
+model InviteCodeRedemption {
+  id           String     @id @default(cuid())
+  inviteCodeId String
+  inviteCode   InviteCode @relation(fields: [inviteCodeId], references: [id], onDelete: Restrict)
+  userId       String
+  user         UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  registeredAt DateTime   @default(now())
+  ip           String?
+  userAgent    String?
+  deviceId     String?
+  channel      String     @default("WEB")
+
+  @@unique([inviteCodeId, userId])
+  @@index([inviteCodeId, registeredAt])
+  @@index([userId, registeredAt])
 }
 
 model UserFeedback {

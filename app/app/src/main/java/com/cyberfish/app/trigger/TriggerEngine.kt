@@ -1,5 +1,7 @@
 package com.cyberfish.app.trigger
 
+import kotlin.math.abs
+
 enum class TriggerPreset(val label: String) {
     Default("默认"),
     Balanced("中级"),
@@ -49,6 +51,7 @@ class TriggerEngine(
         private set
 
     private var sinkStartedAtMillis: Long? = null
+    private var sinkStartBounds: BoundingBoxSize? = null
     private var reverseConfirmationFrames = 0
     private var cooldownUntilMillis = 0L
     private val trajectory = ArrayDeque<Float>()
@@ -56,8 +59,7 @@ class TriggerEngine(
     fun evaluate(snapshot: FeatureSnapshot?): TriggerEvent? {
         if (snapshot == null) {
             if (state != TriggerState.Cooldown) state = TriggerState.Lost
-            sinkStartedAtMillis = null
-            reverseConfirmationFrames = 0
+            clearCandidate()
             return null
         }
 
@@ -73,8 +75,17 @@ class TriggerEngine(
 
         trajectory.addLast(snapshot.verticalDisplacementPx)
         while (trajectory.size > TRAJECTORY_SIZE) trajectory.removeFirst()
-        if (snapshot.verticalDisplacementPx >= SINK_START_THRESHOLD_PX && snapshot.verticalVelocityPxPerSecond > 0f) {
-            sinkStartedAtMillis = sinkStartedAtMillis ?: snapshot.timestampMillis
+        if (
+            sinkStartedAtMillis == null &&
+            snapshot.verticalDisplacementPx >= SINK_START_THRESHOLD_PX &&
+            snapshot.verticalVelocityPxPerSecond > 0f
+        ) {
+            sinkStartedAtMillis = snapshot.timestampMillis
+            sinkStartBounds = BoundingBoxSize(
+                width = snapshot.bboxWidth,
+                height = snapshot.bboxHeight,
+                area = snapshot.bboxArea,
+            )
         }
 
         val sinkStartedAt = sinkStartedAtMillis
@@ -84,15 +95,19 @@ class TriggerEngine(
             snapshot.jitterHz >= config.trembleThresholdHz &&
             snapshot.confidence >= config.minConfidence
         if (!qualified) {
+            reverseConfirmationFrames = 0
             state = if (sinkStartedAt == null) TriggerState.Idle else TriggerState.Tracking
-            if (snapshot.verticalDisplacementPx < SINK_START_THRESHOLD_PX) sinkStartedAtMillis = null
+            if (snapshot.verticalDisplacementPx < SINK_START_THRESHOLD_PX) clearCandidate()
             return null
         }
 
         state = TriggerState.Candidate
-        if (snapshot.verticalVelocityPxPerSecond <= -config.reverseVelocityThresholdPxPerSecond) {
+        if (
+            snapshot.verticalVelocityPxPerSecond <= -config.reverseVelocityThresholdPxPerSecond &&
+            hasAuxiliaryEvidence(snapshot)
+        ) {
             reverseConfirmationFrames += 1
-        } else if (snapshot.verticalVelocityPxPerSecond >= 0f) {
+        } else {
             reverseConfirmationFrames = 0
         }
         if (reverseConfirmationFrames < config.reverseConfirmationFrames) return null
@@ -106,21 +121,48 @@ class TriggerEngine(
         )
         state = TriggerState.Cooldown
         cooldownUntilMillis = snapshot.timestampMillis + config.cooldownMillis
-        sinkStartedAtMillis = null
-        reverseConfirmationFrames = 0
+        clearCandidate()
         return event
     }
 
     fun reset() {
         state = TriggerState.Idle
-        sinkStartedAtMillis = null
-        reverseConfirmationFrames = 0
+        clearCandidate()
         cooldownUntilMillis = 0L
         trajectory.clear()
     }
 
+    private fun hasAuxiliaryEvidence(snapshot: FeatureSnapshot): Boolean {
+        if (snapshot.bottomDisplacementPx >= config.sinkThresholdPx * MIN_BOTTOM_DISPLACEMENT_RATIO) return true
+        val baseline = sinkStartBounds ?: return false
+        return relativeDelta(snapshot.bboxWidth, baseline.width) >= MIN_WIDTH_DELTA_RATIO ||
+            relativeDelta(snapshot.bboxHeight, baseline.height) >= MIN_HEIGHT_DELTA_RATIO ||
+            relativeDelta(snapshot.bboxArea, baseline.area) >= MIN_AREA_DELTA_RATIO
+    }
+
+    private fun relativeDelta(current: Float, baseline: Float): Float {
+        if (!current.isFinite() || !baseline.isFinite() || current <= 0f || baseline <= 0f) return 0f
+        return abs(current / baseline - 1f)
+    }
+
+    private fun clearCandidate() {
+        sinkStartedAtMillis = null
+        sinkStartBounds = null
+        reverseConfirmationFrames = 0
+    }
+
+    private data class BoundingBoxSize(
+        val width: Float,
+        val height: Float,
+        val area: Float,
+    )
+
     private companion object {
         const val SINK_START_THRESHOLD_PX = 4f
         const val TRAJECTORY_SIZE = 36
+        const val MIN_BOTTOM_DISPLACEMENT_RATIO = 0.75f
+        const val MIN_WIDTH_DELTA_RATIO = 0.10f
+        const val MIN_HEIGHT_DELTA_RATIO = 0.10f
+        const val MIN_AREA_DELTA_RATIO = 0.15f
     }
 }
