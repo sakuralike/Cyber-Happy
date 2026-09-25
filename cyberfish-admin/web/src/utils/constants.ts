@@ -76,7 +76,7 @@ export const FRAMEWORK_MAP: ColorMap<Framework> = {
   LiteRT: { label: 'LiteRT', color: COLORS.primary },
   TFLITE: { label: 'TFLite', color: COLORS.primary },
   ONNX: { label: 'ONNX', color: COLORS.info },
-  NCNN: { label: 'NCNN', color: COLORS.purple },
+  NCNN: { label: 'NCNN', color: COLORS.info },
 };
 
 export const MODEL_STATUS_MAP: ColorMap<ModelStatus> = {
