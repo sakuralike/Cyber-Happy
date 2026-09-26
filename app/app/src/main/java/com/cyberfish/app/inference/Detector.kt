@@ -10,6 +10,8 @@ data class CameraFrame(
     val timestampNanos: Long,
     val normalizedRgb: FloatArray? = null,
     val inputTransform: ModelInputTransform? = null,
+    val detectionRegion: DetectionBounds? = null,
+    val detectionScopeRevision: Long = 0L,
 )
 
 data class DetectionBounds(

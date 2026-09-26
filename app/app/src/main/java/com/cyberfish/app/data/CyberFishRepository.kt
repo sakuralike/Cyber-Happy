@@ -93,8 +93,8 @@ class CyberFishRepository(context: Context) {
         return result
     }
 
-    suspend fun register(username: String, password: String, displayName: String, email: String): ApiResult<UserSession> {
-        val result = appApiClient.register(username, password, displayName, email)
+    suspend fun register(username: String, password: String, displayName: String, email: String, inviteCode: String? = null): ApiResult<UserSession> {
+        val result = appApiClient.register(username, password, displayName, email, inviteCode)
         if (result is ApiResult.Success) persistSession(result.value)
         return result
     }

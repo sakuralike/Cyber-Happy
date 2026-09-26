@@ -3,7 +3,7 @@ package com.cyberfish.app.update
 import com.cyberfish.app.inference.CameraFrame
 import com.cyberfish.app.inference.CloseableDetector
 import com.cyberfish.app.inference.Detection
-import com.cyberfish.app.inference.LiteRtModelDescriptor
+import com.cyberfish.app.inference.NcnnModelDescriptor
 import com.cyberfish.app.network.ApiResult
 import com.cyberfish.app.network.ModelApi
 import com.cyberfish.app.network.ModelCheckInfo
@@ -51,7 +51,7 @@ class ModelRepositoryTest {
         assertTrue(rollback.activated)
         assertEquals("model-v1", repository.activeVersion())
         assertEquals(ModelInstallStatus.ROLLED_BACK, repository.state.value.status)
-        assertTrue(File(storageDir, "active.tflite").isFile)
+        assertTrue(File(storageDir, "active.bin").isFile)
         assertTrue(api.reports.any { it.second == ModelDispatchStatus.SUCCESS })
         assertTrue(api.reports.any { it.second == ModelDispatchStatus.ROLLED_BACK })
     }
@@ -66,7 +66,7 @@ class ModelRepositoryTest {
 
         assertFalse(result.activated)
         assertEquals("SHA256_MISMATCH", result.errorCode)
-        assertFalse(File(storageDir, "active.tflite").exists())
+        assertFalse(File(storageDir, "active.bin").exists())
         assertFalse(storageDir.listFiles()!!.any { it.name.endsWith(".part") })
     }
 
@@ -104,7 +104,7 @@ class ModelRepositoryTest {
         assertTrue(result is ApiResult.Success)
         assertEquals(ModelInstallStatus.UPDATE_AVAILABLE, repository.state.value.status)
         assertEquals("model-pending", repository.state.value.modelVersion)
-        assertFalse(File(storageDir, "active.tflite").exists())
+        assertFalse(File(storageDir, "active.bin").exists())
         assertTrue(api.reports.isEmpty())
     }
 
@@ -132,11 +132,11 @@ class ModelRepositoryTest {
     )
 
     private fun update(version: String, body: ByteArray, sha256: String = body.sha256()) = ModelUpdateInfo(
-        descriptor = LiteRtModelDescriptor(
+        descriptor = NcnnModelDescriptor(
             modelVersion = version,
             architecture = "YOLO26n",
-            quantization = "W8A32",
-            framework = "LiteRT",
+            quantization = "FP32",
+            framework = "NCNN",
             inputSize = 640,
             labels = listOf("fish_float"),
             sha256 = sha256,
@@ -144,7 +144,7 @@ class ModelRepositoryTest {
             signatureAlgorithm = "ECDSA_P256_SHA256",
             publicKeyId = "test-key",
         ),
-        downloadUrl = "https://example.test/$version.tflite",
+        downloadUrl = "https://example.test/$version.bin",
         sizeBytes = body.size.toLong(),
         dispatchId = "dispatch-$version",
     )
