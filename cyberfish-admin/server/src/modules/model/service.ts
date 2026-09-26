@@ -201,7 +201,9 @@ export async function update(id: string, input: UpdateModelInput) {
 export async function remove(id: string) {
   const found = await prisma.mlModel.findUnique({ where: { id } });
   if (!found) throw AppError.notFound('模型不存在');
-  if (found.status !== 'DRAFT') throw AppError.invalidState('仅草稿状态的模型可删除');
+  if (found.status === 'ONLINE' || found.status === 'GRAY') {
+    throw AppError.invalidState('灰度或已上线模型不可删除，请先下架');
+  }
   await prisma.mlModel.delete({ where: { id } });
   return normalizeModel(found);
 }

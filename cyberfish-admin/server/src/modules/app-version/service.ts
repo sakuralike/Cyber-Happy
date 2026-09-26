@@ -159,8 +159,8 @@ export async function update(id: string, input: UpdateAppVersionInput) {
 export async function remove(id: string) {
   const found = await prisma.appVersion.findUnique({ where: { id } });
   if (!found) throw AppError.notFound('APP 版本不存在');
-  if (found.status !== ReleaseStatus.DRAFT) {
-    throw AppError.invalidState('仅草稿状态的版本可删除');
+  if (found.status === ReleaseStatus.GRAY || found.status === ReleaseStatus.ONLINE) {
+    throw AppError.invalidState('灰度或已上架版本不可删除，请先下架');
   }
   await prisma.appVersion.delete({ where: { id } });
   return normalize(found);
