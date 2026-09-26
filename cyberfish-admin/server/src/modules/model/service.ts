@@ -574,10 +574,10 @@ export async function registerDeviceKey(input: RegisterDeviceKeyInput, userId?: 
 
 export async function encryptedModel(modelId: string, query: EncryptedModelQuery) {
   const [model, deviceKey] = await Promise.all([
-    prisma.mlModel.findUnique({ where: { id: modelId }, select: { id: true, modelVersion: true, fileUrl: true, sha256: true, status: true } }),
+    prisma.mlModel.findUnique({ where: { id: modelId }, select: { id: true, modelVersion: true, framework: true, fileUrl: true, sha256: true, status: true } }),
     prisma.modelDeviceKey.findUnique({ where: { deviceId: query.deviceId } }),
   ]);
-  if (!model || !['ONLINE', 'GRAY'].includes(model.status)) throw AppError.notFound('模型不存在或未发布');
+  if (!model || model.framework !== 'NCNN' || !['ONLINE', 'GRAY'].includes(model.status)) throw AppError.notFound('模型不存在或未发布');
   if (!deviceKey || deviceKey.revokedAt || deviceKey.authorizedUntil <= new Date() || deviceKey.keyId !== query.keyId) throw new AppError(40921, '设备密钥无效、已过期或已轮换', 409);
   await prisma.modelDeviceKey.update({ where: { id: deviceKey.id }, data: { lastSeenAt: new Date() } });
   return encryptModelForDevice(model, deviceKey);

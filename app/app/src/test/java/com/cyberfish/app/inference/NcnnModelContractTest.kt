@@ -4,17 +4,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class LiteRtModelContractTest {
+class NcnnModelContractTest {
     @Test
     fun `valid YOLO26n NCNN descriptor passes`() {
-        val descriptor = descriptor()
-
-        assertTrue(NcnnModelContract.validate(descriptor).isValid)
+        assertTrue(NcnnModelContract.validate(descriptor()).isValid)
     }
 
     @Test
-    fun `legacy framework and unsupported signature are rejected`() {
-        val result = NcnnModelContract.validate(descriptor(framework = "TFLITE", signatureAlgorithm = "RSA"))
+    fun `unsupported runtime and signature are rejected`() {
+        val result = NcnnModelContract.validate(descriptor(framework = "LiteRT", signatureAlgorithm = "RSA"))
 
         assertFalse(result.isValid)
         assertTrue(result.errors.any { it.contains("运行时") })
@@ -33,7 +31,7 @@ class LiteRtModelContractTest {
     }
 
     private fun descriptor(framework: String = "NCNN", signatureAlgorithm: String = "ECDSA_P256_SHA256") = NcnnModelDescriptor(
-        modelVersion = "yolo26n-w8a32-v1",
+        modelVersion = "yolo26n-ncnn-v1",
         architecture = "YOLO26n",
         quantization = "FP32",
         framework = framework,
