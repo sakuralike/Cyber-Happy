@@ -40,12 +40,21 @@ data class TriggerEvent(
     val reason: String,
     val features: FeatureSnapshot,
     val trajectoryPx: List<Float>,
+    val action: TriggerAction = TriggerAction.FishOn,
     val modelVersion: String = "NCNN_NOT_READY",
     val snapshotPath: String? = null,
 )
 
+enum class TriggerAction(val label: String) {
+    Attention("注意"),
+    PrepareRod("准备提杆"),
+    FishOn("中鱼提杆"),
+    BlackDrift("黑漂"),
+}
+
 class TriggerEngine(
     private val config: TriggerConfig = TriggerConfig.forPreset(TriggerPreset.Balanced),
+    private val onAction: (TriggerEvent) -> Unit = {},
 ) {
     var state: TriggerState = TriggerState.Idle
         private set
@@ -54,6 +63,9 @@ class TriggerEngine(
     private var sinkStartBounds: BoundingBoxSize? = null
     private var reverseConfirmationFrames = 0
     private var cooldownUntilMillis = 0L
+    private var attentionEmitted = false
+    private var prepareRodEmitted = false
+    private var blackDriftEmitted = false
     private val trajectory = ArrayDeque<Float>()
 
     fun evaluate(snapshot: FeatureSnapshot?): TriggerEvent? {
@@ -86,6 +98,13 @@ class TriggerEngine(
                 height = snapshot.bboxHeight,
                 area = snapshot.bboxArea,
             )
+            attentionEmitted = true
+            emitAction(snapshot, TriggerAction.Attention, "检测到浮漂动作")
+        }
+
+        if (!blackDriftEmitted && isBlackDrift(snapshot)) {
+            blackDriftEmitted = true
+            emitAction(snapshot, TriggerAction.BlackDrift, "浮漂深度下沉，黑漂")
         }
 
         val sinkStartedAt = sinkStartedAtMillis
@@ -102,6 +121,10 @@ class TriggerEngine(
         }
 
         state = TriggerState.Candidate
+        if (!prepareRodEmitted) {
+            prepareRodEmitted = true
+            emitAction(snapshot, TriggerAction.PrepareRod, "持续下沉，准备提杆")
+        }
         if (
             snapshot.verticalVelocityPxPerSecond <= -config.reverseVelocityThresholdPxPerSecond &&
             hasAuxiliaryEvidence(snapshot)
@@ -112,13 +135,7 @@ class TriggerEngine(
         }
         if (reverseConfirmationFrames < config.reverseConfirmationFrames) return null
 
-        val event = TriggerEvent(
-            timestampMillis = snapshot.timestampMillis,
-            confidence = snapshot.confidence,
-            reason = "持续下沉并完成反向确认",
-            features = snapshot,
-            trajectoryPx = trajectory.toList(),
-        )
+        val event = createEvent(snapshot, TriggerAction.FishOn, "持续下沉并完成反向确认")
         state = TriggerState.Cooldown
         cooldownUntilMillis = snapshot.timestampMillis + config.cooldownMillis
         clearCandidate()
@@ -149,7 +166,28 @@ class TriggerEngine(
         sinkStartedAtMillis = null
         sinkStartBounds = null
         reverseConfirmationFrames = 0
+        attentionEmitted = false
+        prepareRodEmitted = false
+        blackDriftEmitted = false
     }
+
+    private fun emitAction(snapshot: FeatureSnapshot, action: TriggerAction, reason: String) {
+        if (action == TriggerAction.Attention && !attentionEmitted) return
+        onAction(createEvent(snapshot, action, reason))
+    }
+
+    private fun createEvent(snapshot: FeatureSnapshot, action: TriggerAction, reason: String) = TriggerEvent(
+        timestampMillis = snapshot.timestampMillis,
+        confidence = snapshot.confidence,
+        reason = reason,
+        features = snapshot,
+        trajectoryPx = trajectory.toList(),
+        action = action,
+    )
+
+    private fun isBlackDrift(snapshot: FeatureSnapshot): Boolean =
+        (trajectory.maxOrNull() ?: snapshot.verticalDisplacementPx) >= config.sinkThresholdPx * BLACK_DRIFT_THRESHOLD_RATIO ||
+            snapshot.bottomDisplacementPx >= config.sinkThresholdPx * BLACK_DRIFT_THRESHOLD_RATIO
 
     private data class BoundingBoxSize(
         val width: Float,
@@ -164,5 +202,6 @@ class TriggerEngine(
         const val MIN_WIDTH_DELTA_RATIO = 0.10f
         const val MIN_HEIGHT_DELTA_RATIO = 0.10f
         const val MIN_AREA_DELTA_RATIO = 0.15f
+        const val BLACK_DRIFT_THRESHOLD_RATIO = 1.6f
     }
 }

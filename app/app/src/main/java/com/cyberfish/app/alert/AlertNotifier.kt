@@ -10,6 +10,7 @@ import android.os.Vibrator
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.cyberfish.app.trigger.TriggerAction
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.R
 import java.util.concurrent.atomic.AtomicInteger
@@ -38,14 +39,16 @@ class AndroidAlertNotifier(
 
     override fun alert(event: TriggerEvent) {
         if (preferences.isQuietHour(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))) return
-        if (preferences.soundEnabled) playSound()
-        if (preferences.vibrationEnabled) vibrate()
-        if (preferences.notificationEnabled) postNotification(event)
+        if (preferences.soundEnabled) playSound(event.action)
+        if (event.action == TriggerAction.FishOn || event.action == TriggerAction.BlackDrift) {
+            if (preferences.vibrationEnabled) vibrate()
+            if (preferences.notificationEnabled) postNotification(event)
+        }
     }
 
-    private fun playSound() {
+    private fun playSound(action: TriggerAction) {
         runCatching {
-            MediaPlayer.create(appContext, R.raw.fish_catch)?.apply {
+            MediaPlayer.create(appContext, action.soundResource)?.apply {
                 setOnCompletionListener { it.release() }
                 setOnErrorListener { player, _, _ -> player.release(); true }
                 start()
@@ -102,6 +105,14 @@ class AndroidAlertNotifier(
         val VIBRATION_PATTERN = longArrayOf(0L, 200L, 100L, 200L)
     }
 }
+
+private val TriggerAction.soundResource: Int
+    get() = when (this) {
+        TriggerAction.Attention -> R.raw.alert_attention
+        TriggerAction.PrepareRod -> R.raw.prepare_hook
+        TriggerAction.FishOn -> R.raw.fish_on_hook
+        TriggerAction.BlackDrift -> R.raw.black_float
+    }
 
 private const val QUIET_START_HOUR = 22
 private const val QUIET_END_HOUR = 6

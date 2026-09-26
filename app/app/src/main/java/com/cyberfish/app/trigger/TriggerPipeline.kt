@@ -6,10 +6,11 @@ import com.cyberfish.app.inference.SingleDetectionTracker
 class TriggerPipeline(
     config: TriggerConfig = TriggerConfig.forPreset(TriggerPreset.Balanced),
     private val onTrigger: (TriggerEvent) -> Unit,
+    private val onAlert: (TriggerEvent) -> Unit = {},
 ) {
     private val tracker = SingleDetectionTracker()
     private val calculator = FeatureCalculator()
-    private val engine = TriggerEngine(config)
+    private val engine = TriggerEngine(config, onAction = onAlert)
     private var activeTrackId: Long? = null
 
     @Synchronized
@@ -27,7 +28,10 @@ class TriggerPipeline(
             activeTrackId = tracked.trackId
         }
         val snapshot = calculator.update(tracked, timestampMillis)
-        engine.evaluate(snapshot)?.let(onTrigger)
+        engine.evaluate(snapshot)?.let { event ->
+            onAlert(event)
+            onTrigger(event)
+        }
         return snapshot
     }
 
