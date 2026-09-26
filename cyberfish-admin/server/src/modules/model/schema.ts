@@ -48,6 +48,11 @@ export const createModelSchema = z.object({
 
 export const updateModelSchema = createModelSchema.partial().omit({ modelVersion: true });
 
+export const modelActionSchema = z.object({
+  action: z.enum(['OFFLINE']),
+  reason: z.string().trim().max(500).optional(),
+});
+
 export const dispatchSchema = z.object({
   targetType: z.nativeEnum(DispatchTargetType),
   targetValue: z.record(z.unknown()).default({}),
@@ -107,6 +112,7 @@ export const reportDispatchSchema = z.object({
 export type ModelListQuery = z.infer<typeof modelListSchema>;
 export type CreateModelInput = z.infer<typeof createModelSchema>;
 export type UpdateModelInput = z.infer<typeof updateModelSchema>;
+export type ModelActionInput = z.infer<typeof modelActionSchema>;
 export type DispatchInput = z.infer<typeof dispatchSchema>;
 export type RollbackInput = z.infer<typeof rollbackSchema>;
 export type DispatchListQuery = z.infer<typeof dispatchListSchema>;

@@ -96,6 +96,14 @@ export function ModelPage() {
     },
     onError: notifyError,
   });
+  const actionMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) => modelApi.modelAction(id, 'OFFLINE', reason),
+    onSuccess: () => {
+      message.success('模型已下架');
+      invalidate();
+    },
+    onError: notifyError,
+  });
   const dispatchMut = useMutation({
     mutationFn: ({ id, v }: { id: string; v: modelApi.DispatchInput }) => modelApi.dispatchModel(id, v),
     onSuccess: (d) => {
@@ -266,6 +274,17 @@ export function ModelPage() {
             >
               回滚
             </Button>}
+            {hasPerm('model:dispatch') && ['ONLINE', 'GRAY', 'ROLLBACK'].includes(r.status) && (
+              <Popconfirm
+                title="确认下架该模型？"
+                description="下架后 APP 将不再获取该模型。"
+                onConfirm={() => actionMut.mutate({ id: r.id })}
+              >
+                <Button size="small" danger loading={actionMut.isPending && actionMut.variables?.id === r.id}>
+                  下架
+                </Button>
+              </Popconfirm>
+            )}
             {hasPerm('model:write') && r.status === 'DRAFT' && (
               <Popconfirm title="确认删除该草稿？" onConfirm={() => deleteMut.mutate(r.id)}>
                 <Button size="small" danger>

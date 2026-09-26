@@ -9,6 +9,7 @@ import type {
   ModelListQuery,
   CreateModelInput,
   UpdateModelInput,
+  ModelActionInput,
   DispatchInput,
   RollbackInput,
   DispatchListQuery,
@@ -203,6 +204,21 @@ export async function remove(id: string) {
   if (found.status !== 'DRAFT') throw AppError.invalidState('仅草稿状态的模型可删除');
   await prisma.mlModel.delete({ where: { id } });
   return normalizeModel(found);
+}
+
+export async function doAction(id: string, input: ModelActionInput, operatorId?: string) {
+  const found = await prisma.mlModel.findUnique({ where: { id } });
+  if (!found) throw AppError.notFound('模型不存在');
+
+  if (input.action !== 'OFFLINE') throw AppError.badRequest(`不支持的动作：${input.action}`);
+  if (found.status === 'OFFLINE') throw AppError.invalidState('模型已处于下架状态');
+  if (found.status === 'DRAFT') throw AppError.invalidState('草稿模型无需下架');
+
+  const after = await prisma.mlModel.update({
+    where: { id },
+    data: { status: 'OFFLINE' },
+  });
+  return { before: normalizeModel(found), after: normalizeModel(after), reason: input.reason };
 }
 
 // ============================================================
