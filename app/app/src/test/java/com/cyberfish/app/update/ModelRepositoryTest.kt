@@ -20,6 +20,17 @@ import java.io.File
 import java.io.OutputStream
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.security.KeyPairGenerator
+import java.security.spec.MGF1ParameterSpec
+import java.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.OAEPParameterSpec
+import javax.crypto.spec.PSource
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import org.json.JSONObject
 
 class ModelRepositoryTest {
     private lateinit var storageDir: File
@@ -123,11 +134,37 @@ class ModelRepositoryTest {
         assertEquals(ModelInstallStatus.FAILED, repository.state.value.status)
     }
 
-    private fun repository(api: FakeModelApi, signatureValid: Boolean = true) = ModelRepository(
+    @Test
+    fun `encrypted install persists only ciphertext and reloads through the device key`() = runBlocking {
+        val keyPair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        val provider = object : ModelKeyProvider {
+            override fun ensureKey() = ModelKeyMaterial("key-1", Base64.getEncoder().encodeToString(keyPair.public.encoded), "SOFTWARE")
+            override fun decryptWrappedKey(wrappedKey: ByteArray): ByteArray = Cipher.getInstance("RSA/ECB/OAEPPadding").run {
+                init(Cipher.DECRYPT_MODE, keyPair.private, OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT))
+                doFinal(wrappedKey)
+            }
+        }
+        val plaintext = "encrypted model".toByteArray()
+        val body = encryptedContainer(plaintext, "model-encrypted", provider.ensureKey(), keyPair.public.encoded)
+        val update = update("model-encrypted", plaintext).copy(downloadUrl = "https://example.test/model-encrypted", encrypted = true)
+        val repository = repository(FakeModelApi(bodies = mapOf("model-encrypted" to body)), keyProvider = provider)
+
+        assertTrue(repository.install(update).activated)
+        assertFalse(File(storageDir, "active.bin").readBytes().contentEquals(plaintext))
+        assertTrue(File(storageDir, "active.json").readText().contains("\"encrypted\":true"))
+        assertEquals("model-encrypted", repository(FakeModelApi(), keyProvider = provider).activeVersion())
+    }
+
+    private fun repository(api: FakeModelApi, signatureValid: Boolean = true, keyProvider: ModelKeyProvider? = null) = ModelRepository(
         modelApi = api,
         storageDir = storageDir,
-        signatureVerifier = ModelSignatureVerifier { _, _ -> signatureValid },
+        signatureVerifier = object : ModelSignatureVerifier {
+            override fun verify(file: File, descriptor: NcnnModelDescriptor) = signatureValid
+            override fun verifyBytes(bytes: ByteArray, descriptor: NcnnModelDescriptor) = signatureValid
+        },
         detectorFactory = { _, descriptor -> TestDetector(descriptor.modelVersion) },
+        bytesDetectorFactory = { _, descriptor -> TestDetector(descriptor.modelVersion) },
+        modelKeyProvider = keyProvider,
         allowInsecureHttp = false,
     )
 
@@ -151,6 +188,7 @@ class ModelRepositoryTest {
 
     private class FakeModelApi(
         private val check: ModelCheckInfo = ModelCheckInfo(hasUpdate = false),
+        private val bodies: Map<String, ByteArray> = emptyMap(),
     ) : ModelApi {
         val reports = mutableListOf<Pair<String, ModelDispatchStatus>>()
 
@@ -172,7 +210,7 @@ class ModelRepositoryTest {
             output: OutputStream,
             onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
         ): ApiResult<Long> {
-            val body = when {
+            val body = bodies.entries.firstOrNull { url.contains(it.key) }?.value ?: when {
                 url.contains("model-v1") -> "first model".toByteArray()
                 url.contains("model-v2") -> "second model".toByteArray()
                 url.contains("model-bad-hash") -> "corrupted model".toByteArray()
@@ -182,6 +220,31 @@ class ModelRepositoryTest {
             onProgress(body.size.toLong(), body.size.toLong())
             return ApiResult.Success(body.size.toLong())
         }
+    }
+
+    private fun encryptedContainer(plaintext: ByteArray, version: String, key: ModelKeyMaterial, publicKey: ByteArray): ByteArray {
+        val dek = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        val nonce = ByteArray(12) { (it + 1).toByte() }
+        val aad = "cyberfish-model-v1|model-id|$version|device|${plaintext.sha256()}"
+        val encrypted = Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.ENCRYPT_MODE, dek, GCMParameterSpec(128, nonce))
+            updateAAD(aad.toByteArray())
+            doFinal(plaintext)
+        }
+        val wrapped = Cipher.getInstance("RSA/ECB/OAEPPadding").run {
+            val rsa = java.security.KeyFactory.getInstance("RSA").generatePublic(java.security.spec.X509EncodedKeySpec(publicKey))
+            init(Cipher.ENCRYPT_MODE, rsa, OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT))
+            doFinal(dek.encoded)
+        }
+        val header = JSONObject()
+            .put("version", 1).put("algorithm", "AES_256_GCM_RSA_OAEP_SHA256")
+            .put("modelVersion", version).put("deviceId", "device").put("keyId", key.keyId)
+            .put("keyWrap", "RSA_OAEP_SHA256_MGF1_SHA1")
+            .put("authorizedUntil", "2099-01-01T00:00:00Z")
+            .put("nonce", Base64.getEncoder().encodeToString(nonce))
+            .put("wrappedKey", Base64.getEncoder().encodeToString(wrapped)).put("aad", aad)
+            .toString().toByteArray()
+        return ByteBuffer.allocate(12).order(ByteOrder.BIG_ENDIAN).put("CFMODEL1".toByteArray()).putInt(header.size).array() + header + encrypted
     }
 
     private class TestDetector(override val modelVersion: String) : CloseableDetector {

@@ -11,6 +11,8 @@ import {
   deviceLogListSchema,
   checkModelSchema,
   reportDispatchSchema,
+  registerDeviceKeySchema,
+  encryptedModelQuerySchema,
 } from './schema';
 import * as service from './service';
 
@@ -152,6 +154,19 @@ const routes: FastifyPluginAsync = async (app) => {
   });
 
   // ---------------- APP 端 ----------------
+
+  app.post('/devices/register', async (request, reply) => {
+    const input = parseOrThrow(registerDeviceKeySchema, request.body);
+    const appUser = request.headers.authorization ? await app.resolveAppUser(request) : undefined;
+    return sendOk(reply, await service.registerDeviceKey(input, appUser?.id));
+  });
+
+  app.get('/encrypted/:id', async (request, reply) => {
+    const { id } = parseOrThrow(idParamSchema, request.params);
+    const query = parseOrThrow(encryptedModelQuerySchema, request.query);
+    const encrypted = await service.encryptedModel(id, query);
+    return reply.type('application/vnd.cyberfish.model+encrypted').header('Cache-Control', 'no-store').send(encrypted);
+  });
 
   app.get('/check', async (request, reply) => {
     const q = parseOrThrow(checkModelSchema, request.query);

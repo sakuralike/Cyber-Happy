@@ -127,6 +127,9 @@ const authPlugin: FastifyPluginAsync = async (app) => {
   // 全局钩子：非公开路径一律要求登录
   app.addHook('onRequest', async (request) => {
     if (isPublic(request.url)) return;
+    if (request.url.split('?')[0].startsWith('/files/models/')) {
+      throw AppError.forbidden('模型文件仅允许设备加密下发');
+    }
     // 签到 POST 在 preValidation 阶段鉴权，使回放审计可读取已解析的请求体。
     if (request.method === 'POST' && request.url.split('?')[0] === '/api/v1/check-in') return;
     // APP 端接口走 X-App-Token，跳过后台 JWT

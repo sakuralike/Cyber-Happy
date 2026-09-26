@@ -3,6 +3,8 @@ package com.cyberfish.app.network
 import com.cyberfish.app.BuildConfig
 import com.cyberfish.app.data.local.FishRecordEntity
 import com.cyberfish.app.inference.NcnnModelDescriptor
+import com.cyberfish.app.update.ModelKeyMaterial
+import com.cyberfish.app.update.ModelKeyProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -131,6 +133,7 @@ data class ModelUpdateInfo(
     val downloadUrl: String,
     val sizeBytes: Long? = null,
     val dispatchId: String? = null,
+    val encrypted: Boolean = false,
 )
 
 enum class ModelDispatchStatus { PENDING, DOWNLOADING, SUCCESS, FAILED, ROLLED_BACK }
@@ -164,6 +167,7 @@ class AppApiClient(
     private val config: ApiConfig,
     private val identityStore: DeviceIdentityProvider,
     private val userSessionProvider: UserSessionProvider = EmptyUserSessionProvider,
+    private val modelKeyProvider: ModelKeyProvider? = null,
     private val httpClient: OkHttpClient = defaultHttpClient(),
 ) : ModelApi {
     suspend fun login(username: String, password: String): ApiResult<UserSession> = authenticate("login", JSONObject().put("username", username).put("password", password))
@@ -567,11 +571,23 @@ class AppApiClient(
     override suspend fun checkModel(currentModelVersion: String?): ApiResult<ModelCheckInfo> = withContext(Dispatchers.IO) {
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
         val identity = identityStore.get()
+        val keyMaterial = try {
+            modelKeyProvider?.ensureKey()
+        } catch (error: Exception) {
+            return@withContext ApiResult.ParseError(error.message ?: "设备模型密钥初始化失败")
+        }
+        if (keyMaterial != null) {
+            when (val registration = registerModelDevice(identity, keyMaterial)) {
+                is ApiResult.Success -> Unit
+                else -> return@withContext registration.asModelCheckFailure()
+            }
+        }
         val requestUrl = config.endpoint("api/v1/models/check").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
         val url = requestUrl.newBuilder()
             .addQueryParameter("appVersionCode", BuildConfig.VERSION_CODE.toString())
             .addQueryParameter("deviceId", identity.deviceId)
+            .apply { keyMaterial?.keyId?.let { addQueryParameter("keyId", it) } }
             .apply { currentModelVersion?.takeIf { it.isNotBlank() }?.let { addQueryParameter("currentModelVersion", it) } }
             .build()
         executeJson(Request.Builder().url(url).get().appToken(config.appToken).build()) { data ->
@@ -603,10 +619,27 @@ class AppApiClient(
                 ),
                 downloadUrl = config.resolve(downloadUrl),
                 sizeBytes = model.optLong("size", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE },
-                dispatchId = data.optString("dispatchId").takeIf { it.isNotBlank() },
+                    dispatchId = data.optString("dispatchId").takeIf { it.isNotBlank() },
+                    encrypted = model.optBoolean("encrypted", false),
                 ),
             )
         }
+    }
+
+    private suspend fun registerModelDevice(identity: DeviceIdentity, key: ModelKeyMaterial): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        val requestUrl = config.endpoint("api/v1/models/devices/register").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        val body = JSONObject()
+            .put("deviceId", identity.deviceId)
+            .put("publicKey", key.publicKey)
+            .put("algorithm", "RSA_OAEP_SHA256")
+            .put("securityLevel", key.securityLevel)
+            .put("appVersionCode", BuildConfig.VERSION_CODE)
+        val session = userSessionProvider.get()
+        executeJson(
+            Request.Builder().url(requestUrl).post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .appToken(config.appToken).userToken(session?.token).build(),
+        ) { Unit }
     }
 
     override suspend fun reportModelDispatch(
@@ -758,6 +791,14 @@ class AppApiClient(
             .writeTimeout(15, TimeUnit.SECONDS)
             .build()
     }
+}
+
+private fun ApiResult<*>.asModelCheckFailure(): ApiResult<ModelCheckInfo> = when (this) {
+    ApiResult.NotConfigured -> ApiResult.NotConfigured
+    is ApiResult.HttpError -> ApiResult.HttpError(statusCode, message, errorCode)
+    is ApiResult.NetworkError -> ApiResult.NetworkError(message)
+    is ApiResult.ParseError -> ApiResult.ParseError(message)
+    is ApiResult.Success<*> -> ApiResult.ParseError("设备密钥注册响应无效")
 }
 
 private fun String.toEpochMillisOrNull(): Long? = takeIf { it.isNotBlank() }?.let {

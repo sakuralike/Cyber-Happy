@@ -80,6 +80,20 @@ export const checkModelSchema = z.object({
   deviceId: z.string().trim().min(1),
   currentModelVersion: z.string().trim().optional(),
   deviceGroup: z.string().trim().optional(),
+  keyId: z.string().trim().min(1).max(120).optional(),
+});
+
+export const registerDeviceKeySchema = z.object({
+  deviceId: z.string().trim().min(1).max(200),
+  publicKey: z.string().trim().min(100).max(10000),
+  algorithm: z.literal('RSA_OAEP_SHA256'),
+  securityLevel: z.enum(['SOFTWARE', 'TEE', 'STRONGBOX', 'UNKNOWN']),
+  appVersionCode: z.number().int().nonnegative(),
+});
+
+export const encryptedModelQuerySchema = z.object({
+  deviceId: z.string().trim().min(1).max(200),
+  keyId: z.string().trim().min(1).max(120),
 });
 
 export const reportDispatchSchema = z.object({
@@ -98,4 +112,6 @@ export type RollbackInput = z.infer<typeof rollbackSchema>;
 export type DispatchListQuery = z.infer<typeof dispatchListSchema>;
 export type DeviceLogListQuery = z.infer<typeof deviceLogListSchema>;
 export type CheckModelQuery = z.infer<typeof checkModelSchema>;
+export type RegisterDeviceKeyInput = z.infer<typeof registerDeviceKeySchema>;
+export type EncryptedModelQuery = z.infer<typeof encryptedModelQuerySchema>;
 export type ReportDispatchInput = z.infer<typeof reportDispatchSchema>;

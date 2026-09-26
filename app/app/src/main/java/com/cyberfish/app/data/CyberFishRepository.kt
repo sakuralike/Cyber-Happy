@@ -30,6 +30,7 @@ import com.cyberfish.app.network.MisreportUploadWorker
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.update.ModelRuntime
 import com.cyberfish.app.update.ModelUpdateWorker
+import com.cyberfish.app.update.AndroidModelKeyStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
@@ -45,8 +46,10 @@ class CyberFishRepository(context: Context) {
     private val preferencesStore = AppPreferencesStore(appContext)
     private val checkInCacheStore = CheckInCacheStore(appContext)
     private val userSessionStore = UserSessionStore(appContext)
-    private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(appContext), userSessionStore)
-    val modelRepository = ModelRuntime.get(appContext, appApiClient)
+    private val deviceIdentityStore = DeviceIdentityStore(appContext)
+    private val modelKeyStore = AndroidModelKeyStore()
+    private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), deviceIdentityStore, userSessionStore, modelKeyStore)
+    val modelRepository = ModelRuntime.get(appContext, appApiClient, modelKeyStore)
     val modelState = modelRepository.state
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
     val preferences: Flow<AppPreferences> = preferencesStore.data
