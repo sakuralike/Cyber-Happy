@@ -230,7 +230,7 @@ private fun AlertSettings(settings: AppPreferences, onSettingsChange: (AppPrefer
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionCard("提醒方式") {
-            SettingRow("声音提醒", "默认铃声 · 中鱼号 03") { Switch(checked = settings.soundEnabled, onCheckedChange = { onSettingsChange(settings.copy(soundEnabled = it)) }) }
+            SettingRow("声音提醒", "按浮漂动作播报：注意、准备提杆、中鱼提杆、黑漂") { Switch(checked = settings.soundEnabled, onCheckedChange = { onSettingsChange(settings.copy(soundEnabled = it)) }) }
             SettingRow("震动", "Pattern 0, 200, 100, 200") { Switch(checked = settings.vibrationEnabled, onCheckedChange = { onSettingsChange(settings.copy(vibrationEnabled = it)) }) }
             SettingRow("推送通知", "需要系统通知权限") {
                 Switch(

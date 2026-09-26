@@ -112,13 +112,20 @@ fun CameraPreviewCard(
     var geometryEpoch by remember { mutableLongStateOf(detectionModeSnapshot.geometryEpoch) }
     val notifier = remember(context, alertPreferences) { AndroidAlertNotifier(context.applicationContext, alertPreferences) }
     val triggerPipeline = remember(triggerConfig, notifier, detector) {
-        TriggerPipeline(config = triggerConfig) { event ->
-            mainExecutor.execute {
-                notifier.alert(event)
-                val snapshotPath = latestSnapshot.get()?.let { copySnapshot(it, snapshotDir, event.timestampMillis) }
-                currentOnTrigger.value(event.copy(modelVersion = detector.modelVersion, snapshotPath = snapshotPath))
-            }
-        }
+        TriggerPipeline(
+            config = triggerConfig,
+            onTrigger = { event ->
+                mainExecutor.execute {
+                    val snapshotPath = latestSnapshot.get()?.let { copySnapshot(it, snapshotDir, event.timestampMillis) }
+                    currentOnTrigger.value(event.copy(modelVersion = detector.modelVersion, snapshotPath = snapshotPath))
+                }
+            },
+            onAlert = { event ->
+                mainExecutor.execute {
+                    notifier.alert(event)
+                }
+            },
+        )
     }
     val frameSource = remember(triggerPipeline, detector) {
         CameraFrameSource(

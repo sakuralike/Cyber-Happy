@@ -129,6 +129,36 @@ class TriggerEngineTest {
         assertTrue(TriggerPreset.entries.map { it.label }.containsAll(listOf("默认", "中级", "高级")))
     }
 
+    @Test
+    fun `action stages announce attention prepare and fish on`() {
+        val actions = mutableListOf<TriggerAction>()
+        val engine = TriggerEngine(config) { actions += it.action }
+
+        engine.evaluate(snapshot(0L, 0f, 0f))
+        engine.evaluate(snapshot(100L, 5f, 10f))
+        engine.evaluate(snapshot(900L, 20f, 20f))
+        engine.evaluate(snapshot(933L, 20f, -12f))
+        val event = engine.evaluate(snapshot(966L, 19f, -12f))
+
+        assertEquals(listOf(TriggerAction.Attention, TriggerAction.PrepareRod), actions)
+        assertEquals(TriggerAction.FishOn, event?.action)
+    }
+
+    @Test
+    fun `deep sink final action is black drift`() {
+        val actions = mutableListOf<TriggerAction>()
+        val engine = TriggerEngine(config) { actions += it.action }
+
+        engine.evaluate(snapshot(0L, 0f, 0f))
+        engine.evaluate(snapshot(100L, 5f, 10f))
+        engine.evaluate(snapshot(900L, 32f, 20f))
+        engine.evaluate(snapshot(933L, 32f, -12f))
+        val event = engine.evaluate(snapshot(966L, 31f, -12f))
+
+        assertEquals(TriggerAction.FishOn, event?.action)
+        assertTrue(actions.contains(TriggerAction.BlackDrift))
+    }
+
     private fun triggerOnce(engine: TriggerEngine) {
         engine.evaluate(snapshot(0L, 0f, 0f))
         engine.evaluate(snapshot(100L, 5f, 10f))
