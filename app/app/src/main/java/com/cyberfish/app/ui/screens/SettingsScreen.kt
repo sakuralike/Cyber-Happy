@@ -321,16 +321,14 @@ private fun ModelSettings(
             }
         }
         SectionCard("推理后端") {
-            listOf("NNAPI", "GPU Delegate", "XNNPACK (CPU)").forEach { option ->
-                FilterChip(
-                    selected = settings.inferenceBackend == option.substringBefore(" "),
-                    onClick = { onSettingsChange(settings.copy(inferenceBackend = option.substringBefore(" "))) },
-                    label = { Text(option) },
-                    leadingIcon = { Icon(Icons.Filled.Info, contentDescription = null) },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                    colors = activeChipColors(),
-                )
-            }
+            FilterChip(
+                selected = true,
+                onClick = { onSettingsChange(settings.copy(inferenceBackend = "NCNN")) },
+                label = { Text("NCNN") },
+                leadingIcon = { Icon(Icons.Filled.Info, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                colors = activeChipColors(),
+            )
         }
         SectionCard("性能模式") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -416,10 +414,10 @@ private fun versionCheckMessage(state: VersionCheckState) = when (state) {
     is VersionCheckState.Failed -> "检查失败：${state.message}"
 }
 
-private fun modelStateTitle(state: ModelState) = if (state.status == ModelInstallStatus.MOCK) "占位模型 MockDetector" else state.modelVersion
+private fun modelStateTitle(state: ModelState) = state.modelVersion
 
 private fun modelStateSubtitle(state: ModelState) = when (state.status) {
-    ModelInstallStatus.MOCK -> "规则模拟 · 仅供联调"
+    ModelInstallStatus.NO_MODEL -> "NCNN 已接入，等待加密模型授权"
     ModelInstallStatus.CHECKING -> "正在检查可用模型"
     ModelInstallStatus.UPDATE_AVAILABLE -> "发现新模型，等待手动更新"
     ModelInstallStatus.DOWNLOADING -> "正在下载模型 · ${state.progress}%"
@@ -430,7 +428,7 @@ private fun modelStateSubtitle(state: ModelState) = when (state.status) {
 }
 
 private fun modelStateLabel(state: ModelState) = when (state.status) {
-    ModelInstallStatus.MOCK -> "未接入"
+    ModelInstallStatus.NO_MODEL -> "未就绪"
     ModelInstallStatus.CHECKING -> "检查中"
     ModelInstallStatus.UPDATE_AVAILABLE -> "有更新"
     ModelInstallStatus.DOWNLOADING -> "下载中"

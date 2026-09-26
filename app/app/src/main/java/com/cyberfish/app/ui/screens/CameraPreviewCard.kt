@@ -72,7 +72,7 @@ import com.cyberfish.app.capture.DetectionTrackingMetrics
 import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.capture.NormalizedPreviewRect
 import com.cyberfish.app.inference.Detection
-import com.cyberfish.app.inference.MockDetector
+import com.cyberfish.app.inference.UnavailableDetector
 import com.cyberfish.app.inference.Detector
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.trigger.TriggerConfig
@@ -92,7 +92,7 @@ fun CameraPreviewCard(
     alertPreferences: AlertPreferences,
     onTrigger: (TriggerEvent) -> Unit,
     onFrameMetrics: (FrameMetrics) -> Unit = {},
-    detector: Detector = MockDetector(),
+    detector: Detector = UnavailableDetector(),
 ) {
     val context = LocalContext.current
     val lifecycleOwner = context.findLifecycleOwner()
