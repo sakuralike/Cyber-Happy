@@ -1,516 +1,675 @@
-package com.cyberfish.app.ui
+package com.cyberfish.app.ui.screens
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.camera.view.PreviewView
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.core.content.FileProvider
-import android.content.Intent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
 import com.cyberfish.app.alert.AlertPreferences
-import com.cyberfish.app.data.CyberFishRepository
-import com.cyberfish.app.data.checkin.CHECK_IN_CONFIG_CACHE_TTL_MILLIS
-import com.cyberfish.app.data.model.FishRecord
-import com.cyberfish.app.data.preferences.AppPreferences
-import com.cyberfish.app.network.ApiResult
-import com.cyberfish.app.network.AppEventType
-import com.cyberfish.app.network.CheckInOverview
-import com.cyberfish.app.network.SupportContent
-import com.cyberfish.app.network.VersionCheckState
+import com.cyberfish.app.alert.AndroidAlertNotifier
+import com.cyberfish.app.capture.CameraFrameSource
+import com.cyberfish.app.capture.CaptureStatus
+import com.cyberfish.app.capture.DefaultDetectionModeController
+import com.cyberfish.app.capture.DetectionMode
+import com.cyberfish.app.capture.DetectionModeEffect
+import com.cyberfish.app.capture.DetectionModeIntent
+import com.cyberfish.app.capture.DetectionModeSnapshot
+import com.cyberfish.app.capture.DetectionRegionState
+import com.cyberfish.app.capture.DetectionTrackingMetrics
+import com.cyberfish.app.capture.FrameMetrics
+import com.cyberfish.app.capture.FrameTriggerMetrics
+import com.cyberfish.app.capture.NormalizedPreviewRect
+import com.cyberfish.app.inference.Detection
+import com.cyberfish.app.inference.UnavailableDetector
+import com.cyberfish.app.inference.Detector
+import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.trigger.TriggerConfig
-import com.cyberfish.app.ui.components.PillTabBar
-import com.cyberfish.app.ui.components.AvatarCropDialog
-import com.cyberfish.app.ui.screens.FishingSpotMapScreen
-import com.cyberfish.app.ui.screens.CheckInScreen
-import com.cyberfish.app.ui.screens.MonitorScreen
-import com.cyberfish.app.ui.screens.ProfileScreen
-import com.cyberfish.app.ui.screens.RecordsScreen
-import com.cyberfish.app.ui.screens.SettingsScreen
-import com.cyberfish.app.ui.theme.CyberFishTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import android.net.Uri
-import kotlin.math.roundToLong
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import com.cyberfish.app.network.AppDownloadMode
-import com.cyberfish.app.update.ApkInstallPreparation
-import com.cyberfish.app.update.AppUpdateWorker
-import com.cyberfish.app.update.installApk
+import com.cyberfish.app.trigger.TriggerPipeline
+import com.cyberfish.app.ui.theme.ChartPalette
+import com.cyberfish.app.ui.theme.CameraPanel
+import java.io.File
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 
-internal enum class AppTab(val label: String) {
-    Monitor("监控"),
-    Records("记录"),
-    Settings("设置"),
-    Profile("我的"),
-}
+@Composable
+fun CameraPreviewCard(
+    monitoring: Boolean,
+    permissionGranted: Boolean,
+    permissionDenied: Boolean,
+    triggerConfig: TriggerConfig,
+    alertPreferences: AlertPreferences,
+    onTrigger: (TriggerEvent) -> Unit,
+    onFrameMetrics: (FrameMetrics) -> Unit = {},
+    onLiveFrameMetrics: (FrameMetrics?) -> Unit = {},
+    detector: Detector = UnavailableDetector(),
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = context.findLifecycleOwner()
+    val mainExecutor = remember(context) { ContextCompat.getMainExecutor(context) }
+    val currentOnTrigger = rememberUpdatedState(onTrigger)
+    val snapshotDir = remember(context) { File(context.filesDir, "media") }
+    val latestSnapshot = remember { AtomicReference<File?>(null) }
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    var metrics by remember { mutableStateOf<FrameMetrics?>(null) }
+    var lastTelemetryAt by remember { mutableStateOf(0L) }
+    var captureStatus by remember { mutableStateOf(CaptureStatus.Idle) }
+    var maxZoomRatio by remember { mutableFloatStateOf(1f) }
+    var selectedZoomRatio by rememberSaveable { mutableFloatStateOf(1f) }
+    val detectionModeController = remember { DefaultDetectionModeController() }
+    var detectionModeSnapshot by remember { mutableStateOf(detectionModeController.snapshot()) }
+    var lastPreviewSize by remember { mutableStateOf(IntSize.Zero) }
+    var geometryEpoch by remember { mutableLongStateOf(detectionModeSnapshot.geometryEpoch) }
+    val notifier = remember(context, alertPreferences) { AndroidAlertNotifier(context.applicationContext, alertPreferences) }
+    val triggerPipeline = remember(notifier, detector) {
+        TriggerPipeline(
+            config = triggerConfig,
+            onTrigger = { event ->
+                mainExecutor.execute {
+                    val snapshotPath = latestSnapshot.get()?.let { copySnapshot(it, snapshotDir, event.timestampMillis) }
+                    currentOnTrigger.value(event.copy(modelVersion = detector.modelVersion, snapshotPath = snapshotPath))
+                }
+            },
+            onAlert = { event ->
+                mainExecutor.execute {
+                    notifier.alert(event)
+                }
+            },
+        )
+    }
+    SideEffect { triggerPipeline.updateConfig(triggerConfig) }
+    val frameSource = remember(triggerPipeline, detector) {
+        CameraFrameSource(
+            context = context.applicationContext,
+            detector = detector,
+            onFrame = {
+                metrics = it
+                onLiveFrameMetrics(it)
+                if (it.timestampMillis - lastTelemetryAt >= 5_000L) {
+                    lastTelemetryAt = it.timestampMillis
+                    onFrameMetrics(it)
+                }
+            },
+            onStatusChanged = { captureStatus = it },
+            onDetection = { detection, timestampMillis ->
+                val snapshot = triggerPipeline.accept(detection, timestampMillis)
+                FrameTriggerMetrics(
+                    featureSnapshot = snapshot,
+                    triggerState = triggerPipeline.state,
+                    candidateDurationMillis = triggerPipeline.candidateDurationMillis(timestampMillis),
+                )
+            },
+            snapshotDir = snapshotDir,
+            onSnapshotReady = { latestSnapshot.set(it) },
+            onZoomCapabilitiesChanged = { maxZoom ->
+                maxZoomRatio = maxZoom.coerceAtLeast(1f)
+                if (selectedZoomRatio > maxZoomRatio) selectedZoomRatio = 1f
+            },
+            onDetectionReset = {
+                triggerPipeline.reset()
+            },
+        )
+    }
 
-enum class ThemeMode(val label: String) {
-    System("跟随系统"),
-    Light("白天"),
-    Dark("夜晚"),
+    fun dispatchModeIntent(intent: DetectionModeIntent) {
+        val previous = detectionModeSnapshot
+        val effect = detectionModeController.dispatch(intent)
+        val next = detectionModeController.snapshot()
+        detectionModeSnapshot = next
+        if (
+            effect == DetectionModeEffect.ResetTracking ||
+            effect == DetectionModeEffect.SuspendTrigger ||
+            previous.mode != next.mode ||
+            previous.state != next.state ||
+            previous.region != next.region ||
+            previous.revision != next.revision
+        ) {
+            triggerPipeline.reset()
+            metrics = metrics?.copy(trackingMetrics = null)
+        }
+    }
+
+    SideEffect { frameSource.setDetectionMode(detectionModeSnapshot) }
+
+    LaunchedEffect(captureStatus, selectedZoomRatio, maxZoomRatio, frameSource) {
+        if (captureStatus == CaptureStatus.Running) frameSource.setZoomRatio(selectedZoomRatio)
+    }
+
+    DisposableEffect(frameSource) {
+        onDispose {
+            frameSource.close()
+            triggerPipeline.reset()
+        }
+    }
+    DisposableEffect(monitoring, permissionGranted, lifecycleOwner, previewView, frameSource) {
+        if (monitoring && permissionGranted && previewView != null && lifecycleOwner != null) {
+            frameSource.start(lifecycleOwner, previewView!!)
+        } else {
+            frameSource.stop()
+            triggerPipeline.reset()
+            metrics = null
+            onLiveFrameMetrics(null)
+        }
+        onDispose {
+            frameSource.stop()
+            triggerPipeline.reset()
+        }
+    }
+
+    val status = monitorStatus(monitoring, permissionGranted, permissionDenied, captureStatus, metrics?.detection)
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("camera-preview"),
+        colors = CardDefaults.cardColors(containerColor = CameraPanel),
+        shape = RoundedCornerShape(0.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(264.dp)
+                    .onSizeChanged { size ->
+                        if (size != lastPreviewSize && size.width > 0 && size.height > 0) {
+                            lastPreviewSize = size
+                            geometryEpoch += 1L
+                            dispatchModeIntent(DetectionModeIntent.GeometryChanged(geometryEpoch))
+                            previewView?.let(frameSource::refreshPreviewGeometry)
+                        }
+                    }
+                    .clip(RoundedCornerShape(0.dp)),
+            ) {
+                if (permissionGranted) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = {
+                            PreviewView(it).apply {
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            }
+                        },
+                        update = { previewView = it },
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize().background(CameraPanel))
+                }
+
+                DetectionOverlay(metrics)
+                DetectionRegionOverlay(
+                    snapshot = detectionModeSnapshot,
+                    onDraftChanged = { region ->
+                        dispatchModeIntent(DetectionModeIntent.UpdateDraft(region))
+                    },
+                )
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                PreviewStatus(
+                    modifier = Modifier.fillMaxWidth(),
+                    status = status,
+                    metrics = metrics,
+                    modelVersion = metrics?.modelVersion ?: detector.modelVersion,
+                    captureStatus = captureStatus,
+                    detectorInputSize = detector.inputSize,
+                )
+                DetectionModeControls(
+                    modifier = Modifier.fillMaxWidth(),
+                    snapshot = detectionModeSnapshot,
+                    onIntent = { intent -> dispatchModeIntent(intent) },
+                    selectedZoomRatio = selectedZoomRatio,
+                    maxZoomRatio = maxZoomRatio,
+                    zoomEnabled = permissionGranted,
+                    onZoomSelected = { ratio ->
+                        val nextRatio = ratio.coerceIn(1f, maxZoomRatio)
+                        if (selectedZoomRatio != nextRatio) {
+                            selectedZoomRatio = nextRatio
+                            triggerPipeline.reset()
+                            metrics = metrics?.copy(trackingMetrics = null)
+                            previewView?.let(frameSource::refreshPreviewGeometry)
+                        }
+                        frameSource.setZoomRatio(nextRatio)
+                    },
+                )
+                if (!permissionGranted || !monitoring || captureStatus == CaptureStatus.Failed) {
+                    PreviewState(Modifier.fillMaxWidth().padding(vertical = 4.dp), status)
+                }
+            }
+        }
+    }
 }
 
 @Composable
-fun CyberFishApp(permissionRevision: Int = 0) {
-    val context = LocalContext.current.applicationContext
-    val repository = remember(context) { CyberFishRepository(context) }
-    val coroutineScope = rememberCoroutineScope()
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val preferences by repository.preferences.collectAsState(initial = AppPreferences())
-    val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
-    val modelState by repository.modelState.collectAsState()
-    val userSession by repository.userSession.collectAsState(initial = null)
-    var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
-    var showingFishingSpots by rememberSaveable { mutableStateOf(false) }
-    var showingCheckIn by rememberSaveable { mutableStateOf(false) }
-    var returnToCheckInAfterLogin by rememberSaveable { mutableStateOf(false) }
-    var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
-    val forceUpdateRequired = (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.updateType == "FORCE"
-    var appInstallMessage by remember { mutableStateOf<String?>(null) }
-    var appUpdateInProgress by remember { mutableStateOf(false) }
-    var supportContent by remember { mutableStateOf(SupportContent()) }
-    var checkInOverview by remember { mutableStateOf<CheckInOverview?>(null) }
-    var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
-    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        avatarCropUri = uri
-    }
-    val selectedTab = AppTab.valueOf(selectedTabName)
-    val currentShowingCheckIn by rememberUpdatedState(showingCheckIn)
+private fun DetectionModeControls(
+    modifier: Modifier,
+    snapshot: DetectionModeSnapshot,
+    onIntent: (DetectionModeIntent) -> Unit,
+    selectedZoomRatio: Float,
+    maxZoomRatio: Float,
+    zoomEnabled: Boolean,
+    onZoomSelected: (Float) -> Unit,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilterChip(
+                modifier = Modifier.weight(1f).testTag("detection-mode-intelligent"),
+                selected = snapshot.mode == DetectionMode.Intelligent,
+                onClick = { onIntent(DetectionModeIntent.SelectMode(DetectionMode.Intelligent)) },
+                label = { Text("智能") },
+            )
+            FilterChip(
+                modifier = Modifier.weight(1f).testTag("detection-mode-manual"),
+                selected = snapshot.mode == DetectionMode.ManualRegion,
+                onClick = { onIntent(DetectionModeIntent.SelectMode(DetectionMode.ManualRegion)) },
+                label = { Text("框选") },
+            )
+            listOf(1f, 2f, 3f).forEach { ratio ->
+                FilterChip(
+                    modifier = Modifier.weight(1f),
+                    selected = selectedZoomRatio == ratio,
+                    onClick = { onZoomSelected(ratio) },
+                    enabled = zoomEnabled && ratio <= maxZoomRatio + 0.001f,
+                    label = { Text("${ratio.toInt()}x") },
+                )
+            }
+        }
+        if (snapshot.mode == DetectionMode.ManualRegion) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                when (snapshot.state) {
+                    DetectionRegionState.Editing -> {
+                        val validDraft = snapshot.draft?.let(::isUsableDetectionRegion) == true
+                        Button(
+                            modifier = Modifier.testTag("detection-region-confirm"),
+                            onClick = { onIntent(DetectionModeIntent.ConfirmSelection) },
+                            enabled = validDraft,
+                        ) { Text("确认") }
+                        TextButton(
+                            modifier = Modifier.testTag("detection-region-cancel"),
+                            onClick = { onIntent(DetectionModeIntent.CancelSelection) },
+                        ) { Text("取消") }
+                    }
 
-    fun installDownloadedUpdate(apkPath: String) {
-        appInstallMessage = when (val result = installApk(context, apkPath)) {
-            is ApkInstallPreparation.Ready -> "安装包校验通过，已打开系统安装器"
-            ApkInstallPreparation.PermissionRequired -> "请允许安装未知应用，然后再次点击更新"
-            ApkInstallPreparation.FileMissing -> "安装包不存在，请重新下载"
-            ApkInstallPreparation.InvalidPackage -> "安装包无效或包名不匹配"
-            ApkInstallPreparation.VersionNotNewer -> "安装包版本不高于当前版本"
-            ApkInstallPreparation.SignatureMismatch -> "安装包签名与当前 APP 不一致"
-            is ApkInstallPreparation.Failed -> result.message
-        }
-    }
-    LaunchedEffect(selectedTab, userSession?.token) {
-        if (selectedTab == AppTab.Profile) {
-            withContext(Dispatchers.IO) {
-                repository.reportEvent(
-                    AppEventType.CHECKIN_ENTRY_EXPOSE,
-                    payload = JSONObject().put("source", "profile_card").put("loggedIn", userSession != null),
-                )
-            }
-        }
-    }
-    LaunchedEffect(showingCheckIn, userSession?.token) {
-        if (showingCheckIn) {
-            withContext(Dispatchers.IO) {
-                repository.reportEvent(
-                    AppEventType.CHECKIN_PAGE_VIEW,
-                    payload = JSONObject().put("loggedIn", userSession != null),
-                )
-            }
-        }
-    }
-    LaunchedEffect(repository) {
-        repository.resumeUserSession()
-        repository.scheduleModelUpdates()
-        val supportResult = withContext(Dispatchers.IO) {
-            repository.reportEvent(AppEventType.LAUNCH)
-            repository.loadSupportContent()
-        }
-        if (supportResult is ApiResult.Success) supportContent = supportResult.value
-        when (val update = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
-            is ApiResult.Success -> if (update.value.hasUpdate && update.value.updateType == "FORCE") {
-                versionCheckState = VersionCheckState.UpdateAvailable(update.value)
-            }
-            else -> Unit
-        }
-    }
-    LaunchedEffect(userSession?.token) {
-        checkInOverview = if (userSession == null) null else {
-            when (val result = repository.fetchCheckInOverview()) {
-                is ApiResult.Success -> result.value
-                else -> null
-            }
-        }
-        if (userSession != null && returnToCheckInAfterLogin) {
-            showingCheckIn = true
-            returnToCheckInAfterLogin = false
-        }
-    }
-    LaunchedEffect(userSession?.token) {
-        if (userSession == null) return@LaunchedEffect
-        while (true) {
-            delay(CHECK_IN_CONFIG_CACHE_TTL_MILLIS)
-            if (!currentShowingCheckIn) {
-                when (val result = repository.refreshCheckInOverview()) {
-                    is ApiResult.Success -> checkInOverview = result.value
-                    else -> Unit
-                }
-            }
-        }
-    }
-    DisposableEffect(lifecycleOwner, userSession?.token) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && userSession != null && !currentShowingCheckIn) {
-                coroutineScope.launch {
-                    when (val result = repository.refreshCheckInOverview()) {
-                        is ApiResult.Success -> checkInOverview = result.value
-                        else -> Unit
+                    else -> {
+                        Button(
+                            modifier = Modifier.testTag("detection-region-edit"),
+                            onClick = { onIntent(DetectionModeIntent.BeginSelection) },
+                        ) {
+                            Text(if (snapshot.region == null) "开始框选" else "编辑区域")
+                        }
+                        if (snapshot.region != null) {
+                            TextButton(
+                                modifier = Modifier.testTag("detection-region-clear"),
+                                onClick = { onIntent(DetectionModeIntent.ClearSelection) },
+                            ) { Text("清除") }
+                        }
                     }
                 }
             }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-    val darkTheme = resolveDarkTheme(
-        preferences = preferences,
-        systemDark = isSystemInDarkTheme(),
-        hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
-    )
+            when (snapshot.state) {
+                DetectionRegionState.Empty ->
+                    Text(
+                        "请在画面内拖动框选监测区域",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
 
-    CyberFishTheme(darkTheme = darkTheme) {
-        avatarCropUri?.let { uri ->
-            AvatarCropDialog(
-                uri = uri,
-                onDismiss = { avatarCropUri = null },
-                onUpload = { bitmap -> withContext(Dispatchers.IO) { repository.uploadAvatar(bitmap) } },
-            )
+                DetectionRegionState.NeedsReview ->
+                    Text(
+                        "画面变化，请重新确认区域",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                DetectionRegionState.Editing,
+                DetectionRegionState.Applied,
+                DetectionRegionState.Intelligent,
+                -> Unit
+            }
         }
-        if (showingCheckIn) {
-            CheckInScreen(
-                userSession = userSession,
-                onBack = { showingCheckIn = false },
-                onRequireLogin = {
-                    returnToCheckInAfterLogin = true
-                    coroutineScope.launch { repository.logout() }
-                    showingCheckIn = false
-                    selectedTabName = AppTab.Profile.name
-                },
-                loadOverview = repository::fetchCheckInOverview,
-                forceRefreshOverview = repository::refreshCheckInOverview,
-                onOverviewChanged = { checkInOverview = it },
-                onMilestoneShown = { reward ->
-                    coroutineScope.launch(Dispatchers.IO) {
-                        repository.reportEvent(
-                            AppEventType.MILESTONE_POPUP_VIEW,
-                            payload = JSONObject()
-                                .put("day", reward.day)
-                                .put("type", reward.type)
-                                .put("name", reward.name),
-                        )
-                    }
-                },
-                onCheckInLoadFailure = { errorCode ->
-                    coroutineScope.launch(Dispatchers.IO) {
-                        repository.reportEvent(
-                            AppEventType.CHECKIN_FAIL,
-                            payload = JSONObject().put("errorCode", errorCode).put("source", "load"),
-                        )
-                    }
-                },
-                submitCheckIn = {
-                    val result = repository.checkIn()
-                    when (result) {
-                        is ApiResult.Success -> coroutineScope.launch(Dispatchers.IO) {
-                            repository.reportEvent(
-                                AppEventType.CHECKIN_SUCCESS,
-                                payload = JSONObject()
-                                    .put("streak", result.value.overview.currentStreak)
-                                    .put("cycleLength", result.value.overview.cycleLength),
+    }
+}
+
+@Composable
+private fun DetectionRegionOverlay(
+    snapshot: DetectionModeSnapshot,
+    onDraftChanged: (NormalizedPreviewRect?) -> Unit,
+) {
+    val editing = snapshot.mode == DetectionMode.ManualRegion && snapshot.state == DetectionRegionState.Editing
+    val currentOnDraftChanged = rememberUpdatedState(onDraftChanged)
+    val appliedColor = MaterialTheme.colorScheme.primary.copy(alpha = if (editing) 0.42f else 0.9f)
+    val draftColor = MaterialTheme.colorScheme.tertiary
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("detection-region-overlay")
+            .pointerInput(snapshot.mode, snapshot.state, snapshot.revision) {
+                if (editing) {
+                    var start: Offset? = null
+                    detectDragGestures(
+                        onDragStart = { position ->
+                            start = position
+                            currentOnDraftChanged.value(null)
+                        },
+                        onDrag = { change, _ ->
+                            val origin = start ?: return@detectDragGestures
+                            val candidate = normalizedPreviewRectForDrag(
+                                startX = origin.x,
+                                startY = origin.y,
+                                endX = change.position.x,
+                                endY = change.position.y,
+                                widthPx = size.width.toFloat(),
+                                heightPx = size.height.toFloat(),
                             )
-                        }
-                        else -> coroutineScope.launch(Dispatchers.IO) {
-                            val errorCode = when (result) {
-                                is ApiResult.HttpError -> result.errorCode ?: result.statusCode
-                                ApiResult.NotConfigured -> "NOT_CONFIGURED"
-                                is ApiResult.NetworkError -> "NETWORK"
-                                is ApiResult.ParseError -> "PARSE"
-                                is ApiResult.Success -> 0
-                            }
-                            repository.reportEvent(
-                                AppEventType.CHECKIN_FAIL,
-                                payload = JSONObject().put("errorCode", errorCode),
-                            )
-                        }
-                    }
-                    result
-                },
-                loadHistory = { page, month -> repository.fetchCheckInHistory(page = page, month = month) },
-            )
-        } else if (showingFishingSpots) {
-            FishingSpotMapScreen(
-                favoriteSpots = preferences.favoriteFishingSpots,
-                onFavoriteSpotsChange = { spots ->
-                    coroutineScope.launch(Dispatchers.IO) {
-                        repository.savePreferences(preferences.copy(favoriteFishingSpots = spots))
-                    }
-                },
-                onBack = { showingFishingSpots = false },
-            )
-        } else Scaffold(
-            bottomBar = {
-                PillTabBar(
-                    selectedTab = selectedTab,
-                    onTabSelected = { selectedTabName = it.name },
-                )
+                            change.consume()
+                            currentOnDraftChanged.value(candidate)
+                        },
+                        onDragEnd = { start = null },
+                        onDragCancel = { start = null },
+                    )
+                }
             },
-        ) { paddingValues ->
-            Surface(modifier = Modifier.fillMaxSize()) {
-                Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-                    when (selectedTab) {
-                        AppTab.Monitor -> MonitorScreen(
-                            permissionRevision = permissionRevision,
-                            isLoggedIn = userSession != null,
-                            onRequireLogin = { selectedTabName = AppTab.Profile.name },
-                            onOpenSettings = { selectedTabName = AppTab.Settings.name },
-                            triggerConfig = preferences.toTriggerConfig(),
-                            alertPreferences = AlertPreferences(
-                                soundEnabled = preferences.soundEnabled,
-                                vibrationEnabled = preferences.vibrationEnabled,
-                                notificationEnabled = preferences.notificationEnabled,
-                                quietHoursEnabled = preferences.quietHoursEnabled,
-                            ),
-                            onTriggerPersist = { event ->
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    repository.saveTrigger(event)
-                                    repository.reportEvent(AppEventType.TRIGGER, event.modelVersion)
-                                }
-                            },
-                            onMarkFalsePositive = { event ->
-                                coroutineScope.launch(Dispatchers.IO) { repository.confirmMisreport(event) }
-                            },
-                            onFrameMetrics = { metrics ->
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    repository.reportEvent(
-                                        eventType = AppEventType.MODEL_CALL,
-                                        modelVersion = repository.modelRepository.detectorSlot.modelVersion,
-                                        payload = JSONObject()
-                                            .put("preprocessMs", metrics.preprocessingMillis)
-                                            .put("inferenceMs", metrics.inferenceMillis)
-                                            .put("totalMs", metrics.latencyMillis)
-                                            .put("fps", metrics.framesPerSecond),
-                                    )
-                                }
-                            },
-                            onConfidenceThresholdChange = { threshold ->
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    repository.savePreferences(
-                                        preferences.copy(
-                                            confidenceThreshold = threshold.coerceIn(0.30f, 0.95f),
-                                            triggerPreset = "自定义",
-                                        ),
-                                    )
-                                }
-                            },
-                            detector = repository.modelRepository.detectorSlot,
-                        )
-                        AppTab.Records -> RecordsScreen(
-                            records = records,
-                            isLoggedIn = userSession != null,
-                            onRequireLogin = { selectedTabName = AppTab.Profile.name },
-                            onMarkFalsePositive = { record ->
-                                coroutineScope.launch(Dispatchers.IO) { repository.confirmMisreport(record.triggerTimestampMillis) }
-                            },
-                            onDeleteRecord = { record ->
-                                coroutineScope.launch(Dispatchers.IO) { repository.deleteRecord(record.id) }
-                            },
-                            onDeleteAllRecords = {
-                                coroutineScope.launch(Dispatchers.IO) { repository.deleteAllRecords() }
-                            },
-                        )
-                        AppTab.Settings -> SettingsScreen(
-                            settings = preferences,
-                            onSettingsChange = { next ->
-                                coroutineScope.launch(Dispatchers.IO) { repository.savePreferences(next) }
-                            },
-                            versionCheckState = versionCheckState,
-                            modelState = modelState,
-                            appInstallMessage = appInstallMessage,
-                            appUpdateInProgress = appUpdateInProgress,
-                            onCheckForUpdate = {
-                                coroutineScope.launch {
-                                    appInstallMessage = null
-                                    versionCheckState = VersionCheckState.Checking
-                                    versionCheckState = when (val result = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
-                                        is ApiResult.Success -> if (result.value.hasUpdate) VersionCheckState.UpdateAvailable(result.value) else VersionCheckState.UpToDate
-                                        ApiResult.NotConfigured -> VersionCheckState.NotConfigured
-                                        is ApiResult.HttpError -> VersionCheckState.Failed("${result.statusCode} ${result.message}")
-                                        is ApiResult.NetworkError -> VersionCheckState.Failed(result.message)
-                                        is ApiResult.ParseError -> VersionCheckState.Failed(result.message)
-                                    }
-                                }
-                            },
-                            onDownloadAppUpdate = {
-                                val update = (versionCheckState as? VersionCheckState.UpdateAvailable)?.update
-                                if (update == null) {
-                                    appInstallMessage = "没有可用的更新信息"
-                                } else if (update.downloadMode == AppDownloadMode.EXTERNAL) {
-                                    update.apkUrl?.let { url ->
-                                        runCatching {
-                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                            appInstallMessage = "已打开网盘链接"
-                                        }.onFailure { appInstallMessage = "无法打开网盘地址：${it.message ?: "未知错误"}" }
-                                    }
-                                } else {
-                                    val cachedApk = AppUpdateWorker.downloadedApkPath(context, update.versionCode)
-                                    if (cachedApk != null) {
-                                        installDownloadedUpdate(cachedApk)
-                                    } else {
-                                        val workId = AppUpdateWorker.enqueue(context, update)
-                                        if (workId == null) {
-                                            appInstallMessage = "服务器更新缺少下载地址、大小或 SHA-256"
-                                            return@SettingsScreen
-                                        }
-                                        appUpdateInProgress = true
-                                        appInstallMessage = "正在准备下载更新"
-                                        coroutineScope.launch {
-                                            val workManager = WorkManager.getInstance(context)
-                                            while (true) {
-                                                val infoResult = runCatching {
-                                                    withContext(Dispatchers.IO) { workManager.getWorkInfoById(workId).get() }
-                                                }
-                                                if (infoResult.isFailure) {
-                                                    appInstallMessage = "无法读取更新任务状态：${infoResult.exceptionOrNull()?.message ?: "未知错误"}"
-                                                    appUpdateInProgress = false
-                                                    break
-                                                }
-                                                val info = infoResult.getOrNull()
-                                                if (info == null) {
-                                                    appInstallMessage = "无法读取更新任务状态"
-                                                    appUpdateInProgress = false
-                                                    break
-                                                }
-                                                when (info.state) {
-                                                    WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> appInstallMessage = "等待网络后下载更新"
-                                                    WorkInfo.State.RUNNING -> appInstallMessage = "正在下载更新 ${info.progress.getInt(AppUpdateWorker.KEY_PROGRESS, 0)}%"
-                                                    WorkInfo.State.SUCCEEDED -> {
-                                                        appUpdateInProgress = false
-                                                        val apkPath = info.outputData.getString(AppUpdateWorker.KEY_APK_PATH)
-                                                        if (apkPath == null) appInstallMessage = "更新下载完成，但安装包路径无效"
-                                                        else installDownloadedUpdate(apkPath)
-                                                        break
-                                                    }
-                                                    WorkInfo.State.FAILED -> {
-                                                        appUpdateInProgress = false
-                                                        appInstallMessage = info.outputData.getString(AppUpdateWorker.KEY_ERROR) ?: "更新下载或校验失败"
-                                                        break
-                                                    }
-                                                    WorkInfo.State.CANCELLED -> {
-                                                        appUpdateInProgress = false
-                                                        appInstallMessage = "更新已取消"
-                                                        break
-                                                    }
-                                                }
-                                                delay(350)
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            onCheckModel = {
-                                coroutineScope.launch(Dispatchers.IO) { repository.checkForModelUpdate() }
-                            },
-                            onInstallModelUpdate = {
-                                coroutineScope.launch(Dispatchers.IO) { repository.installPendingModelUpdate() }
-                            },
-                            onRollbackModel = {
-                                coroutineScope.launch(Dispatchers.IO) { repository.rollbackModel() }
-                            },
-                        )
-                        AppTab.Profile -> ProfileScreen(
-                            records = records.orEmpty(),
-                            favoriteSpots = preferences.favoriteSpots,
-                            userSession = userSession,
-                            checkInOverview = checkInOverview,
-                            supportContent = supportContent,
-                            onOpenFishingSpots = { showingFishingSpots = true },
-                            onOpenCheckIn = { showingCheckIn = true },
-                            openLogin = returnToCheckInAfterLogin,
-                            onExportRecords = {
-                                coroutineScope.launch {
-                                    val file = withContext(Dispatchers.IO) { repository.exportRecords(records.orEmpty()) }
-                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                                    val share = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/csv"
-                                        putExtra(Intent.EXTRA_STREAM, uri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(Intent.createChooser(share, "导出记录").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                }
-                            },
-                            onLogin = repository::login,
-                            onRegister = repository::register,
-                            onLogout = repository::logout,
-                            onPickAvatar = { avatarPicker.launch("image/*") },
-                            onUpdateProfile = repository::updateMe,
-                            onChangePassword = repository::changePassword,
-                            onSubmitFeedback = repository::submitFeedback,
-                        )
-                    }
-                }
+    ) {
+        val applied = snapshot.region
+        if (applied != null) {
+            drawNormalizedRegion(
+                region = applied,
+                color = appliedColor,
+                widthPx = size.width.toFloat(),
+                heightPx = size.height.toFloat(),
+            )
+        }
+        if (editing) {
+            snapshot.draft?.let { draft ->
+                drawNormalizedRegion(
+                    region = draft,
+                    color = draftColor,
+                    widthPx = size.width.toFloat(),
+                    heightPx = size.height.toFloat(),
+                )
             }
         }
     }
-    if (forceUpdateRequired && selectedTab != AppTab.Settings) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("需要更新 APP") },
-            text = { Text("当前版本已不再受支持，请完成更新后继续使用。") },
-            confirmButton = { Button(onClick = { selectedTabName = AppTab.Settings.name }) { Text("去更新") } },
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNormalizedRegion(
+    region: NormalizedPreviewRect,
+    color: Color,
+    widthPx: Float,
+    heightPx: Float,
+) {
+    drawRect(
+        color = color,
+        topLeft = Offset(region.left * widthPx, region.top * heightPx),
+        size = Size(region.width * widthPx, region.height * heightPx),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+    )
+}
+
+internal fun normalizedPreviewRectForDrag(
+    startX: Float,
+    startY: Float,
+    endX: Float,
+    endY: Float,
+    widthPx: Float,
+    heightPx: Float,
+): NormalizedPreviewRect? {
+    if (!widthPx.isFinite() || !heightPx.isFinite() || widthPx <= 0f || heightPx <= 0f) return null
+    return NormalizedPreviewRect.fromUnordered(
+        startX = startX / widthPx,
+        startY = startY / heightPx,
+        endX = endX / widthPx,
+        endY = endY / heightPx,
+    )
+}
+
+private fun isUsableDetectionRegion(region: NormalizedPreviewRect): Boolean =
+    region.width >= MINIMUM_REGION_SIZE && region.height >= MINIMUM_REGION_SIZE
+
+private const val MINIMUM_REGION_SIZE = 0.05f
+
+private fun Context.findLifecycleOwner(): LifecycleOwner? = when (this) {
+    is LifecycleOwner -> this
+    is ContextWrapper -> baseContext.findLifecycleOwner()
+    else -> null
+}
+
+private fun copySnapshot(source: File, directory: File, timestampMillis: Long): String? = runCatching {
+    if (!source.isFile) return@runCatching null
+    directory.mkdirs()
+    val target = File(directory, "trigger-$timestampMillis.jpg")
+    source.inputStream().use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+    target.absolutePath
+}.getOrNull()
+
+@Composable
+private fun DetectionOverlay(metrics: FrameMetrics?) {
+    val density = LocalDensity.current
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val previewWidthPx = with(density) { maxWidth.toPx() }
+        val previewHeightPx = with(density) { maxHeight.toPx() }
+        val displayDetection = metrics?.displayDetection
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            displayDetection?.boundsInPreview?.let { bounds ->
+                drawRect(
+                    color = ChartPalette.TraceAccent,
+                    topLeft = Offset(bounds.left, bounds.top),
+                    size = Size(bounds.width, bounds.height),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+                )
+            }
+        }
+        displayDetection?.let { display ->
+            val labelWidthPx = with(density) { 104.dp.toPx() }
+            val gapPx = with(density) { 8.dp.toPx() }
+            val labelX = if (display.boundsInPreview.right + gapPx + labelWidthPx <= previewWidthPx) {
+                display.boundsInPreview.right + gapPx
+            } else {
+                (display.boundsInPreview.left - gapPx - labelWidthPx).coerceAtLeast(0f)
+            }
+            val labelY = display.boundsInPreview.top.coerceIn(0f, (previewHeightPx - with(density) { 28.dp.toPx() }).coerceAtLeast(0f))
+            Text(
+                text = formatDetectionSize(display.widthPx, display.heightPx),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .offset { IntOffset(labelX.roundToInt(), labelY.roundToInt()) }
+                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 5.dp, vertical = 3.dp),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+internal fun formatDetectionSize(widthPx: Float, heightPx: Float): String =
+    "W ${widthPx.coerceAtLeast(0f).roundToInt()} × H ${heightPx.coerceAtLeast(0f).roundToInt()} px"
+
+@Composable
+private fun PreviewState(modifier: Modifier, status: String) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = null,
+            modifier = Modifier.size(36.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            status,
+            modifier = Modifier.padding(top = 8.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.titleMedium,
         )
     }
 }
 
-internal fun AppPreferences.toTriggerConfig() = TriggerConfig(
-    sinkThresholdPx = sinkThresholdPx,
-    trembleThresholdHz = trembleThresholdHz,
-    minSinkDurationMillis = (durationSeconds * 1_000f).roundToLong(),
-    minConfidence = confidenceThreshold,
-)
-
-internal fun resolveDarkTheme(preferences: AppPreferences, systemDark: Boolean, hourOfDay: Int): Boolean {
-    if (preferences.autoTheme) return hourOfDay < 6 || hourOfDay >= 18
-    return when (ThemeMode.entries.firstOrNull { it.name == preferences.themeMode } ?: ThemeMode.Dark) {
-        ThemeMode.System -> systemDark
-        ThemeMode.Light -> false
-        ThemeMode.Dark -> true
+@Composable
+private fun PreviewStatus(
+    modifier: Modifier,
+    status: String,
+    metrics: FrameMetrics?,
+    modelVersion: String,
+    captureStatus: CaptureStatus,
+    detectorInputSize: Int,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(status, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (captureStatus == CaptureStatus.Running) "$modelVersion · 检测中" else "$modelVersion · 待机",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Text(
+                formatDetectionTelemetry(metrics?.displayDetection, metrics?.trackingMetrics),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                formatInputTelemetry(metrics, detectorInputSize),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                formatPerformanceTelemetry(metrics),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
-internal val AppTab.icon
-    get() = when (this) {
-        AppTab.Monitor -> Icons.Filled.Home
-        AppTab.Records -> Icons.AutoMirrored.Filled.List
-        AppTab.Settings -> Icons.Filled.Settings
-        AppTab.Profile -> Icons.Filled.Person
+internal fun formatDetectionTelemetry(
+    displayDetection: com.cyberfish.app.capture.DisplayDetection?,
+    trackingMetrics: DetectionTrackingMetrics?,
+): String {
+    if (displayDetection == null) return "暂无检测"
+    val currentHeight = displayDetection.heightPx.coerceAtLeast(0f).roundToInt()
+    if (trackingMetrics == null) {
+        return "浮漂 %.0f%% · 当前高 %dpx · 基准建立中".format(
+            displayDetection.confidence * 100f,
+            currentHeight,
+        )
     }
+    val ratio = trackingMetrics.heightRatioFromBaseline
+    if (!ratio.isFinite() || ratio <= 0f) return "浮漂检测中 · 基准建立中"
+    val baselineHeight = (displayDetection.heightPx / ratio).coerceAtLeast(0f).roundToInt()
+    val deltaPercent = ((ratio - 1f) * 100f).roundToInt()
+    val signedDelta = if (deltaPercent >= 0) "+$deltaPercent%" else "$deltaPercent%"
+    return "浮漂 %.0f%% · 当前高 %dpx · 基准高 %dpx · %s".format(
+        trackingMetrics.confidence * 100f,
+        currentHeight,
+        baselineHeight,
+        signedDelta,
+    )
+}
+
+internal fun formatInputTelemetry(metrics: FrameMetrics?, detectorInputSize: Int): String =
+    if (metrics == null) "分析 -- · 模型输入 ${detectorInputSize}²"
+    else "分析 ${metrics.sourceWidthPx}×${metrics.sourceHeightPx} · 模型输入 ${detectorInputSize}²"
+
+internal fun formatPerformanceTelemetry(metrics: FrameMetrics?): String {
+    if (metrics == null) return "预处理 -- · 推理 -- · 总计 -- · 分析 -- · 推理帧 --"
+    return "预处理 ${metrics.preprocessingMillis}ms · 推理 ${metrics.inferenceMillis}ms · " +
+        "总计 ${metrics.latencyMillis}ms · 分析 ${metrics.framesPerSecond} FPS · " +
+        "推理帧 ${metrics.inferenceFramesPerSecond} FPS"
+}
+
+private fun monitorStatus(
+    monitoring: Boolean,
+    permissionGranted: Boolean,
+    permissionDenied: Boolean,
+    captureStatus: CaptureStatus,
+    detection: Detection?,
+) = when {
+    !permissionGranted && permissionDenied -> "相机权限已拒绝"
+    !permissionGranted -> "需要相机权限"
+    !monitoring -> "待机"
+    captureStatus == CaptureStatus.Failed -> "相机不可用"
+    captureStatus == CaptureStatus.Starting -> "连接后置相机"
+    detection == null -> "漂目丢失"
+    else -> "漂浮稳定"
+}
