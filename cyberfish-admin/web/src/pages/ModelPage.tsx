@@ -285,8 +285,8 @@ export function ModelPage() {
                 </Button>
               </Popconfirm>
             )}
-            {hasPerm('model:write') && r.status === 'DRAFT' && (
-              <Popconfirm title="确认删除该草稿？" onConfirm={() => deleteMut.mutate(r.id)}>
+            {hasPerm('model:write') && !['ONLINE', 'GRAY'].includes(r.status) && (
+              <Popconfirm title={`确认删除 ${r.modelVersion}？`} description="删除后不可恢复。" onConfirm={() => deleteMut.mutate(r.id)}>
                 <Button size="small" danger>
                   删除
                 </Button>

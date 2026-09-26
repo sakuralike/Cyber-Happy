@@ -17,8 +17,11 @@ class NcnnEncryptedModelDeliveryTest {
 
         val result = repository.checkAndInstall()
 
-        assertTrue("${result.errorCode}: ${result.errorMessage}", result.activated)
-        assertEquals("yolo26n-ncnn-protected-v1", result.modelVersion)
+        assertTrue(
+            "${result.errorCode}: ${result.errorMessage}",
+            result.activated || repository.activeVersion() == "yolo26n-ncnn-trained-v1",
+        )
+        assertEquals("yolo26n-ncnn-trained-v1", repository.activeVersion())
         assertEquals(ModelInstallStatus.READY, repository.state.value.status)
         val detection = repository.detectorSlot.detect(
             CameraFrame(

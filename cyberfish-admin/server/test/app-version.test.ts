@@ -136,4 +136,29 @@ describe('app version download modes', () => {
     });
     await assert.rejects(service.doAction(invalid.id, { action: 'PUBLISH_ONLINE' }), /上传 APK/);
   });
+
+  it('allows deleting drafts and offline versions but protects active releases', async () => {
+    const draft = await service.create({
+      versionName: '2.4.0', versionCode: 240, platform: 'ANDROID', channel: 'delete', updateType: 'OPTIONAL',
+      releaseNotes: '', downloadMode: 'EXTERNAL', apkUrl: 'https://disk.example/delete-draft',
+    });
+    await service.remove(draft.id);
+    await assert.rejects(service.detail(draft.id), /APP 版本不存在/);
+
+    const offline = await service.create({
+      versionName: '2.4.1', versionCode: 241, platform: 'ANDROID', channel: 'delete', updateType: 'OPTIONAL',
+      releaseNotes: '', downloadMode: 'EXTERNAL', apkUrl: 'https://disk.example/delete-offline',
+    });
+    await service.doAction(offline.id, { action: 'PUBLISH_ONLINE' });
+    await service.doAction(offline.id, { action: 'OFFLINE' });
+    await service.remove(offline.id);
+    await assert.rejects(service.detail(offline.id), /APP 版本不存在/);
+
+    const online = await service.create({
+      versionName: '2.4.2', versionCode: 242, platform: 'ANDROID', channel: 'delete', updateType: 'OPTIONAL',
+      releaseNotes: '', downloadMode: 'EXTERNAL', apkUrl: 'https://disk.example/delete-online',
+    });
+    await service.doAction(online.id, { action: 'PUBLISH_ONLINE' });
+    await assert.rejects(service.remove(online.id), /灰度或已上架版本不可删除/);
+  });
 });

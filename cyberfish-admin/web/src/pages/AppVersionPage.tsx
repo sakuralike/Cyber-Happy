@@ -233,8 +233,8 @@ export function AppVersionPage() {
                 <ThunderboltOutlined /> 状态操作 <DownOutlined />
               </Button>
             </Dropdown>}
-            {hasPerm('appVersion:delete') && r.status === 'DRAFT' && (
-              <Popconfirm title="确认删除该草稿？" onConfirm={() => deleteMut.mutate(r.id)}>
+            {hasPerm('appVersion:delete') && !['GRAY', 'ONLINE'].includes(r.status) && (
+              <Popconfirm title={`确认删除 v${r.versionName}？`} description="删除后不可恢复。" onConfirm={() => deleteMut.mutate(r.id)}>
                 <Button size="small" danger>
                   删除
                 </Button>

@@ -50,4 +50,19 @@ describe('model lifecycle actions', () => {
       /草稿模型无需下架/,
     );
   });
+
+  it('allows deleting drafts and offline models but protects active models', async () => {
+    const draft = await service.create({ modelVersion: 'ncnn-delete-draft', name: 'NCNN delete draft' });
+    await service.remove(draft.id);
+    assert.equal(await prisma.mlModel.findUnique({ where: { id: draft.id } }), null);
+
+    const offline = await service.create({ modelVersion: 'ncnn-delete-offline', name: 'NCNN delete offline' });
+    await prisma.mlModel.update({ where: { id: offline.id }, data: { status: 'OFFLINE' } });
+    await service.remove(offline.id);
+    assert.equal(await prisma.mlModel.findUnique({ where: { id: offline.id } }), null);
+
+    const online = await service.create({ modelVersion: 'ncnn-delete-online', name: 'NCNN delete online' });
+    await prisma.mlModel.update({ where: { id: online.id }, data: { status: 'ONLINE' } });
+    await assert.rejects(service.remove(online.id), /灰度或已上线模型不可删除/);
+  });
 });
