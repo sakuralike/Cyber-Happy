@@ -60,6 +60,12 @@ export async function deleteModel(id: string): Promise<{ id: string; deleted: bo
   return http.delete(`/models/${id}`) as Promise<{ id: string; deleted: boolean }>;
 }
 
+export type ModelAction = 'OFFLINE';
+
+export async function modelAction(id: string, action: ModelAction, reason?: string): Promise<MlModel> {
+  return http.post(`/models/${id}/actions`, { action, reason }) as Promise<MlModel>;
+}
+
 export interface DispatchInput {
   targetType: DispatchTargetType;
   targetValue: Record<string, unknown>;

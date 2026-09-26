@@ -5,6 +5,7 @@ import {
   modelListSchema,
   createModelSchema,
   updateModelSchema,
+  modelActionSchema,
   dispatchSchema,
   rollbackSchema,
   dispatchListSchema,
@@ -71,6 +72,22 @@ const routes: FastifyPluginAsync = async (app) => {
       before: { status: removed.status },
     };
     return sendOk(reply, { id, deleted: true });
+  });
+
+  app.post('/:id/actions', { onRequest: [app.authenticate, dispatchGuard] }, async (request, reply) => {
+    const { id } = parseOrThrow(idParamSchema, request.params);
+    const input = parseOrThrow(modelActionSchema, request.body);
+    const { before, after, reason } = await service.doAction(id, input, request.currentUser?.id);
+    request.auditExtra = {
+      action: 'OFFLINE',
+      targetType: 'MlModel',
+      targetId: id,
+      targetName: before.modelVersion,
+      before: { status: before.status },
+      after: { status: after.status },
+      reason,
+    };
+    return sendOk(reply, after);
   });
 
   // ---------------- 下发 ----------------
