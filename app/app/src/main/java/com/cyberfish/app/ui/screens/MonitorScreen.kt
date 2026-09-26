@@ -48,7 +48,7 @@ import com.cyberfish.app.ui.components.ScreenTitle
 import com.cyberfish.app.ui.components.SectionCard
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.inference.Detector
-import com.cyberfish.app.inference.MockDetector
+import com.cyberfish.app.inference.UnavailableDetector
 
 @Composable
 fun MonitorScreen(
@@ -61,7 +61,7 @@ fun MonitorScreen(
     isLoggedIn: Boolean = true,
     onRequireLogin: () -> Unit = {},
     onFrameMetrics: (FrameMetrics) -> Unit = {},
-    detector: Detector = MockDetector(),
+    detector: Detector = UnavailableDetector(),
 ) {
     val context = LocalContext.current
     var permissionGranted by rememberSaveable { mutableStateOf(hasCameraPermission(context)) }

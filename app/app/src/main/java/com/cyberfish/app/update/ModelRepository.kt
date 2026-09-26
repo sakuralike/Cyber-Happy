@@ -32,11 +32,11 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
-enum class ModelInstallStatus { MOCK, CHECKING, UPDATE_AVAILABLE, DOWNLOADING, VERIFYING, READY, FAILED, ROLLED_BACK }
+enum class ModelInstallStatus { NO_MODEL, CHECKING, UPDATE_AVAILABLE, DOWNLOADING, VERIFYING, READY, FAILED, ROLLED_BACK }
 
 data class ModelState(
-    val status: ModelInstallStatus = ModelInstallStatus.MOCK,
-    val modelVersion: String = "MockDetector",
+    val status: ModelInstallStatus = ModelInstallStatus.NO_MODEL,
+    val modelVersion: String = "NCNN_NOT_READY",
     val progress: Int = 0,
     val errorCode: String? = null,
     val errorMessage: String? = null,
@@ -135,19 +135,26 @@ class ModelRepository(
     }
 
     suspend fun checkAndInstall(currentModelVersion: String? = currentVersionForCheck()): ModelInstallResult {
-        updateState(ModelState(ModelInstallStatus.CHECKING, currentModelVersion ?: "MockDetector"))
+        updateState(ModelState(ModelInstallStatus.CHECKING, currentModelVersion ?: activeVersion() ?: "NCNN_NOT_READY"))
         return when (val result = modelApi.checkModel(currentModelVersion)) {
             is ApiResult.Success -> {
                 val check = result.value
                 if (!check.hasUpdate || check.update == null) {
-                    updateState(ModelState(ModelInstallStatus.READY, currentModelVersion ?: "MockDetector", 100))
-                    ModelInstallResult(activated = false, modelVersion = currentModelVersion)
+                    val active = currentModelVersion ?: activeVersion()
+                    updateState(
+                        ModelState(
+                            if (active == null) ModelInstallStatus.NO_MODEL else ModelInstallStatus.READY,
+                            active ?: "NCNN_NOT_READY",
+                            if (active == null) 0 else 100,
+                        ),
+                    )
+                    ModelInstallResult(activated = false, modelVersion = active)
                 } else {
                     install(check.update)
                 }
             }
             ApiResult.NotConfigured -> {
-                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "NOT_CONFIGURED", errorMessage = "未配置服务地址或 APP 令牌"))
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: activeVersion() ?: "NCNN_NOT_READY", errorCode = "NOT_CONFIGURED", errorMessage = "未配置服务地址或 APP 令牌"))
                 ModelInstallResult(false, errorCode = "NOT_CONFIGURED", errorMessage = "未配置服务地址或 APP 令牌")
             }
             is ApiResult.HttpError -> fail("HTTP_${result.statusCode}", result.message, result.statusCode >= 500)
@@ -157,7 +164,7 @@ class ModelRepository(
     }
 
     suspend fun checkForUpdate(currentModelVersion: String? = currentVersionForCheck()): ApiResult<ModelCheckInfo> {
-        updateState(ModelState(ModelInstallStatus.CHECKING, currentModelVersion ?: "MockDetector"))
+        updateState(ModelState(ModelInstallStatus.CHECKING, currentModelVersion ?: activeVersion() ?: "NCNN_NOT_READY"))
         return when (val result = modelApi.checkModel(currentModelVersion)) {
             is ApiResult.Success -> {
                 val check = result.value
@@ -172,24 +179,31 @@ class ModelRepository(
                     )
                 } else {
                     pendingUpdate = null
-                    updateState(ModelState(ModelInstallStatus.READY, currentModelVersion ?: "MockDetector", 100))
+                    val active = currentModelVersion ?: activeVersion()
+                    updateState(
+                        ModelState(
+                            if (active == null) ModelInstallStatus.NO_MODEL else ModelInstallStatus.READY,
+                            active ?: "NCNN_NOT_READY",
+                            if (active == null) 0 else 100,
+                        ),
+                    )
                 }
                 result
             }
             ApiResult.NotConfigured -> {
-                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "NOT_CONFIGURED", errorMessage = "未配置服务地址或 APP 令牌"))
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: activeVersion() ?: "NCNN_NOT_READY", errorCode = "NOT_CONFIGURED", errorMessage = "未配置服务地址或 APP 令牌"))
                 result
             }
             is ApiResult.HttpError -> {
-                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "HTTP_${result.statusCode}", errorMessage = result.message))
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: activeVersion() ?: "NCNN_NOT_READY", errorCode = "HTTP_${result.statusCode}", errorMessage = result.message))
                 result
             }
             is ApiResult.NetworkError -> {
-                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "NETWORK_ERROR", errorMessage = result.message))
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: activeVersion() ?: "NCNN_NOT_READY", errorCode = "NETWORK_ERROR", errorMessage = result.message))
                 result
             }
             is ApiResult.ParseError -> {
-                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: "MockDetector", errorCode = "PARSE_ERROR", errorMessage = result.message))
+                updateState(ModelState(ModelInstallStatus.FAILED, currentModelVersion ?: activeVersion() ?: "NCNN_NOT_READY", errorCode = "PARSE_ERROR", errorMessage = result.message))
                 result
             }
         }
@@ -344,12 +358,12 @@ class ModelRepository(
             detectorSlot.replace(createVerifiedDetector(modelFile, stored))
             updateState(ModelState(ModelInstallStatus.READY, descriptor.modelVersion, 100))
         } catch (error: Exception) {
-            updateState(ModelState(ModelInstallStatus.FAILED, "MockDetector", errorCode = "MODEL_LOAD_FAILED", errorMessage = error.message ?: "模型加载失败"))
+            updateState(ModelState(ModelInstallStatus.FAILED, "NCNN_NOT_READY", errorCode = "MODEL_LOAD_FAILED", errorMessage = error.message ?: "模型加载失败"))
         }
     }
 
     private fun fail(code: String, message: String, retryable: Boolean): ModelInstallResult {
-        updateState(ModelState(ModelInstallStatus.FAILED, activeVersion() ?: "MockDetector", errorCode = code, errorMessage = message))
+        updateState(ModelState(ModelInstallStatus.FAILED, activeVersion() ?: "NCNN_NOT_READY", errorCode = code, errorMessage = message))
         return ModelInstallResult(false, errorCode = code, errorMessage = message, retryable = retryable)
     }
 
@@ -366,7 +380,8 @@ class ModelRepository(
         stateFlow.value = next
     }
 
-    private fun readState(): ModelState = readStoredModel()?.let { ModelState(ModelInstallStatus.READY, it.descriptor.modelVersion, 100) } ?: ModelState()
+    private fun readState(): ModelState = readStoredModel()?.let { ModelState(ModelInstallStatus.READY, it.descriptor.modelVersion, 100) }
+        ?: ModelState(ModelInstallStatus.NO_MODEL, "NCNN_NOT_READY")
 
     private fun readStoredModel(): StoredModelMetadata? = try {
         val file = File(storageDir, "active.json")

@@ -100,8 +100,8 @@ class ModelRepositoryTest {
         val result = repository.checkAndInstall()
 
         assertFalse(result.activated)
-        assertEquals("MockDetector", repository.state.value.modelVersion)
-        assertEquals(ModelInstallStatus.READY, repository.state.value.status)
+        assertEquals("NCNN_NOT_READY", repository.state.value.modelVersion)
+        assertEquals(ModelInstallStatus.NO_MODEL, repository.state.value.status)
     }
 
     @Test

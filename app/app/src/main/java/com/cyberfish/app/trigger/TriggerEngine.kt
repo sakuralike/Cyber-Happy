@@ -40,7 +40,7 @@ data class TriggerEvent(
     val reason: String,
     val features: FeatureSnapshot,
     val trajectoryPx: List<Float>,
-    val modelVersion: String = "MockDetector",
+    val modelVersion: String = "NCNN_NOT_READY",
     val snapshotPath: String? = null,
 )
 

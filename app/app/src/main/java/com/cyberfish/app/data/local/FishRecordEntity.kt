@@ -19,7 +19,7 @@ data class FishRecordEntity(
     val verticalDisplacementPx: Float,
     val jitterHz: Float,
     val trajectoryCsv: String,
-    val modelVersion: String = "MockDetector",
+    val modelVersion: String = "NCNN_NOT_READY",
     val isFalsePositive: Boolean = false,
     val snapshotPath: String? = null,
     val videoPath: String? = null,

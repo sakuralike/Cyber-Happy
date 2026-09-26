@@ -2,6 +2,8 @@ package com.cyberfish.app.update
 
 import android.content.Context
 import com.cyberfish.app.BuildConfig
+import com.cyberfish.app.inference.DetectorSlot
+import com.cyberfish.app.inference.UnavailableDetector
 import com.cyberfish.app.network.ModelApi
 import java.io.File
 
@@ -15,6 +17,7 @@ object ModelRuntime {
             repository ?: ModelRepository(
                 modelApi = modelApi,
                 storageDir = File(context.applicationContext.filesDir, "models"),
+                detectorSlot = DetectorSlot(UnavailableDetector()),
                 signatureVerifier = PublicKeyModelSignatureVerifier(ModelPublicKeys.fromBuildConfig()),
                 modelKeyProvider = keyProvider,
                 allowInsecureHttp = BuildConfig.DEBUG,

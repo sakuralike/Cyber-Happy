@@ -27,7 +27,7 @@ data class AppPreferences(
     val trembleThresholdHz: Float = 3f,
     val durationSeconds: Float = 0.8f,
     val confidenceThreshold: Float = 0.62f,
-    val inferenceBackend: String = "NNAPI",
+    val inferenceBackend: String = "NCNN",
     val performanceMode: String = "标准",
     val favoriteSpots: Set<String> = emptySet(),
     val favoriteFishingSpots: List<FishingSpot> = emptyList(),
@@ -55,7 +55,7 @@ class AppPreferencesStore(private val context: Context) {
                 trembleThresholdHz = values[Keys.trembleThresholdHz] ?: 3f,
                 durationSeconds = values[Keys.durationSeconds] ?: 0.8f,
                 confidenceThreshold = values[Keys.confidenceThreshold] ?: 0.62f,
-                inferenceBackend = values[Keys.inferenceBackend] ?: "NNAPI",
+                inferenceBackend = values[Keys.inferenceBackend] ?: "NCNN",
                 performanceMode = values[Keys.performanceMode] ?: "标准",
                 favoriteSpots = legacyFavorites,
                 favoriteFishingSpots = storedFishingSpots.ifEmpty {

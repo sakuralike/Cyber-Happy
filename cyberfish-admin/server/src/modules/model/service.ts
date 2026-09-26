@@ -482,6 +482,7 @@ export async function checkModel(q: CheckModelQuery) {
   const candidates = await prisma.mlModel.findMany({
     where: {
       status: { in: ['ONLINE', 'GRAY'] },
+      framework: 'NCNN',
       ...(q.currentModelVersion ? { modelVersion: { not: q.currentModelVersion } } : {}),
     },
     orderBy: { createdAt: 'desc' },

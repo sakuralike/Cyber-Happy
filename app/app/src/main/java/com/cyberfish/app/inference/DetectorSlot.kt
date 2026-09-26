@@ -1,6 +1,6 @@
 package com.cyberfish.app.inference
 
-class DetectorSlot(initial: Detector = MockDetector()) : CloseableDetector {
+class DetectorSlot(initial: Detector = UnavailableDetector()) : CloseableDetector {
     @Volatile
     private var delegate: Detector = initial
 
@@ -26,7 +26,7 @@ class DetectorSlot(initial: Detector = MockDetector()) : CloseableDetector {
     @Synchronized
     override fun close() {
         val previous = delegate
-        delegate = MockDetector()
+        delegate = UnavailableDetector()
         if (previous is CloseableDetector) previous.close()
     }
 }
