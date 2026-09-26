@@ -5,6 +5,8 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
+import com.cyberfish.app.update.ModelKeyMaterial
+import com.cyberfish.app.update.ModelKeyProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -334,6 +336,30 @@ class AppApiClientTest {
         val request = server.takeRequest()
         assertEquals("/api/v1/models/check", request.requestUrl?.encodedPath)
         assertEquals("device-123", request.requestUrl?.queryParameter("deviceId"))
+    }
+
+    @Test
+    fun `model check registers the Keystore public key before requesting an encrypted model`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"code":0,"message":"ok","data":{"keyId":"key-1"}}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"code":0,"message":"ok","data":{"hasUpdate":false}}"""))
+        val provider = object : ModelKeyProvider {
+            override fun ensureKey() = ModelKeyMaterial("key-1", "public-key", "TEE")
+            override fun decryptWrappedKey(wrappedKey: ByteArray) = error("not used")
+        }
+        val result = AppApiClient(
+            config = ApiConfig(server.url("/").toString(), "test-app-token"),
+            identityStore = object : DeviceIdentityProvider {
+                override suspend fun get() = DeviceIdentity("device-123", "anonymous-device-123", "Pixel Test", "Android 14")
+            },
+            modelKeyProvider = provider,
+        ).checkModel()
+
+        assertTrue(result is ApiResult.Success)
+        val registration = server.takeRequest()
+        assertEquals("/api/v1/models/devices/register", registration.requestUrl?.encodedPath)
+        assertEquals("TEE", JSONObject(registration.body.readUtf8()).getString("securityLevel"))
+        val check = server.takeRequest()
+        assertEquals("key-1", check.requestUrl?.queryParameter("keyId"))
     }
 
     @Test

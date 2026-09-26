@@ -18,6 +18,7 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.ByteArrayInputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -51,6 +52,8 @@ data class ModelInstallResult(
 
 fun interface ModelSignatureVerifier {
     fun verify(file: File, descriptor: NcnnModelDescriptor): Boolean
+
+    fun verifyBytes(bytes: ByteArray, descriptor: NcnnModelDescriptor): Boolean = false
 }
 
 class PublicKeyModelSignatureVerifier(
@@ -60,6 +63,13 @@ class PublicKeyModelSignatureVerifier(
 
     override fun verify(file: File, descriptor: NcnnModelDescriptor): Boolean {
         if (!file.isFile) return false
+        return runCatching { FileInputStream(file).use { verifyStream(it, descriptor) } }.getOrDefault(false)
+    }
+
+    override fun verifyBytes(bytes: ByteArray, descriptor: NcnnModelDescriptor): Boolean =
+        runCatching { ByteArrayInputStream(bytes).use { verifyStream(it, descriptor) } }.getOrDefault(false)
+
+    private fun verifyStream(input: java.io.InputStream, descriptor: NcnnModelDescriptor): Boolean {
         val signatureText = descriptor.signature ?: return false
         val keyText = publicKeys[descriptor.publicKeyId] ?: return false
         val signatureAlgorithm = descriptor.signatureAlgorithm ?: return false
@@ -73,13 +83,11 @@ class PublicKeyModelSignatureVerifier(
             if (ecKey.params.order.bitLength() != P256_BIT_LENGTH || ecKey.params.curve.field.fieldSize != P256_BIT_LENGTH) return false
             val verifier = Signature.getInstance("SHA256withECDSA")
             verifier.initVerify(publicKey)
-            FileInputStream(file).use { input ->
-                val buffer = ByteArray(HASH_BUFFER_SIZE)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    if (count > 0) verifier.update(buffer, 0, count)
-                }
+            val buffer = ByteArray(HASH_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) verifier.update(buffer, 0, count)
             }
             verifier.verify(decodeBase64(signatureText))
         } catch (_: Exception) {
@@ -108,6 +116,10 @@ class ModelRepository(
     private val detectorFactory: (File, NcnnModelDescriptor) -> CloseableDetector = { file, descriptor ->
         NcnnDetector.fromBundle(file, descriptor)
     },
+    private val bytesDetectorFactory: (ByteArray, NcnnModelDescriptor) -> CloseableDetector = { bytes, descriptor ->
+        NcnnDetector.fromBundleBytes(bytes, descriptor)
+    },
+    private val modelKeyProvider: ModelKeyProvider? = null,
     private val allowInsecureHttp: Boolean = false,
 ) {
     private val stateFlow = MutableStateFlow(readState())
@@ -122,7 +134,7 @@ class ModelRepository(
         loadActive()
     }
 
-    suspend fun checkAndInstall(currentModelVersion: String? = activeVersion()): ModelInstallResult {
+    suspend fun checkAndInstall(currentModelVersion: String? = currentVersionForCheck()): ModelInstallResult {
         updateState(ModelState(ModelInstallStatus.CHECKING, currentModelVersion ?: "MockDetector"))
         return when (val result = modelApi.checkModel(currentModelVersion)) {
             is ApiResult.Success -> {
@@ -144,7 +156,7 @@ class ModelRepository(
         }
     }
 
-    suspend fun checkForUpdate(currentModelVersion: String? = activeVersion()): ApiResult<ModelCheckInfo> {
+    suspend fun checkForUpdate(currentModelVersion: String? = currentVersionForCheck()): ApiResult<ModelCheckInfo> {
         updateState(ModelState(ModelInstallStatus.CHECKING, currentModelVersion ?: "MockDetector"))
         return when (val result = modelApi.checkModel(currentModelVersion)) {
             is ApiResult.Success -> {
@@ -233,21 +245,38 @@ class ModelRepository(
         }
 
         updateState(ModelState(ModelInstallStatus.VERIFYING, descriptor.modelVersion, 100))
-        val actualSha256 = sha256(partFile)
+        val plaintext = if (update.encrypted) {
+            val provider = modelKeyProvider ?: run {
+                partFile.delete()
+                report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "ENCRYPTION_UNAVAILABLE", errorMessage = "设备模型密钥不可用")
+                return fail("ENCRYPTION_UNAVAILABLE", "设备模型密钥不可用", false)
+            }
+            runCatching { EncryptedModelContainer.decrypt(partFile, provider, expectedModelVersion = descriptor.modelVersion) }
+                .getOrElse {
+                    partFile.delete()
+                    report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "DECRYPT_FAILED", errorMessage = "模型解密失败")
+                    return fail("DECRYPT_FAILED", "模型解密失败", false)
+                }
+        } else null
+        val actualSha256 = plaintext?.let(::sha256) ?: sha256(partFile)
         if (!actualSha256.equals(descriptor.sha256, ignoreCase = true)) {
+            plaintext?.fill(0)
             partFile.delete()
             report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "SHA256_MISMATCH", errorMessage = "模型 SHA-256 校验失败")
             return fail("SHA256_MISMATCH", "模型 SHA-256 校验失败", false)
         }
-        if (!signatureVerifier.verify(partFile, descriptor)) {
+        val signatureValid = if (plaintext != null) signatureVerifier.verifyBytes(plaintext, descriptor) else signatureVerifier.verify(partFile, descriptor)
+        if (!signatureValid) {
+            plaintext?.fill(0)
             partFile.delete()
             report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "SIGNATURE_INVALID", errorMessage = "模型签名校验失败")
             return fail("SIGNATURE_INVALID", "模型签名校验失败", false)
         }
 
         val nextDetector = try {
-            detectorFactory(partFile, descriptor)
+            if (plaintext != null) bytesDetectorFactory(plaintext, descriptor) else detectorFactory(partFile, descriptor)
         } catch (error: Exception) {
+            plaintext?.fill(0)
             partFile.delete()
             report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "MODEL_LOAD_FAILED", errorMessage = error.message ?: "模型加载失败")
             return fail("MODEL_LOAD_FAILED", error.message ?: "模型加载失败", false)
@@ -256,13 +285,15 @@ class ModelRepository(
         return try {
             moveActiveToPrevious(modelFile, previousFile, metadataFile, previousMetadataFile)
             atomicMove(partFile, modelFile)
-            atomicWrite(metadataFile, descriptor.toJson())
+            atomicWrite(metadataFile, descriptor.toStoredJson(update.encrypted))
             detectorSlot.replace(nextDetector)
+            plaintext?.fill(0)
             updateState(ModelState(ModelInstallStatus.READY, descriptor.modelVersion, 100))
             report(update.dispatchId, ModelDispatchStatus.SUCCESS, 100)
             ModelInstallResult(true, descriptor.modelVersion)
         } catch (error: Exception) {
             nextDetector.close()
+            plaintext?.fill(0)
             partFile.delete()
             rollbackInternal(modelFile, previousFile, metadataFile, previousMetadataFile)
             report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "ACTIVATE_FAILED", errorMessage = error.message ?: "模型切换失败")
@@ -281,12 +312,11 @@ class ModelRepository(
         val previousMetadata = File(storageDir, "previous.json")
         if (!previousFile.isFile || !previousMetadata.isFile) return fail("NO_PREVIOUS_MODEL", "没有可回滚的上一模型", false)
         return try {
-            val descriptor = ncnnModelDescriptorFromJson(previousMetadata.readText())
+            val stored = storedModelMetadata(previousMetadata.readText())
+            val descriptor = stored.descriptor
             val contract = NcnnModelContract.validate(descriptor)
             require(contract.isValid) { contract.errors.joinToString("；") }
-            require(sha256(previousFile).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
-            require(signatureVerifier.verify(previousFile, descriptor)) { "模型签名校验失败" }
-            val nextDetector = detectorFactory(previousFile, descriptor)
+            val nextDetector = createVerifiedDetector(previousFile, stored)
             rollbackInternal(activeFile, previousFile, activeMetadata, previousMetadata)
             detectorSlot.replace(nextDetector)
             updateState(ModelState(ModelInstallStatus.ROLLED_BACK, descriptor.modelVersion, 100))
@@ -297,18 +327,21 @@ class ModelRepository(
         }
     }
 
-    fun activeVersion(): String? = readDescriptor()?.modelVersion
+    fun activeVersion(): String? = readStoredModel()?.descriptor?.modelVersion
+
+    private fun currentVersionForCheck(): String? = activeVersion().takeIf {
+        stateFlow.value.status == ModelInstallStatus.READY || stateFlow.value.status == ModelInstallStatus.ROLLED_BACK
+    }
 
     private fun loadActive() {
         val modelFile = File(storageDir, "active.bin")
-        val descriptor = readDescriptor() ?: return
+        val stored = readStoredModel() ?: return
+        val descriptor = stored.descriptor
         if (!modelFile.isFile) return
         try {
             val contract = NcnnModelContract.validate(descriptor)
             require(contract.isValid) { contract.errors.joinToString("；") }
-            require(sha256(modelFile).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
-            require(signatureVerifier.verify(modelFile, descriptor)) { "模型签名校验失败" }
-            detectorSlot.replace(detectorFactory(modelFile, descriptor))
+            detectorSlot.replace(createVerifiedDetector(modelFile, stored))
             updateState(ModelState(ModelInstallStatus.READY, descriptor.modelVersion, 100))
         } catch (error: Exception) {
             updateState(ModelState(ModelInstallStatus.FAILED, "MockDetector", errorCode = "MODEL_LOAD_FAILED", errorMessage = error.message ?: "模型加载失败"))
@@ -333,13 +366,28 @@ class ModelRepository(
         stateFlow.value = next
     }
 
-    private fun readState(): ModelState = readDescriptor()?.let { ModelState(ModelInstallStatus.READY, it.modelVersion, 100) } ?: ModelState()
+    private fun readState(): ModelState = readStoredModel()?.let { ModelState(ModelInstallStatus.READY, it.descriptor.modelVersion, 100) } ?: ModelState()
 
-    private fun readDescriptor(): NcnnModelDescriptor? = try {
+    private fun readStoredModel(): StoredModelMetadata? = try {
         val file = File(storageDir, "active.json")
-        if (file.isFile) ncnnModelDescriptorFromJson(file.readText()) else null
+        if (file.isFile) storedModelMetadata(file.readText()) else null
     } catch (_: Exception) {
         null
+    }
+
+    private fun createVerifiedDetector(file: File, stored: StoredModelMetadata): CloseableDetector {
+        val descriptor = stored.descriptor
+        val plaintext = if (stored.encrypted) {
+            val provider = modelKeyProvider ?: error("设备模型密钥不可用")
+            EncryptedModelContainer.decrypt(file, provider, expectedModelVersion = descriptor.modelVersion)
+        } else null
+        return try {
+            require((plaintext?.let(::sha256) ?: sha256(file)).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
+            require(if (plaintext != null) signatureVerifier.verifyBytes(plaintext, descriptor) else signatureVerifier.verify(file, descriptor)) { "模型签名校验失败" }
+            if (plaintext != null) bytesDetectorFactory(plaintext, descriptor) else detectorFactory(file, descriptor)
+        } finally {
+            plaintext?.fill(0)
+        }
     }
 
     private fun isAllowedUrl(url: String): Boolean = try {
@@ -393,6 +441,9 @@ class ModelRepository(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun sha256(bytes: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(bytes).joinToString("") { "%02x".format(it) }
+
     private fun safeName(value: String) = value.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)
 
     private fun ApiResult<*>.failureDetails(): Pair<String, String> = when (this) {
@@ -408,19 +459,30 @@ class ModelRepository(
     }
 }
 
-private fun NcnnModelDescriptor.toJson(): String = org.json.JSONObject()
-    .put("modelVersion", modelVersion)
-    .put("architecture", architecture)
-    .put("quantization", quantization)
-    .put("framework", framework)
-    .put("inputSize", inputSize)
-    .put("labels", org.json.JSONArray(labels))
-    .put("sha256", sha256)
-    .put("signature", signature)
-    .put("signatureAlgorithm", signatureAlgorithm)
-    .put("publicKeyId", publicKeyId)
-    .put("signatureExpiresAtMillis", signatureExpiresAtMillis)
+private data class StoredModelMetadata(val descriptor: NcnnModelDescriptor, val encrypted: Boolean)
+
+private fun NcnnModelDescriptor.toStoredJson(encrypted: Boolean): String = org.json.JSONObject()
+    .put("encrypted", encrypted)
+    .put("descriptor", org.json.JSONObject()
+        .put("modelVersion", modelVersion)
+        .put("architecture", architecture)
+        .put("quantization", quantization)
+        .put("framework", framework)
+        .put("inputSize", inputSize)
+        .put("labels", org.json.JSONArray(labels))
+        .put("sha256", sha256)
+        .put("signature", signature)
+        .put("signatureAlgorithm", signatureAlgorithm)
+        .put("publicKeyId", publicKeyId)
+        .put("signatureExpiresAtMillis", signatureExpiresAtMillis))
     .toString()
+
+private fun storedModelMetadata(raw: String): StoredModelMetadata {
+    val root = org.json.JSONObject(raw)
+    val nested = root.optJSONObject("descriptor")
+    val descriptor = ncnnModelDescriptorFromJson((nested ?: root).toString())
+    return StoredModelMetadata(descriptor, root.optBoolean("encrypted", false))
+}
 
 private fun ncnnModelDescriptorFromJson(raw: String): NcnnModelDescriptor {
     val data = org.json.JSONObject(raw)

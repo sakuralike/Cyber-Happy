@@ -6,6 +6,7 @@ import java.io.File
 import java.io.InputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 class NcnnDetector private constructor(
@@ -88,6 +89,29 @@ class NcnnDetector private constructor(
                 val param = zip.getInputStream(paramEntry).use { it.readBytes() }
                 val bin = zip.getInputStream(binEntry).use { it.readBytes() }
                 return create(descriptor, param, bin)
+            }
+        }
+
+        fun fromBundleBytes(bundle: ByteArray, descriptor: NcnnModelDescriptor): NcnnDetector {
+            var param: ByteArray? = null
+            var bin: ByteArray? = null
+            ZipInputStream(bundle.inputStream()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    when (entry.name) {
+                        "model.param" -> param = zip.readBytes()
+                        "model.bin" -> bin = zip.readBytes()
+                    }
+                    zip.closeEntry()
+                }
+            }
+            val paramBytes = param ?: error("NCNN 模型包缺少 model.param")
+            val binBytes = bin ?: error("NCNN 模型包缺少 model.bin")
+            return try {
+                create(descriptor, paramBytes, binBytes)
+            } finally {
+                paramBytes.fill(0)
+                binBytes.fill(0)
             }
         }
 

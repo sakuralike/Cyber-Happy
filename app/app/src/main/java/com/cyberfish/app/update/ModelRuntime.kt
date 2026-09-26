@@ -9,13 +9,14 @@ object ModelRuntime {
     @Volatile
     private var repository: ModelRepository? = null
 
-    fun get(context: Context, modelApi: ModelApi): ModelRepository {
+    fun get(context: Context, modelApi: ModelApi, keyProvider: ModelKeyProvider? = null): ModelRepository {
         repository?.let { return it }
         return synchronized(this) {
             repository ?: ModelRepository(
                 modelApi = modelApi,
                 storageDir = File(context.applicationContext.filesDir, "models"),
                 signatureVerifier = PublicKeyModelSignatureVerifier(ModelPublicKeys.fromBuildConfig()),
+                modelKeyProvider = keyProvider,
                 allowInsecureHttp = BuildConfig.DEBUG,
             ).also { repository = it }
         }

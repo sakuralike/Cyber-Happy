@@ -59,13 +59,20 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id', { onRequest: [readGuard] }, async (request, reply) => {
     const { id } = parseOrThrow(fileIdParamSchema, request.params);
-    return sendOk(reply, await service.detail(id));
+    const asset = await service.detail(id);
+    if ((request as FastifyRequest & { isAppClient?: boolean }).isAppClient && asset.bizType === 'MODEL') {
+      throw AppError.forbidden('APP 端不能读取原始模型文件');
+    }
+    return sendOk(reply, asset);
   });
 
   /** 带鉴权的下载 */
   app.get('/:id/download', { onRequest: [readGuard] }, async (request, reply) => {
     const { id } = parseOrThrow(fileIdParamSchema, request.params);
     const asset = await service.detail(id);
+    if ((request as FastifyRequest & { isAppClient?: boolean }).isAppClient && asset.bizType === 'MODEL') {
+      throw AppError.forbidden('APP 端不能下载原始模型文件');
+    }
     const full = service.resolvePath(asset.url);
     if (!full) throw AppError.notFound('文件已丢失');
     reply

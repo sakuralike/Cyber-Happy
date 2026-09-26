@@ -339,6 +339,24 @@ model DeviceDispatchLog {
   @@index([status])
 }
 
+model ModelDeviceKey {
+  id             String   @id @default(cuid())
+  deviceId       String   @unique
+  keyId          String   @unique
+  publicKey      String
+  algorithm      String
+  securityLevel  String
+  appVersionCode Int
+  userId         String?
+  authorizedUntil DateTime
+  createdAt      DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
+  revokedAt      DateTime?
+
+  @@index([userId])
+  @@index([revokedAt])
+}
+
 // ============================================================
 // 用户误报管理
 // ============================================================

@@ -4,6 +4,7 @@ import { AppError } from '../../lib/errors';
 import { buildListQuery, type RawListQuery } from '../../lib/query';
 import { parseJson } from '../../lib/serialize';
 import { inGray } from '../../lib/hash';
+import { encryptModelForDevice, validateDevicePublicKey } from './encryption';
 import type {
   ModelListQuery,
   CreateModelInput,
@@ -13,6 +14,8 @@ import type {
   DispatchListQuery,
   DeviceLogListQuery,
   CheckModelQuery,
+  RegisterDeviceKeyInput,
+  EncryptedModelQuery,
 } from './schema';
 
 function normalizeModel<T extends { fileSize?: bigint | null; labels?: string | null }>(row: T) {
@@ -25,6 +28,21 @@ function normalizeModel<T extends { fileSize?: bigint | null; labels?: string | 
 
 function normalizeDispatch<T extends { targetValue?: string | null }>(row: T) {
   return { ...row, targetValue: parseJson<Record<string, unknown>>(row.targetValue ?? '{}', {}) };
+}
+
+function ensurePublishableModel(model: {
+  framework: string;
+  fileUrl: string | null;
+  sha256: string | null;
+  signature: string | null;
+  signatureAlgorithm: string | null;
+  publicKeyId: string | null;
+}) {
+  if (model.framework !== 'NCNN') throw AppError.invalidState('仅允许下发 NCNN 模型');
+  if (!model.fileUrl || !model.sha256?.match(/^[a-fA-F0-9]{64}$/)) throw AppError.invalidState('模型文件或 SHA-256 缺失');
+  if (!model.signature || model.signatureAlgorithm !== 'ECDSA_P256_SHA256' || !model.publicKeyId) {
+    throw AppError.invalidState('模型签名、签名算法或公钥标识缺失');
+  }
 }
 
 // ============================================================
@@ -224,7 +242,7 @@ async function matchDevices(
 export async function dispatch(modelId: string, input: DispatchInput, operatorId?: string) {
   const model = await prisma.mlModel.findUnique({ where: { id: modelId } });
   if (!model) throw AppError.notFound('模型不存在');
-  if (!model.fileUrl) throw AppError.invalidState('模型文件未上传，无法下发');
+  ensurePublishableModel(model);
 
   const devices = await matchDevices(input.targetType, input.targetValue);
   // 灰度过滤
@@ -276,7 +294,7 @@ export async function rollback(modelId: string, input: RollbackInput, operatorId
   const to = await prisma.mlModel.findUnique({ where: { id: input.toModelId } });
   if (!to) throw AppError.notFound('回滚目标模型不存在');
   if (to.id === from.id) throw AppError.badRequest('不能回滚到自身');
-  if (!to.fileUrl) throw AppError.invalidState('回滚目标模型缺少文件');
+  ensurePublishableModel(to);
 
   // 找到原下发单（取最近一条非回滚单）作为回滚范围依据
   const origin = await prisma.modelDispatch.findFirst({
@@ -453,6 +471,14 @@ export async function retryFailed(dispatchId: string) {
 // ============================================================
 
 export async function checkModel(q: CheckModelQuery) {
+  const deviceKey = await prisma.modelDeviceKey.findUnique({ where: { deviceId: q.deviceId } });
+  if (!deviceKey || deviceKey.revokedAt || deviceKey.authorizedUntil <= new Date()) {
+    throw new AppError(40920, '设备尚未完成模型密钥授权，请先注册设备密钥', 409);
+  }
+  if (q.keyId && q.keyId !== deviceKey.keyId) {
+    throw new AppError(40921, '设备密钥已轮换，请重新注册', 409);
+  }
+  await prisma.modelDeviceKey.update({ where: { id: deviceKey.id }, data: { lastSeenAt: new Date(), appVersionCode: q.appVersionCode } });
   const candidates = await prisma.mlModel.findMany({
     where: {
       status: { in: ['ONLINE', 'GRAY'] },
@@ -476,6 +502,7 @@ export async function checkModel(q: CheckModelQuery) {
   });
 
   if (!hit) return { hasUpdate: false };
+  ensurePublishableModel(hit);
 
   const latestDispatch = await prisma.modelDispatch.findFirst({
     where: { modelId: hit.id },
@@ -491,7 +518,7 @@ export async function checkModel(q: CheckModelQuery) {
       quant: hit.quant,
       framework: hit.framework,
       inputSize: hit.inputSize,
-      url: hit.fileUrl,
+      url: `/api/v1/models/encrypted/${hit.id}?deviceId=${encodeURIComponent(q.deviceId)}&keyId=${encodeURIComponent(deviceKey.keyId)}`,
       size: hit.fileSize ? Number(hit.fileSize) : null,
       sha256: hit.sha256,
       minAppCode: hit.minAppCode,
@@ -506,9 +533,53 @@ export async function checkModel(q: CheckModelQuery) {
       outputName: hit.outputName,
       coordinatesNormalized: hit.coordinatesNormalized,
       valuesPerDetection: hit.valuesPerDetection,
+      encrypted: true,
+      encryptionAlgorithm: 'AES_256_GCM_RSA_OAEP_SHA256',
+      keyId: deviceKey.keyId,
     },
     dispatchId: latestDispatch?.id ?? null,
   };
+}
+
+export async function registerDeviceKey(input: RegisterDeviceKeyInput, userId?: string) {
+  const keyId = validateDevicePublicKey(input.publicKey);
+  const authorizedUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const row = await prisma.modelDeviceKey.upsert({
+    where: { deviceId: input.deviceId },
+    create: {
+      deviceId: input.deviceId,
+      keyId,
+      publicKey: input.publicKey,
+      algorithm: input.algorithm,
+      securityLevel: input.securityLevel,
+      appVersionCode: input.appVersionCode,
+      userId: userId ?? null,
+      authorizedUntil,
+    },
+    update: {
+      keyId,
+      publicKey: input.publicKey,
+      algorithm: input.algorithm,
+      securityLevel: input.securityLevel,
+      appVersionCode: input.appVersionCode,
+      userId: userId ?? undefined,
+      authorizedUntil,
+      revokedAt: null,
+      lastSeenAt: new Date(),
+    },
+  });
+  return { deviceId: row.deviceId, keyId: row.keyId, algorithm: row.algorithm, securityLevel: row.securityLevel, authorizedUntil: row.authorizedUntil, registeredAt: row.createdAt, lastSeenAt: row.lastSeenAt };
+}
+
+export async function encryptedModel(modelId: string, query: EncryptedModelQuery) {
+  const [model, deviceKey] = await Promise.all([
+    prisma.mlModel.findUnique({ where: { id: modelId }, select: { id: true, modelVersion: true, fileUrl: true, sha256: true, status: true } }),
+    prisma.modelDeviceKey.findUnique({ where: { deviceId: query.deviceId } }),
+  ]);
+  if (!model || !['ONLINE', 'GRAY'].includes(model.status)) throw AppError.notFound('模型不存在或未发布');
+  if (!deviceKey || deviceKey.revokedAt || deviceKey.authorizedUntil <= new Date() || deviceKey.keyId !== query.keyId) throw new AppError(40921, '设备密钥无效、已过期或已轮换', 409);
+  await prisma.modelDeviceKey.update({ where: { id: deviceKey.id }, data: { lastSeenAt: new Date() } });
+  return encryptModelForDevice(model, deviceKey);
 }
 
 export async function reportDispatch(
