@@ -138,3 +138,20 @@ class NcnnDetector private constructor(
         private const val CONFIDENCE_INDEX = 4
     }
 }
+
+internal fun mapModelBoundsToSource(
+    bounds: DetectionBounds,
+    inputTransform: ModelInputTransform?,
+): DetectionBounds? {
+    if (inputTransform != null) return inputTransform.modelToSourceNormalized(bounds)
+    if (!bounds.left.isFinite() || !bounds.top.isFinite() ||
+        !bounds.right.isFinite() || !bounds.bottom.isFinite()
+    ) return null
+    val normalized = DetectionBounds(
+        left = bounds.left.coerceIn(0f, 1f),
+        top = bounds.top.coerceIn(0f, 1f),
+        right = bounds.right.coerceIn(0f, 1f),
+        bottom = bounds.bottom.coerceIn(0f, 1f),
+    )
+    return normalized.takeIf { it.right > it.left && it.bottom > it.top }
+}

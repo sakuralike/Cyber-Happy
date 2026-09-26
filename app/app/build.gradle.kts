@@ -173,8 +173,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     implementation(libs.androidx.work.runtime.ktx)
-    implementation(libs.google.ai.edge.litert)
-
     kapt(libs.androidx.room.compiler)
 
     testImplementation(libs.junit)
