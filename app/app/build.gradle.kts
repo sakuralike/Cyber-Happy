@@ -73,6 +73,7 @@ if (needsAsciiBuildDirectory) {
 android {
     namespace = "com.cyberfish.app"
     compileSdk = 34
+    ndkVersion = "26.3.11579264"
 
     defaultConfig {
         applicationId = "com.cyberfish.app"
@@ -90,6 +91,16 @@ android {
         buildConfigField("String", "AMAP_API_KEY", buildConfigString(amapApiKey))
         manifestPlaceholders["amapApiKey"] = amapApiKey
         vectorDrawables { useSupportLibrary = true }
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     signingConfigs {
@@ -135,6 +146,7 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        jniLibs.useLegacyPackaging = true
     }
 
     sourceSets {

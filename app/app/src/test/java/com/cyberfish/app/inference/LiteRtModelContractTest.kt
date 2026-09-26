@@ -6,16 +6,15 @@ import org.junit.Test
 
 class LiteRtModelContractTest {
     @Test
-    fun `valid YOLO26n LiteRT descriptor passes`() {
+    fun `valid YOLO26n NCNN descriptor passes`() {
         val descriptor = descriptor()
 
-        assertTrue(LiteRtModelContract.validate(descriptor).isValid)
-        assertFalse(descriptor.coordinatesNormalized)
+        assertTrue(NcnnModelContract.validate(descriptor).isValid)
     }
 
     @Test
     fun `legacy framework and unsupported signature are rejected`() {
-        val result = LiteRtModelContract.validate(descriptor(framework = "TFLITE", signatureAlgorithm = "RSA"))
+        val result = NcnnModelContract.validate(descriptor(framework = "TFLITE", signatureAlgorithm = "RSA"))
 
         assertFalse(result.isValid)
         assertTrue(result.errors.any { it.contains("运行时") })
@@ -24,7 +23,7 @@ class LiteRtModelContractTest {
 
     @Test
     fun `expired signature is rejected`() {
-        val result = LiteRtModelContract.validate(
+        val result = NcnnModelContract.validate(
             descriptor().copy(signatureExpiresAtMillis = 1_000L),
             nowMillis = 1_001L,
         )
@@ -33,10 +32,10 @@ class LiteRtModelContractTest {
         assertTrue(result.errors.any { it.contains("过期") })
     }
 
-    private fun descriptor(framework: String = "LiteRT", signatureAlgorithm: String = "ECDSA_P256_SHA256") = LiteRtModelDescriptor(
+    private fun descriptor(framework: String = "NCNN", signatureAlgorithm: String = "ECDSA_P256_SHA256") = NcnnModelDescriptor(
         modelVersion = "yolo26n-w8a32-v1",
         architecture = "YOLO26n",
-        quantization = "W8A32",
+        quantization = "FP32",
         framework = framework,
         inputSize = 640,
         labels = listOf("fish_float"),

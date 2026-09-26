@@ -1,6 +1,9 @@
 import { prisma } from '../../lib/prisma';
 import { AppError, ErrorCode } from '../../lib/errors';
 import { hashPassword, verifyPassword } from '../../lib/hash';
+import { ConfigScope } from '../../lib/enums';
+import * as settingsService from '../system-settings/service';
+import * as inviteService from '../invite/service';
 import type {
   ChangePasswordInput,
   FeedbackInput,
@@ -46,28 +49,37 @@ function sessionResult(user: UserRecord, signToken: (payload: { sub: string; use
 export async function register(
   input: RegisterInput,
   signToken: (payload: { sub: string; username: string; kind: 'APP_USER' }) => string,
+  meta: { ip?: string; userAgent?: string; deviceId?: string; channel?: string } = {},
 ) {
-  const existing = await prisma.userAccount.findUnique({ where: { username: input.username } });
-  if (existing) throw AppError.conflict('用户名已被使用');
+  const policy = await authPolicy();
+  if (!policy.registrationEnabled) throw new AppError(ErrorCode.AUTH_REGISTRATION_DISABLED, policy.registrationDisabledMessage, 403);
+  if (policy.inviteRequired && !input.inviteCode) throw new AppError(ErrorCode.INVITE_REQUIRED, policy.inviteRequiredMessage, 422);
+  const passwordHash = await hashPassword(input.password);
 
-  const user = await prisma.userAccount.create({
-    data: {
-      username: input.username,
-      passwordHash: await hashPassword(input.password),
-      displayName: input.displayName || input.username,
-      email: input.email || null,
-    },
-    select: {
-      id: true,
-      username: true,
-      displayName: true,
-      email: true,
-      avatarFileId: true,
-      status: true,
-      lastLoginAt: true,
-      createdAt: true,
-    },
-  });
+  const user = await prisma.$transaction(async (tx) => {
+    const existing = await tx.userAccount.findUnique({ where: { username: input.username } });
+    if (existing) throw AppError.conflict('用户名已被使用');
+    const created = await tx.userAccount.create({
+      data: {
+        username: input.username,
+        passwordHash,
+        displayName: input.displayName || input.username,
+        email: input.email || null,
+      },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        email: true,
+        avatarFileId: true,
+        status: true,
+        lastLoginAt: true,
+        createdAt: true,
+      },
+    });
+    if (policy.inviteRequired) await inviteService.redeem(tx, input.inviteCode!, created.id, meta);
+    return created;
+  }, { maxWait: 30_000, timeout: 30_000 });
   return sessionResult(user, signToken);
 }
 
@@ -75,6 +87,8 @@ export async function login(
   input: LoginInput,
   signToken: (payload: { sub: string; username: string; kind: 'APP_USER' }) => string,
 ) {
+  const policy = await authPolicy();
+  if (!policy.loginEnabled) throw new AppError(ErrorCode.AUTH_LOGIN_DISABLED, policy.loginDisabledMessage, 403);
   const user = await prisma.userAccount.findUnique({ where: { username: input.username } });
   if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
     throw new AppError(ErrorCode.BAD_CREDENTIALS, '用户名或密码错误', 401);
@@ -98,6 +112,20 @@ export async function login(
     },
   });
   return sessionResult(updated, signToken);
+}
+
+async function authPolicy() {
+  await settingsService.ensureDefaults();
+  const result = await settingsService.publicConfig(ConfigScope.USER_PAGE);
+  const data = ('data' in result ? result.data : {}) as Record<string, unknown>;
+  return {
+    loginEnabled: data['auth.loginEnabled'] !== false,
+    registrationEnabled: data['auth.registrationEnabled'] !== false,
+    inviteRequired: data['auth.inviteRequired'] === true,
+    loginDisabledMessage: String(data['auth.loginDisabledMessage'] || '用户登录暂未开放，请稍后再试'),
+    registrationDisabledMessage: String(data['auth.registrationDisabledMessage'] || '用户注册暂未开放，请联系管理员'),
+    inviteRequiredMessage: String(data['auth.inviteRequiredMessage'] || '当前注册需要邀请码'),
+  };
 }
 
 export async function forgotPassword(input: ForgotPasswordInput) {

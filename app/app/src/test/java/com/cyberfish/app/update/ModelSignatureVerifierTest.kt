@@ -1,6 +1,6 @@
 package com.cyberfish.app.update
 
-import com.cyberfish.app.inference.LiteRtModelDescriptor
+import com.cyberfish.app.inference.NcnnModelDescriptor
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -71,11 +71,11 @@ class ModelSignatureVerifierTest {
         assertFalse(verifier.verify(file, descriptor("key", sign(keyPair, file.readBytes())).copy(signatureExpiresAtMillis = 1L)))
     }
 
-    private fun descriptor(keyId: String, signature: String) = LiteRtModelDescriptor(
+    private fun descriptor(keyId: String, signature: String) = NcnnModelDescriptor(
         modelVersion = "yolo26n-w8a32-v1",
         architecture = "YOLO26n",
-        quantization = "W8A32",
-        framework = "LiteRT",
+        quantization = "FP32",
+        framework = "NCNN",
         inputSize = 640,
         labels = listOf("fish_float"),
         sha256 = "a".repeat(64),
@@ -84,7 +84,7 @@ class ModelSignatureVerifierTest {
         publicKeyId = keyId,
     )
 
-    private fun writeModel(content: String): File = File(directory, "model-${System.nanoTime()}.tflite").also { it.writeText(content) }
+    private fun writeModel(content: String): File = File(directory, "model-${System.nanoTime()}.bin").also { it.writeText(content) }
 
     private fun keyPair(): KeyPair = KeyPairGenerator.getInstance("EC").apply {
         initialize(ECGenParameterSpec("secp256r1"))

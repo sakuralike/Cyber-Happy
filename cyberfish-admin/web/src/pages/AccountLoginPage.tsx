@@ -16,6 +16,10 @@ export function AccountLoginPage() {
   const { login, register, isAuthed } = useUserAuth();
   const { data: publicConfig } = useQuery({ queryKey: ['public-config'], queryFn: getPublicConfigAll });
   const site = publicConfig?.scopes.SITE ?? {};
+  const userPage = publicConfig?.scopes.USER_PAGE ?? {};
+  const loginEnabled = userPage['auth.loginEnabled'] !== false;
+  const registrationEnabled = userPage['auth.registrationEnabled'] !== false;
+  const inviteRequired = userPage['auth.inviteRequired'] === true;
   const [mode, setMode] = useState<Mode>('login');
   const [loading, setLoading] = useState(false);
 
@@ -55,13 +59,16 @@ export function AccountLoginPage() {
       <section className="account-login-form"><div className="login-form-wrap">
         <h1>{mode === 'login' ? '登录用户中心' : mode === 'register' ? '注册用户中心' : '重置密码'}</h1>
         <p>{mode === 'login' ? '使用赛博鱼乐账号继续' : mode === 'register' ? '注册后可在 APP 与网站用户中心使用同一账号' : '使用已绑定邮箱验证后设置新密码'}</p>
-        {mode !== 'forgot' && <Segmented block value={mode} onChange={(value) => { setMode(value as Mode); form.resetFields(); }} options={[{ label: '登录', value: 'login' }, { label: '注册', value: 'register' }]} />}
+        {mode !== 'forgot' && <Segmented block value={mode} onChange={(value) => { setMode(value as Mode); form.resetFields(); }} options={[{ label: '登录', value: 'login', disabled: !loginEnabled }, { label: '注册', value: 'register', disabled: !registrationEnabled }]} />}
+        {!loginEnabled && mode === 'login' && <Typography.Text type="warning">{String(userPage['auth.loginDisabledMessage'] ?? '用户登录暂未开放，请稍后再试')}</Typography.Text>}
+        {!registrationEnabled && mode === 'register' && <Typography.Text type="warning">{String(userPage['auth.registrationDisabledMessage'] ?? '用户注册暂未开放，请联系管理员')}</Typography.Text>}
         <Form form={form} layout="vertical" size="large" onFinish={submit} style={{ marginTop: 24 }}>
           <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2, message: '请输入至少 2 个字符的用户名' }]}><Input prefix={<UserOutlined />} autoFocus /></Form.Item>
           {mode === 'register' && <Form.Item name="displayName" label="昵称" rules={[{ max: 80 }]}><Input placeholder="默认使用用户名" /></Form.Item>}
+          {mode === 'register' && inviteRequired && <Form.Item name="inviteCode" label="邀请码" rules={[{ required: true, message: '请输入邀请码' }]}><Input /></Form.Item>}
           {(mode === 'register' || mode === 'forgot') && <Form.Item name="email" label="邮箱" rules={[{ required: mode === 'forgot', type: 'email', message: '请输入有效邮箱' }]}><Input placeholder={mode === 'forgot' ? '请输入注册时绑定的邮箱' : '可选'} /></Form.Item>}
           <Form.Item name="password" label="密码" rules={[{ required: true, min: 6, message: '密码至少 6 位' }]}><Input.Password prefix={<LockOutlined />} /></Form.Item>
-          <Button type="primary" htmlType="submit" block loading={loading}>{mode === 'login' ? '登录' : mode === 'register' ? '注册并登录' : '重置密码'}</Button>
+          <Button type="primary" htmlType="submit" block loading={loading} disabled={(mode === 'login' && !loginEnabled) || (mode === 'register' && !registrationEnabled)}>{mode === 'login' ? '登录' : mode === 'register' ? '注册并登录' : '重置密码'}</Button>
           {mode === 'login' && <Typography.Link onClick={() => { setMode('forgot'); form.resetFields(); }} style={{ display: 'block', marginTop: 14, textAlign: 'center' }}>忘记密码</Typography.Link>}
           {mode === 'forgot' && <Typography.Link onClick={() => { setMode('login'); form.resetFields(); }} style={{ display: 'block', marginTop: 14, textAlign: 'center' }}>返回登录</Typography.Link>}
         </Form>

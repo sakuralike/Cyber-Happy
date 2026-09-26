@@ -119,7 +119,7 @@ export function ModelPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ arch: 'YOLO26n', quant: 'W8A32', framework: 'LiteRT', inputSize: 640, numClasses: 1, labels: ['鱼漂'] });
+    form.setFieldsValue({ arch: 'YOLO26n', quant: 'FP32', framework: 'NCNN', inputSize: 640, numClasses: 1, labels: ['鱼漂'] });
     setModalOpen(true);
   };
   const openEdit = (row: MlModel) => {
@@ -553,7 +553,7 @@ export function ModelPage() {
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} maxLength={1000} />
           </Form.Item>
-          <Form.Item name="fileId" label="模型文件（LiteRT .tflite / .onnx）">
+          <Form.Item name="fileId" label="模型文件（NCNN 模型包 .bin）">
             <FileUpload
               bizType="MODEL"
               accept=".tflite,.onnx,.bin,.param"

@@ -305,7 +305,9 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                         eventType = AppEventType.MODEL_CALL,
                                         modelVersion = repository.modelRepository.detectorSlot.modelVersion,
                                         payload = JSONObject()
-                                            .put("inferenceMs", metrics.latencyMillis)
+                                            .put("preprocessMs", metrics.preprocessingMillis)
+                                            .put("inferenceMs", metrics.inferenceMillis)
+                                            .put("totalMs", metrics.latencyMillis)
                                             .put("fps", metrics.framesPerSecond),
                                     )
                                 }

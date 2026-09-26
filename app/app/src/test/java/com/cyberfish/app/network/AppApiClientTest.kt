@@ -206,6 +206,23 @@ class AppApiClientTest {
     }
 
     @Test
+    fun `user registration sends the invitation code`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"token":"user-token","user":{"id":"user-123","username":"angler","displayName":"钓友"}}}""",
+            ),
+        )
+
+        val result = client().register("angler", "checkpass123", "钓友", "", "CF-ABCD-EFGH-JKLM-NPQR")
+
+        assertTrue(result is ApiResult.Success)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/users/register", request.requestUrl?.encodedPath)
+        assertEquals("CF-ABCD-EFGH-JKLM-NPQR", JSONObject(request.body.readUtf8()).getString("inviteCode"))
+        assertEquals("test-app-token", request.getHeader("X-App-Token"))
+    }
+
+    @Test
     fun `check in overview sends user token and parses calendar state`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -297,10 +314,10 @@ class AppApiClientTest {
     }
 
     @Test
-    fun `model check parses LiteRT metadata and resolves relative url`() = runBlocking {
+    fun `model check parses NCNN metadata and resolves relative url`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"code":0,"message":"ok","data":{"hasUpdate":true,"model":{"modelVersion":"yolo26n-w8a32-v1","arch":"YOLO26n","quant":"W8A32","framework":"LiteRT","inputSize":640,"url":"/files/models/yolo26n.tflite","size":1234,"sha256":"${"a".repeat(64)}","labels":["fish_float"],"signature":"c2ln","signatureAlgorithm":"ECDSA_P256_SHA256","publicKeyId":"key-1","signatureExpiresAt":"2030-01-01T00:00:00Z","runtimeSignatureName":null,"inputName":null,"outputName":null},"dispatchId":"dispatch-1"}}""",
+                """{"code":0,"message":"ok","data":{"hasUpdate":true,"model":{"modelVersion":"yolo26n-fp32-v1","arch":"YOLO26n","quant":"FP32","framework":"NCNN","inputSize":640,"url":"/files/models/yolo26n.bin","size":1234,"sha256":"${"a".repeat(64)}","labels":["fish_float"],"signature":"c2ln","signatureAlgorithm":"ECDSA_P256_SHA256","publicKeyId":"key-1","signatureExpiresAt":"2030-01-01T00:00:00Z"},"dispatchId":"dispatch-1"}}""",
             ),
         )
 
@@ -308,16 +325,12 @@ class AppApiClientTest {
 
         val check = (result as ApiResult.Success).value
         assertTrue(check.hasUpdate)
-        assertEquals("yolo26n-w8a32-v1", check.update?.descriptor?.modelVersion)
+        assertEquals("yolo26n-fp32-v1", check.update?.descriptor?.modelVersion)
         assertEquals("YOLO26n", check.update?.descriptor?.architecture)
-        assertEquals("LiteRT", check.update?.descriptor?.framework)
+        assertEquals("NCNN", check.update?.descriptor?.framework)
         assertEquals("fish_float", check.update?.descriptor?.labels?.single())
-        assertEquals(null, check.update?.descriptor?.runtimeSignatureName)
-        assertEquals(null, check.update?.descriptor?.inputName)
-        assertEquals(null, check.update?.descriptor?.outputName)
-        assertFalse(check.update?.descriptor?.coordinatesNormalized ?: true)
         assertEquals("dispatch-1", check.update?.dispatchId)
-        assertTrue(check.update?.downloadUrl?.endsWith("/files/models/yolo26n.tflite") == true)
+        assertTrue(check.update?.downloadUrl?.endsWith("/files/models/yolo26n.bin") == true)
         val request = server.takeRequest()
         assertEquals("/api/v1/models/check", request.requestUrl?.encodedPath)
         assertEquals("device-123", request.requestUrl?.queryParameter("deviceId"))

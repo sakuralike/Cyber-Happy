@@ -3,6 +3,7 @@ import { parseOrThrow } from '../../lib/zod';
 import { sendCreated, sendOk, sendPage } from '../../lib/response';
 import { FileBizType } from '../../lib/enums';
 import { AppError } from '../../lib/errors';
+import { clientIp } from '../../lib/logger';
 import * as fileService from '../file/service';
 import {
   changePasswordSchema,
@@ -17,7 +18,11 @@ import * as service from './service';
 
 const routes: FastifyPluginAsync = async (app) => {
   app.post('/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const data = await service.register(parseOrThrow(registerSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }));
+    const data = await service.register(parseOrThrow(registerSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }), {
+      ip: clientIp(request.headers as Record<string, unknown>),
+      userAgent: String(request.headers['user-agent'] ?? ''),
+      channel: String(request.headers['x-client-channel'] ?? 'WEB'),
+    });
     return sendCreated(reply, data);
   });
 

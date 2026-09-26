@@ -15,6 +15,7 @@ export function SystemSettingsPage() {
   if (section === "banners") return <BannerSettingsPage />;
   if (section === "landing") return <LandingSettingsPage />;
   if (section === "user-page") return <UserPageSettingsPage />;
+  if (section === "auth") return <UserPageSettingsPage initialTab="auth" />;
   if (section === "check-in") return <CheckinSettingsPage />;
   if (section === "publish") return <ConfigPublishPage />;
   return <Navigate to="/settings" replace />;

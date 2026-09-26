@@ -24,9 +24,9 @@ import {
 
 type UserPageValues = Record<string, any>;
 
-export function UserPageSettingsPage() {
+export function UserPageSettingsPage({ initialTab = "profile" }: { initialTab?: "profile" | "auth" }) {
   const [form] = Form.useForm<UserPageValues>();
-  const [tab, setTab] = useState<"profile" | "auth">("profile");
+  const [tab, setTab] = useState<"profile" | "auth">(initialTab);
   const queryClient = useQueryClient();
   const { hasPerm } = useAuth();
   const canWrite = hasPerm("siteConfig:write");
@@ -82,6 +82,7 @@ export function UserPageSettingsPage() {
   useEffect(() => {
     if (data) form.setFieldsValue({ ...data.values, ...data.drafts });
   }, [data, form]);
+  useEffect(() => setTab(initialTab), [initialTab]);
   const welcome =
     Form.useWatch("user.welcome.template", form) ??
     "{nickname}，本周已识别 {weekCount} 次";
@@ -334,6 +335,24 @@ export function UserPageSettingsPage() {
                 </section>
                 <section className="settings-panel">
                   <SectionTitle>登录方式与隐私</SectionTitle>
+                  <SettingSwitchRow
+                    title="用户登录"
+                    description="允许 APP 与网站用户登录；不影响后台管理员登录"
+                    control={<Form.Item name="auth.loginEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>}
+                  />
+                  <SettingSwitchRow
+                    title="用户注册"
+                    description="允许新用户创建账号"
+                    control={<Form.Item name="auth.registrationEnabled" valuePropName="checked" noStyle><Switch /></Form.Item>}
+                  />
+                  <SettingSwitchRow
+                    title="注册必须使用邀请码"
+                    description="开启后只有有效且未耗尽的邀请码可以注册"
+                    control={<Form.Item name="auth.inviteRequired" valuePropName="checked" noStyle><Switch /></Form.Item>}
+                  />
+                  <Form.Item name="auth.loginDisabledMessage" label="登录关闭提示"><Input maxLength={120} /></Form.Item>
+                  <Form.Item name="auth.registrationDisabledMessage" label="注册关闭提示"><Input maxLength={120} /></Form.Item>
+                  <Form.Item name="auth.inviteRequiredMessage" label="邀请码必填提示"><Input maxLength={120} /></Form.Item>
                   <SettingSwitchRow
                     title="手机号登录"
                     description="保留手机号登录入口"
