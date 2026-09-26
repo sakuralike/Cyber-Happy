@@ -37,6 +37,43 @@ after(async () => {
 });
 
 describe('encrypted model API', () => {
+  it('never offers a newer LiteRT model to the NCNN app runtime', async () => {
+    const { publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const keyId = `rsa-${crypto.randomBytes(16).toString('hex')}`;
+    const headers = { 'x-app-token': process.env.APP_API_TOKEN };
+    await prisma.modelDeviceKey.create({
+      data: {
+        deviceId: 'device-ncnn-only',
+        keyId,
+        publicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+        algorithm: 'RSA_OAEP_SHA256',
+        securityLevel: 'SOFTWARE',
+        appVersionCode: 145,
+        authorizedUntil: new Date(Date.now() + 60_000),
+      },
+    });
+    await prisma.mlModel.create({ data: {
+      modelVersion: 'litert-newer', name: 'litert-newer', arch: 'YOLO26n', quant: 'W8A32', framework: 'LiteRT',
+      fileUrl: '/files/models/litert-newer.tflite', fileSize: BigInt(1024), sha256: 'a'.repeat(64), status: 'ONLINE', labels: '["fish_float"]',
+      signature: 'test', signatureAlgorithm: 'ECDSA_P256_SHA256', publicKeyId: 'test-key',
+    } });
+
+    const check = await app.inject({
+      method: 'GET',
+      url: `/api/v1/models/check?appVersionCode=145&deviceId=device-ncnn-only&keyId=${keyId}`,
+      headers,
+    });
+
+    assert.equal(check.statusCode, 200);
+    assert.equal(check.json().data.hasUpdate, false);
+    const direct = await app.inject({
+      method: 'GET',
+      url: `/api/v1/models/encrypted/${(await prisma.mlModel.findUnique({ where: { modelVersion: 'litert-newer' } })).id}?deviceId=device-ncnn-only&keyId=${keyId}`,
+      headers,
+    });
+    assert.equal(direct.statusCode, 404);
+  });
+
   it('registers a device key, returns only an encrypted URL, and blocks the raw model path', async () => {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicKeyText = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
