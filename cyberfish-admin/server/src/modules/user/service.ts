@@ -1,3 +1,4 @@
+import { config } from '../../config';
 import { prisma } from '../../lib/prisma';
 import { AppError, ErrorCode } from '../../lib/errors';
 import { hashPassword, verifyPassword } from '../../lib/hash';
@@ -53,6 +54,7 @@ export async function register(
 ) {
   const policy = await authPolicy();
   if (!policy.registrationEnabled) throw new AppError(ErrorCode.AUTH_REGISTRATION_DISABLED, policy.registrationDisabledMessage, 403);
+  const privacyEnforced = ensurePrivacyConsent(input.privacyAccepted, input.privacyVersion, policy, meta.channel, input.appVersionCode);
   if (policy.inviteRequired && !input.inviteCode) throw new AppError(ErrorCode.INVITE_REQUIRED, policy.inviteRequiredMessage, 422);
   const passwordHash = await hashPassword(input.password);
 
@@ -78,6 +80,16 @@ export async function register(
       },
     });
     if (policy.inviteRequired) await inviteService.redeem(tx, input.inviteCode!, created.id, meta);
+    if (privacyEnforced) {
+      await tx.userConsent.create({ data: {
+        userId: created.id,
+        consentType: 'USER_ACCESS',
+        policyVersion: policy.privacyVersion,
+        channel: meta.channel ?? 'WEB',
+        ip: meta.ip ?? null,
+        userAgent: meta.userAgent?.slice(0, 500) ?? null,
+      } });
+    }
     return created;
   }, { maxWait: 30_000, timeout: 30_000 });
   return sessionResult(user, signToken);
@@ -86,9 +98,11 @@ export async function register(
 export async function login(
   input: LoginInput,
   signToken: (payload: { sub: string; username: string; kind: 'APP_USER' }) => string,
+  meta: { ip?: string; userAgent?: string; channel?: string } = {},
 ) {
   const policy = await authPolicy();
   if (!policy.loginEnabled) throw new AppError(ErrorCode.AUTH_LOGIN_DISABLED, policy.loginDisabledMessage, 403);
+  const privacyEnforced = ensurePrivacyConsent(input.privacyAccepted, input.privacyVersion, policy, meta.channel, input.appVersionCode);
   const user = await prisma.userAccount.findUnique({ where: { username: input.username } });
   if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
     throw new AppError(ErrorCode.BAD_CREDENTIALS, '用户名或密码错误', 401);
@@ -111,7 +125,29 @@ export async function login(
       createdAt: true,
     },
   });
+  if (privacyEnforced) {
+    await prisma.userConsent.upsert({
+      where: { userId_consentType_policyVersion: { userId: updated.id, consentType: 'USER_ACCESS', policyVersion: policy.privacyVersion } },
+      create: { userId: updated.id, consentType: 'USER_ACCESS', policyVersion: policy.privacyVersion, channel: meta.channel ?? 'WEB', ip: meta.ip ?? null, userAgent: meta.userAgent?.slice(0, 500) ?? null },
+      update: { acceptedAt: new Date(), channel: meta.channel ?? 'WEB', ip: meta.ip ?? null, userAgent: meta.userAgent?.slice(0, 500) ?? null },
+    });
+  }
   return sessionResult(updated, signToken);
+}
+
+function ensurePrivacyConsent(
+  accepted: boolean | undefined,
+  version: string | undefined,
+  policy: { privacyRequired: boolean; privacyVersion: string },
+  channel: string | undefined,
+  appVersionCode: number | undefined,
+): boolean {
+  const isLegacyApp = channel === 'ANDROID_APP' && (appVersionCode ?? 0) < config.privacyConsentMinAppCode;
+  const enforced = policy.privacyRequired && !isLegacyApp;
+  if (enforced && (accepted !== true || version !== policy.privacyVersion)) {
+    throw new AppError(ErrorCode.PRIVACY_REQUIRED, '请先同意最新用户协议与隐私政策', 422);
+  }
+  return enforced;
 }
 
 async function authPolicy() {
@@ -125,6 +161,8 @@ async function authPolicy() {
     loginDisabledMessage: String(data['auth.loginDisabledMessage'] || '用户登录暂未开放，请稍后再试'),
     registrationDisabledMessage: String(data['auth.registrationDisabledMessage'] || '用户注册暂未开放，请联系管理员'),
     inviteRequiredMessage: String(data['auth.inviteRequiredMessage'] || '当前注册需要邀请码'),
+    privacyRequired: data['auth.privacyRequired'] !== false,
+    privacyVersion: 'privacy-v1',
   };
 }
 

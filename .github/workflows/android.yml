@@ -50,5 +50,9 @@ jobs:
           DATABASE_URL: file:./ci-migrate.db
       - run: npm run typecheck
       - run: npm run test:check-in --workspace server
+      - run: npm run test:user-invite --workspace server
+      - run: npm run test:model-encryption --workspace server
+      - run: npm run test:device-auth --workspace server
       - run: npm run test:app-version --workspace server
+      - run: npx tsx --test server/test/model-actions.test.ts
       - run: npm run build

@@ -22,6 +22,9 @@ import com.cyberfish.app.network.CheckInActionResult
 import com.cyberfish.app.network.CheckInHistory
 import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.DeviceIdentityStore
+import com.cyberfish.app.network.AndroidDeviceSigningKey
+import com.cyberfish.app.network.DeviceAccessTokenStore
+import com.cyberfish.app.network.DeviceAuthClient
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.UserAccount
 import com.cyberfish.app.network.UserSession
@@ -48,7 +51,20 @@ class CyberFishRepository(context: Context) {
     private val userSessionStore = UserSessionStore(appContext)
     private val deviceIdentityStore = DeviceIdentityStore(appContext)
     private val modelKeyStore = AndroidModelKeyStore()
-    private val appApiClient = AppApiClient(ApiConfig.fromBuildConfig(), deviceIdentityStore, userSessionStore, modelKeyStore)
+    private val deviceAuthClient = DeviceAuthClient(
+        config = ApiConfig.fromBuildConfig(),
+        identityProvider = deviceIdentityStore,
+        signingKeyProvider = AndroidDeviceSigningKey(),
+        tokenPersistence = DeviceAccessTokenStore(appContext),
+        userSessionProvider = userSessionStore,
+    )
+    private val appApiClient = AppApiClient(
+        ApiConfig.fromBuildConfig(),
+        deviceIdentityStore,
+        userSessionStore,
+        modelKeyStore,
+        deviceAuthClient,
+    )
     val modelRepository = ModelRuntime.get(appContext, appApiClient, modelKeyStore)
     val modelState = modelRepository.state
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
@@ -60,11 +76,22 @@ class CyberFishRepository(context: Context) {
     }
 
     suspend fun deleteRecord(recordId: Long) {
-        recordDao.deleteById(recordId)
+        val record = recordDao.findById(recordId) ?: return
+        if (recordDao.deleteById(recordId) > 0) deleteLocalMedia(record.snapshotPath, record.videoPath)
     }
 
     suspend fun deleteAllRecords() {
-        recordDao.deleteAll()
+        val records = recordDao.findAll()
+        if (recordDao.deleteAll() > 0) records.forEach { deleteLocalMedia(it.snapshotPath, it.videoPath) }
+    }
+
+    private fun deleteLocalMedia(vararg paths: String?) {
+        val root = appContext.filesDir.canonicalFile
+        paths.filterNotNull().mapNotNull { path ->
+            runCatching { File(path).canonicalFile }.getOrNull()
+        }.filter { file -> file.path.startsWith(root.path + File.separator) }.forEach { file ->
+            runCatching { file.delete() }
+        }
     }
 
     suspend fun confirmMisreport(event: TriggerEvent) {
@@ -90,14 +117,14 @@ class CyberFishRepository(context: Context) {
         payload: JSONObject = JSONObject(),
     ) = appApiClient.reportEvent(eventType, count, modelVersion, payload)
 
-    suspend fun login(username: String, password: String): ApiResult<UserSession> {
-        val result = appApiClient.login(username, password)
+    suspend fun login(username: String, password: String, privacyVersion: String? = null): ApiResult<UserSession> {
+        val result = appApiClient.login(username, password, privacyVersion)
         if (result is ApiResult.Success) persistSession(result.value)
         return result
     }
 
-    suspend fun register(username: String, password: String, displayName: String, email: String, inviteCode: String? = null): ApiResult<UserSession> {
-        val result = appApiClient.register(username, password, displayName, email, inviteCode)
+    suspend fun register(username: String, password: String, displayName: String, email: String, inviteCode: String? = null, privacyVersion: String? = null): ApiResult<UserSession> {
+        val result = appApiClient.register(username, password, displayName, email, inviteCode, privacyVersion)
         if (result is ApiResult.Success) persistSession(result.value)
         return result
     }

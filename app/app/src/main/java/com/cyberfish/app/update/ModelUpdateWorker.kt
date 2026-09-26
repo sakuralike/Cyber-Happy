@@ -42,7 +42,24 @@ class ModelUpdateWorker(
             }
             try {
                 when (val result = repository.checkForUpdate()) {
-                    is ApiResult.Success -> Result.success()
+                    is ApiResult.Success -> {
+                        if (!result.value.hasUpdate) {
+                            Result.success()
+                        } else {
+                            val install = repository.installPendingUpdate()
+                            if (install.activated) {
+                                Result.success()
+                            } else {
+                                setProgress(
+                                    Data.Builder()
+                                        .putString(KEY_ERROR_CODE, install.errorCode)
+                                        .putString(KEY_ERROR_MESSAGE, install.errorMessage)
+                                        .build(),
+                                )
+                                if (install.retryable) Result.retry() else Result.failure()
+                            }
+                        }
+                    }
                     is ApiResult.NetworkError -> Result.retry()
                     is ApiResult.HttpError -> if (result.statusCode >= 500) Result.retry() else Result.failure()
                     ApiResult.NotConfigured, is ApiResult.ParseError -> Result.failure()

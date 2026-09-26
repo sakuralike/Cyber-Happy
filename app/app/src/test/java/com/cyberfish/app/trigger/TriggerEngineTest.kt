@@ -124,6 +124,32 @@ class TriggerEngineTest {
     }
 
     @Test
+    fun `candidate duration follows the active sink window`() {
+        val engine = TriggerEngine(config)
+
+        engine.evaluate(snapshot(0L, 0f, 0f))
+        engine.evaluate(snapshot(100L, 5f, 10f))
+
+        assertEquals(540L, engine.candidateDurationMillis(640L))
+        engine.evaluate(null)
+        assertEquals(0L, engine.candidateDurationMillis(700L))
+    }
+
+    @Test
+    fun `updated confidence applies to the next evaluated frame`() {
+        val engine = TriggerEngine(config.copy(minConfidence = 0.95f))
+
+        engine.evaluate(snapshot(0L, 0f, 0f))
+        engine.evaluate(snapshot(100L, 5f, 10f))
+        engine.evaluate(snapshot(900L, 20f, 20f))
+        engine.updateConfig(config.copy(minConfidence = 0.80f))
+        engine.evaluate(snapshot(933L, 20f, -12f))
+        val event = engine.evaluate(snapshot(966L, 19f, -12f))
+
+        assertTrue(event != null)
+    }
+
+    @Test
     fun `three presets expose the planned sensitivity choices`() {
         assertEquals(3, TriggerPreset.entries.size)
         assertTrue(TriggerPreset.entries.map { it.label }.containsAll(listOf("默认", "中级", "高级")))

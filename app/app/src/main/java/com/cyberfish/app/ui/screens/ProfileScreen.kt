@@ -21,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -33,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,8 +70,8 @@ fun ProfileScreen(
     onOpenCheckIn: () -> Unit = {},
     openLogin: Boolean = false,
     onExportRecords: () -> Unit,
-    onLogin: suspend (String, String) -> ApiResult<UserSession>,
-    onRegister: suspend (String, String, String, String, String?) -> ApiResult<UserSession>,
+    onLogin: suspend (String, String, String?) -> ApiResult<UserSession>,
+    onRegister: suspend (String, String, String, String, String?, String?) -> ApiResult<UserSession>,
     onLogout: suspend () -> Unit,
     onPickAvatar: () -> Unit = {},
     onUpdateProfile: suspend (String, String) -> ApiResult<com.cyberfish.app.network.UserAccount> = { _, _ -> ApiResult.NotConfigured },
@@ -369,8 +371,8 @@ private fun ChangePasswordDialog(
 @Composable
 private fun LoginDialog(
     onDismiss: () -> Unit,
-    onLogin: suspend (String, String) -> ApiResult<UserSession>,
-    onRegister: suspend (String, String, String, String, String?) -> ApiResult<UserSession>,
+    onLogin: suspend (String, String, String?) -> ApiResult<UserSession>,
+    onRegister: suspend (String, String, String, String, String?, String?) -> ApiResult<UserSession>,
     authPolicy: SupportContent,
     onSuccess: () -> Unit,
 ) {
@@ -380,6 +382,7 @@ private fun LoginDialog(
     var displayName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var inviteCode by remember { mutableStateOf("") }
+    var privacyAccepted by rememberSaveable { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -395,6 +398,12 @@ private fun LoginDialog(
                 if (registerMode) OutlinedTextField(value = displayName, onValueChange = { displayName = it }, label = { Text("昵称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (registerMode) OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("邮箱（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (registerMode && authPolicy.inviteRequired) OutlinedTextField(value = inviteCode, onValueChange = { inviteCode = it }, label = { Text("邀请码") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (authPolicy.privacyRequired) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = privacyAccepted, onCheckedChange = { privacyAccepted = it })
+                        Text("我已阅读并同意用户协议与隐私政策", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("密码") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (authPolicy.registrationEnabled) TextButton(onClick = { registerMode = !registerMode; error = null }) { Text(if (registerMode) "已有账号，去登录" else "没有账号，去注册") }
@@ -402,12 +411,13 @@ private fun LoginDialog(
         },
         confirmButton = {
             Button(
-                enabled = !submitting && (if (registerMode) authPolicy.registrationEnabled else authPolicy.loginEnabled) && username.trim().length >= 2 && password.length >= 6 && (!registerMode || !authPolicy.inviteRequired || inviteCode.trim().isNotEmpty()),
+                enabled = !submitting && (if (registerMode) authPolicy.registrationEnabled else authPolicy.loginEnabled) && username.trim().length >= 2 && password.length >= 6 && (!registerMode || !authPolicy.inviteRequired || inviteCode.trim().isNotEmpty()) && (!authPolicy.privacyRequired || privacyAccepted),
                 onClick = {
                     submitting = true
                     error = null
                     scope.launch {
-                        val result = if (registerMode) onRegister(username.trim(), password, displayName.trim().ifBlank { username.trim() }, email.trim(), inviteCode.trim().takeIf { it.isNotEmpty() }) else onLogin(username.trim(), password)
+                        val privacyVersion = authPolicy.privacyVersion.takeIf { authPolicy.privacyRequired }
+                        val result = if (registerMode) onRegister(username.trim(), password, displayName.trim().ifBlank { username.trim() }, email.trim(), inviteCode.trim().takeIf { it.isNotEmpty() }, privacyVersion) else onLogin(username.trim(), password, privacyVersion)
                         submitting = false
                         if (result is ApiResult.Success) onSuccess() else error = result.message()
                     }

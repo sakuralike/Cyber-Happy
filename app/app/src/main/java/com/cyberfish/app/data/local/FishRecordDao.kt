@@ -17,6 +17,12 @@ interface FishRecordDao {
     @Query("DELETE FROM fish_records WHERE id = :id")
     suspend fun deleteById(id: Long): Int
 
+    @Query("SELECT * FROM fish_records WHERE id = :id LIMIT 1")
+    suspend fun findById(id: Long): FishRecordEntity?
+
+    @Query("SELECT * FROM fish_records")
+    suspend fun findAll(): List<FishRecordEntity>
+
     @Query("DELETE FROM fish_records")
     suspend fun deleteAll(): Int
 

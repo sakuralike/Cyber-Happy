@@ -61,6 +61,7 @@ before(async () => {
     'auth.loginEnabled': true,
     'auth.registrationEnabled': true,
     'auth.inviteRequired': false,
+    'auth.privacyRequired': false,
   });
 });
 
@@ -122,6 +123,20 @@ describe('user login and invitation registration controls', { concurrency: false
     assert.equal(response.statusCode, 403);
     assert.equal(response.json().code, 40305);
     await setPolicy({ 'auth.registrationEnabled': true });
+  });
+
+  it('enforces the published privacy consent version on web access', async () => {
+    await setPolicy({ 'auth.privacyRequired': true, 'auth.registrationEnabled': true, 'auth.inviteRequired': false });
+    const missing = await app.inject({ method: 'POST', url: '/api/v1/users/register', payload: { username: 'privacy-missing', password: 'secret123' } });
+    assert.equal(missing.statusCode, 422);
+    assert.equal(missing.json().code, 42214);
+
+    const accepted = await app.inject({ method: 'POST', url: '/api/v1/users/register', payload: {
+      username: 'privacy-accepted', password: 'secret123', privacyAccepted: true, privacyVersion: 'privacy-v1',
+    } });
+    assert.equal(accepted.statusCode, 201, accepted.body);
+    assert.equal(await prisma.userConsent.count({ where: { user: { username: 'privacy-accepted' } } }), 1);
+    await setPolicy({ 'auth.privacyRequired': false });
   });
 
   it('creates codes once, hides secrets from list responses, and revokes future redemption', async () => {

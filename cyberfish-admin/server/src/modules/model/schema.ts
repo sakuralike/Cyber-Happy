@@ -42,6 +42,7 @@ export const createModelSchema = z.object({
   inputName: z.string().trim().max(120).optional().nullable(),
   inputLayout: z.enum(['NCHW', 'NHWC']).default('NCHW'),
   outputName: z.string().trim().max(120).optional().nullable(),
+  outputLayout: z.enum(['FIELDS_BY_CANDIDATES', 'CANDIDATES_BY_FIELDS']).default('FIELDS_BY_CANDIDATES'),
   coordinatesNormalized: z.boolean().default(false),
   valuesPerDetection: z.number().int().positive().default(6),
 });

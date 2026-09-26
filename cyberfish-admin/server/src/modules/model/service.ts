@@ -140,6 +140,7 @@ export async function create(input: CreateModelInput, operatorId?: string) {
       inputName: input.inputName ?? null,
       inputLayout: input.inputLayout,
       outputName: input.outputName ?? null,
+      outputLayout: input.outputLayout,
       coordinatesNormalized: input.coordinatesNormalized,
       valuesPerDetection: input.valuesPerDetection,
       createdById: operatorId ?? null,
@@ -181,6 +182,7 @@ export async function update(id: string, input: UpdateModelInput) {
   if (input.inputName !== undefined) data.inputName = input.inputName;
   if (input.inputLayout !== undefined) data.inputLayout = input.inputLayout;
   if (input.outputName !== undefined) data.outputName = input.outputName;
+  if (input.outputLayout !== undefined) data.outputLayout = input.outputLayout;
   if (input.coordinatesNormalized !== undefined) data.coordinatesNormalized = input.coordinatesNormalized;
   if (input.valuesPerDetection !== undefined) data.valuesPerDetection = input.valuesPerDetection;
 
@@ -488,7 +490,21 @@ export async function retryFailed(dispatchId: string) {
 // APP 端接口
 // ============================================================
 
-export async function checkModel(q: CheckModelQuery) {
+async function assertCredentialModelKey(
+  credentialId: string | undefined,
+  deviceKey: { deviceId: string; keyId: string },
+): Promise<void> {
+  if (!credentialId) return;
+  const credential = await prisma.appDeviceCredential.findUnique({ where: { id: credentialId } });
+  if (
+    !credential || credential.status !== 'ACTIVE' || credential.revokedAt ||
+    credential.deviceId !== deviceKey.deviceId || credential.modelKeyId !== deviceKey.keyId
+  ) {
+    throw new AppError(40921, '模型密钥未绑定到当前设备凭据', 409);
+  }
+}
+
+export async function checkModel(q: CheckModelQuery, credentialId?: string) {
   const deviceKey = await prisma.modelDeviceKey.findUnique({ where: { deviceId: q.deviceId } });
   if (!deviceKey || deviceKey.revokedAt || deviceKey.authorizedUntil <= new Date()) {
     throw new AppError(40920, '设备尚未完成模型密钥授权，请先注册设备密钥', 409);
@@ -496,6 +512,7 @@ export async function checkModel(q: CheckModelQuery) {
   if (q.keyId && q.keyId !== deviceKey.keyId) {
     throw new AppError(40921, '设备密钥已轮换，请重新注册', 409);
   }
+  await assertCredentialModelKey(credentialId, deviceKey);
   await prisma.modelDeviceKey.update({ where: { id: deviceKey.id }, data: { lastSeenAt: new Date(), appVersionCode: q.appVersionCode } });
   const candidates = await prisma.mlModel.findMany({
     where: {
@@ -550,6 +567,7 @@ export async function checkModel(q: CheckModelQuery) {
       inputName: hit.inputName,
       inputLayout: hit.inputLayout,
       outputName: hit.outputName,
+      outputLayout: hit.outputLayout,
       coordinatesNormalized: hit.coordinatesNormalized,
       valuesPerDetection: hit.valuesPerDetection,
       encrypted: true,
@@ -560,43 +578,67 @@ export async function checkModel(q: CheckModelQuery) {
   };
 }
 
-export async function registerDeviceKey(input: RegisterDeviceKeyInput, userId?: string) {
+export async function registerDeviceKey(input: RegisterDeviceKeyInput, userId?: string, credentialId?: string) {
   const keyId = validateDevicePublicKey(input.publicKey);
   const authorizedUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  const row = await prisma.modelDeviceKey.upsert({
-    where: { deviceId: input.deviceId },
-    create: {
-      deviceId: input.deviceId,
-      keyId,
-      publicKey: input.publicKey,
-      algorithm: input.algorithm,
-      securityLevel: input.securityLevel,
-      appVersionCode: input.appVersionCode,
-      userId: userId ?? null,
-      authorizedUntil,
-    },
-    update: {
-      keyId,
-      publicKey: input.publicKey,
-      algorithm: input.algorithm,
-      securityLevel: input.securityLevel,
-      appVersionCode: input.appVersionCode,
-      userId: userId ?? undefined,
-      authorizedUntil,
-      revokedAt: null,
-      lastSeenAt: new Date(),
-    },
+  const row = await prisma.$transaction(async (tx) => {
+    const credential = credentialId
+      ? await tx.appDeviceCredential.findUnique({ where: { id: credentialId } })
+      : null;
+    if (credentialId && (!credential || credential.status !== 'ACTIVE' || credential.revokedAt || credential.deviceId !== input.deviceId)) {
+      throw AppError.forbidden('模型密钥不能绑定到其他设备凭据');
+    }
+
+    const saved = await tx.modelDeviceKey.upsert({
+      where: { deviceId: input.deviceId },
+      create: {
+        deviceId: input.deviceId,
+        keyId,
+        publicKey: input.publicKey,
+        algorithm: input.algorithm,
+        securityLevel: input.securityLevel,
+        appVersionCode: input.appVersionCode,
+        userId: userId ?? credential?.userId ?? null,
+        authorizedUntil,
+      },
+      update: {
+        keyId,
+        publicKey: input.publicKey,
+        algorithm: input.algorithm,
+        securityLevel: input.securityLevel,
+        appVersionCode: input.appVersionCode,
+        userId: userId ?? credential?.userId ?? undefined,
+        authorizedUntil,
+        revokedAt: null,
+        lastSeenAt: new Date(),
+      },
+    });
+    if (credential) {
+      await tx.appDeviceCredential.update({
+        where: { id: credential.id },
+        data: {
+          modelKeyId: saved.keyId,
+          modelPublicKey: saved.publicKey,
+          securityLevel: input.securityLevel,
+          appVersionCode: input.appVersionCode,
+          userId: userId ?? undefined,
+          lastSeenAt: new Date(),
+        },
+      });
+    }
+    return saved;
   });
   return { deviceId: row.deviceId, keyId: row.keyId, algorithm: row.algorithm, securityLevel: row.securityLevel, authorizedUntil: row.authorizedUntil, registeredAt: row.createdAt, lastSeenAt: row.lastSeenAt };
 }
 
-export async function encryptedModel(modelId: string, query: EncryptedModelQuery) {
+export async function encryptedModel(modelId: string, query: EncryptedModelQuery, credentialId?: string) {
   const [model, deviceKey] = await Promise.all([
     prisma.mlModel.findUnique({ where: { id: modelId }, select: { id: true, modelVersion: true, framework: true, fileUrl: true, sha256: true, status: true } }),
     prisma.modelDeviceKey.findUnique({ where: { deviceId: query.deviceId } }),
   ]);
   if (!model || model.framework !== 'NCNN' || !['ONLINE', 'GRAY'].includes(model.status)) throw AppError.notFound('模型不存在或未发布');
   if (!deviceKey || deviceKey.revokedAt || deviceKey.authorizedUntil <= new Date() || deviceKey.keyId !== query.keyId) throw new AppError(40921, '设备密钥无效、已过期或已轮换', 409);
+  await assertCredentialModelKey(credentialId, deviceKey);
   await prisma.modelDeviceKey.update({ where: { id: deviceKey.id }, data: { lastSeenAt: new Date() } });
   return encryptModelForDevice(model, deviceKey);
 }

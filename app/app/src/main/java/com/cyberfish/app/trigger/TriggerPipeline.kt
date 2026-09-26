@@ -13,6 +13,15 @@ class TriggerPipeline(
     private val engine = TriggerEngine(config, onAction = onAlert)
     private var activeTrackId: Long? = null
 
+    val state: TriggerState
+        @Synchronized get() = engine.state
+
+    @Synchronized
+    fun candidateDurationMillis(timestampMillis: Long): Long = engine.candidateDurationMillis(timestampMillis)
+
+    @Synchronized
+    fun updateConfig(config: TriggerConfig) = engine.updateConfig(config)
+
     @Synchronized
     fun accept(detection: Detection?, timestampMillis: Long): FeatureSnapshot? {
         val tracked = tracker.update(detection, timestampMillis)

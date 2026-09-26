@@ -67,6 +67,8 @@ model UserAccount {
   checkInRewards    CheckInRewardLog[]
   checkInRiskEvents CheckInRiskEvent[]
   inviteCodeRedemptions InviteCodeRedemption[]
+  deviceCredentials AppDeviceCredential[]
+  consents         UserConsent[]
 
   @@index([status])
 }
@@ -264,6 +266,7 @@ model MlModel {
   inputName String?
   inputLayout String @default("NCHW")
   outputName String?
+  outputLayout String @default("FIELDS_BY_CANDIDATES")
   coordinatesNormalized Boolean @default(false)
   valuesPerDetection Int @default(6)
   createdById String?
@@ -353,8 +356,81 @@ model ModelDeviceKey {
   lastSeenAt     DateTime @default(now())
   revokedAt      DateTime?
 
+  credential AppDeviceCredential? @relation("DeviceCredentialModelKey")
+
   @@index([userId])
   @@index([revokedAt])
+}
+
+model UserConsent {
+  id            String      @id @default(cuid())
+  userId        String
+  user          UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consentType   String
+  policyVersion String
+  channel       String      @default("WEB")
+  ip            String?
+  userAgent     String?
+  acceptedAt    DateTime    @default(now())
+
+  @@unique([userId, consentType, policyVersion])
+  @@index([userId, acceptedAt])
+}
+
+model AppDeviceCredential {
+  id               String   @id @default(cuid())
+  deviceId         String   @unique
+  signingKeyId     String   @unique
+  signingPublicKey String
+  modelKeyId       String?  @unique
+  modelPublicKey   String?
+  securityLevel    String
+  status           String   @default("PENDING")
+  userId           String?
+  user             UserAccount? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  appVersionCode   Int
+  tokenVersion     Int      @default(1)
+  createdAt        DateTime @default(now())
+  activatedAt      DateTime?
+  lastSeenAt       DateTime?
+  revokedAt        DateTime?
+
+  modelKey  ModelDeviceKey? @relation("DeviceCredentialModelKey", fields: [modelKeyId], references: [keyId], onDelete: SetNull, onUpdate: Cascade)
+  challenges DeviceAuthChallenge[]
+  nonces     DeviceRequestNonce[]
+
+  @@index([status])
+  @@index([userId])
+  @@index([lastSeenAt])
+}
+
+model DeviceAuthChallenge {
+  id            String              @id @default(cuid())
+  credentialId  String
+  credential    AppDeviceCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  deviceId      String
+  challengeHash String              @unique
+  purpose       String              @default("TOKEN")
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime            @default(now())
+
+  @@index([deviceId, expiresAt])
+  @@index([credentialId, usedAt])
+}
+
+model DeviceRequestNonce {
+  id           String              @id @default(cuid())
+  credentialId String
+  credential   AppDeviceCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  deviceId     String
+  nonce        String
+  expiresAt    DateTime
+  createdAt    DateTime            @default(now())
+
+  @@unique([deviceId, nonce])
+  @@index([expiresAt])
+  @@index([credentialId, createdAt])
 }
 
 // ============================================================

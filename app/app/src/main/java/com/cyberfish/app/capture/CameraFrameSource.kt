@@ -33,7 +33,13 @@ class CameraFrameSource(
     private val onDetection: (
         detection: com.cyberfish.app.inference.Detection?,
         timestampMillis: Long,
-    ) -> DetectionTrackingMetrics? = { _, _ -> null },
+    ) -> FrameTriggerMetrics = { _, _ ->
+        FrameTriggerMetrics(
+            featureSnapshot = null,
+            triggerState = com.cyberfish.app.trigger.TriggerState.Idle,
+            candidateDurationMillis = 0L,
+        )
+    },
     private val snapshotDir: File? = null,
     private val onSnapshotReady: (File) -> Unit = {},
     private val onZoomCapabilitiesChanged: (Float) -> Unit = {},
@@ -51,6 +57,8 @@ class CameraFrameSource(
     private var generation = 0
     private var framesInWindow = 0
     private var framesPerSecond = 0
+    private var inferenceFramesInWindow = 0
+    private var inferenceFramesPerSecond = 0
     private var windowStartedAt = 0L
     private var lastReportedAt = 0L
     private var lastSnapshotAt = 0L
@@ -236,8 +244,17 @@ class CameraFrameSource(
                         ?.forEach(File::delete)
                 }
             }
-            val trackingMetrics = onDetection(detection, now)
-            updateFrameRate(now)
+            val triggerMetrics = onDetection(detection, now)
+            val featureSnapshot = triggerMetrics.featureSnapshot
+            val trackingMetrics = featureSnapshot?.let { snapshot ->
+                DetectionTrackingMetrics(
+                    confidence = snapshot.confidence,
+                    widthRatioFromBaseline = snapshot.bboxWidthRatioFromBaseline,
+                    heightRatioFromBaseline = snapshot.bboxHeightRatioFromBaseline,
+                    areaRatioFromBaseline = snapshot.bboxAreaRatioFromBaseline,
+                )
+            }
+            updateFrameRate(now, detectionEnabled)
             if (now - lastReportedAt >= REPORT_INTERVAL_MILLIS) {
                 lastReportedAt = now
                 val latencyMillis = ((SystemClock.elapsedRealtimeNanos() - startedAt) / NANOS_PER_MILLISECOND).coerceAtLeast(1)
@@ -264,6 +281,11 @@ class CameraFrameSource(
                                 preprocessingMillis = preprocessingMillis,
                                 inferenceMillis = inferenceMillis,
                                 trackingMetrics = trackingMetrics,
+                                featureSnapshot = featureSnapshot,
+                                triggerState = triggerMetrics.triggerState,
+                                candidateDurationMillis = triggerMetrics.candidateDurationMillis,
+                                modelVersion = detector.modelVersion,
+                                inferenceFramesPerSecond = inferenceFramesPerSecond,
                             ),
                         )
                     }
@@ -301,12 +323,15 @@ class CameraFrameSource(
         )
     }
 
-    private fun updateFrameRate(now: Long) {
+    private fun updateFrameRate(now: Long, inferenceRan: Boolean) {
         if (windowStartedAt == 0L) windowStartedAt = now
         framesInWindow += 1
+        if (inferenceRan) inferenceFramesInWindow += 1
         if (now - windowStartedAt >= ONE_SECOND_MILLIS) {
             framesPerSecond = framesInWindow
+            inferenceFramesPerSecond = inferenceFramesInWindow
             framesInWindow = 0
+            inferenceFramesInWindow = 0
             windowStartedAt = now
         }
     }
@@ -317,7 +342,7 @@ class CameraFrameSource(
     private companion object {
         const val NANOS_PER_MILLISECOND = 1_000_000L
         const val ONE_SECOND_MILLIS = 1_000L
-        const val REPORT_INTERVAL_MILLIS = 250L
+        const val REPORT_INTERVAL_MILLIS = 80L
         const val SNAPSHOT_INTERVAL_MILLIS = 500L
         const val MAX_SNAPSHOT_FILES = 12
     }

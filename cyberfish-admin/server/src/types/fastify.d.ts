@@ -1,5 +1,6 @@
 import type { AdminUser } from '@prisma/client';
 import type { AdminRole } from '../lib/enums';
+import type { CurrentDevice } from '../modules/device-auth/service';
 
 export interface CurrentUser {
   id: string;
@@ -19,6 +20,8 @@ declare module 'fastify' {
   interface FastifyRequest {
     currentUser?: CurrentUser;
     currentAppUser?: CurrentAppUser;
+    currentDevice?: CurrentDevice;
+    isAppClient?: boolean;
     checkInAuditHandled?: boolean;
     /** 业务 Handler 注入的审计补充信息 */
     auditExtra?: {
@@ -43,8 +46,32 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { sub: string; role?: AdminRole; username?: string; kind?: 'APP_USER' };
-    user: { sub: string; role?: AdminRole; username?: string; kind?: 'APP_USER' };
+    payload: {
+      sub: string;
+      role?: AdminRole;
+      username?: string;
+      kind?: 'APP_USER' | 'DEVICE';
+      deviceId?: string;
+      keyId?: string;
+      scopes?: string[];
+      ver?: number;
+      jti?: string;
+      iat?: number;
+      exp?: number;
+    };
+    user: {
+      sub: string;
+      role?: AdminRole;
+      username?: string;
+      kind?: 'APP_USER' | 'DEVICE';
+      deviceId?: string;
+      keyId?: string;
+      scopes?: string[];
+      ver?: number;
+      jti?: string;
+      iat?: number;
+      exp?: number;
+    };
   }
 }
 

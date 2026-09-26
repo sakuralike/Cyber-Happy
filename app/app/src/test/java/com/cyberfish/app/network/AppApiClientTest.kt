@@ -331,11 +331,36 @@ class AppApiClientTest {
         assertEquals("YOLO26n", check.update?.descriptor?.architecture)
         assertEquals("NCNN", check.update?.descriptor?.framework)
         assertEquals("fish_float", check.update?.descriptor?.labels?.single())
+        assertEquals("in0", check.update?.descriptor?.inputName)
+        assertEquals("out0", check.update?.descriptor?.outputName)
+        assertEquals("FIELDS_BY_CANDIDATES", check.update?.descriptor?.outputLayout)
+        assertEquals(5, check.update?.descriptor?.valuesPerDetection)
+        assertEquals(false, check.update?.descriptor?.coordinatesNormalized)
+        assertEquals(1, check.update?.descriptor?.numClasses)
         assertEquals("dispatch-1", check.update?.dispatchId)
         assertTrue(check.update?.downloadUrl?.endsWith("/files/models/yolo26n.bin") == true)
         val request = server.takeRequest()
         assertEquals("/api/v1/models/check", request.requestUrl?.encodedPath)
         assertEquals("device-123", request.requestUrl?.queryParameter("deviceId"))
+    }
+
+    @Test
+    fun `model check parses explicit dynamic NCNN tensor contract`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"code":0,"message":"ok","data":{"hasUpdate":true,"model":{"modelVersion":"dynamic-v1","arch":"YOLO26n","quant":"FP32","framework":"NCNN","inputSize":640,"url":"/models/dynamic.bin","sha256":"${"a".repeat(64)}","labels":["float","fish"],"inputName":"images","outputName":"detections","outputLayout":"CANDIDATES_BY_FIELDS","valuesPerDetection":6,"coordinatesNormalized":true,"numClasses":2,"signature":"c2ln","signatureAlgorithm":"ECDSA_P256_SHA256","publicKeyId":"key-1"}}}""",
+            ),
+        )
+
+        val result = client().checkModel()
+
+        val descriptor = (result as ApiResult.Success).value.update!!.descriptor
+        assertEquals("images", descriptor.inputName)
+        assertEquals("detections", descriptor.outputName)
+        assertEquals("CANDIDATES_BY_FIELDS", descriptor.outputLayout)
+        assertEquals(6, descriptor.valuesPerDetection)
+        assertEquals(true, descriptor.coordinatesNormalized)
+        assertEquals(2, descriptor.numClasses)
     }
 
     @Test

@@ -2,6 +2,10 @@ package com.cyberfish.app.network
 
 import com.cyberfish.app.BuildConfig
 import com.cyberfish.app.data.local.FishRecordEntity
+import com.cyberfish.app.inference.DEFAULT_NCNN_INPUT_NAME
+import com.cyberfish.app.inference.DEFAULT_NCNN_OUTPUT_NAME
+import com.cyberfish.app.inference.DEFAULT_NCNN_VALUES_PER_DETECTION
+import com.cyberfish.app.inference.NCNN_OUTPUT_LAYOUT_FIELDS_BY_CANDIDATES
 import com.cyberfish.app.inference.NcnnModelDescriptor
 import com.cyberfish.app.update.ModelKeyMaterial
 import com.cyberfish.app.update.ModelKeyProvider
@@ -58,6 +62,8 @@ data class SupportContent(
     val aboutTitle: String = "关于赛博鱼乐",
     val aboutContent: String = "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。",
     val privacyContent: String = "识别默认在设备本地完成。只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。",
+    val privacyRequired: Boolean = true,
+    val privacyVersion: String = "privacy-v1",
     val loginEnabled: Boolean = true,
     val registrationEnabled: Boolean = true,
     val inviteRequired: Boolean = false,
@@ -168,9 +174,14 @@ class AppApiClient(
     private val identityStore: DeviceIdentityProvider,
     private val userSessionProvider: UserSessionProvider = EmptyUserSessionProvider,
     private val modelKeyProvider: ModelKeyProvider? = null,
+    private val deviceAuthClient: DeviceRequestAuthenticator? = null,
     private val httpClient: OkHttpClient = defaultHttpClient(),
 ) : ModelApi {
-    suspend fun login(username: String, password: String): ApiResult<UserSession> = authenticate("login", JSONObject().put("username", username).put("password", password))
+    suspend fun login(username: String, password: String, privacyVersion: String? = null): ApiResult<UserSession> = authenticate(
+        "login",
+        JSONObject().put("username", username).put("password", password)
+            .apply { privacyVersion?.let { put("privacyAccepted", true).put("privacyVersion", it) } },
+    )
 
     suspend fun register(
         username: String,
@@ -178,6 +189,7 @@ class AppApiClient(
         displayName: String,
         email: String,
         inviteCode: String? = null,
+        privacyVersion: String? = null,
     ): ApiResult<UserSession> = authenticate(
         "register",
         JSONObject()
@@ -185,7 +197,10 @@ class AppApiClient(
             .put("password", password)
             .put("displayName", displayName)
             .put("email", email)
-            .apply { inviteCode?.takeIf { it.isNotBlank() }?.let { put("inviteCode", it) } },
+            .apply {
+                inviteCode?.takeIf { it.isNotBlank() }?.let { put("inviteCode", it) }
+                privacyVersion?.let { put("privacyAccepted", true).put("privacyVersion", it) }
+            },
     )
 
     suspend fun updateMe(displayName: String, email: String): ApiResult<UserAccount> = withContext(Dispatchers.IO) {
@@ -241,6 +256,8 @@ class AppApiClient(
                 aboutTitle = userPage.optString("about.title", "关于赛博鱼乐"),
                 aboutContent = userPage.optString("about.content", "赛博鱼乐提供端侧 AI 鱼漂识别与上鱼提醒服务，识别默认在设备本地完成。"),
                 privacyContent = userPage.optString("about.privacy", "识别默认在设备本地完成。只有你确认提交的误报结构化数据，以及主动选择上传的媒体，才会进入同步流程。"),
+                privacyRequired = userPage.optBoolean("auth.privacyRequired", true),
+                privacyVersion = userPage.optString("auth.privacyVersion", "privacy-v1"),
                 loginEnabled = userPage.optBoolean("auth.loginEnabled", true),
                 registrationEnabled = userPage.optBoolean("auth.registrationEnabled", true),
                 inviteRequired = userPage.optBoolean("auth.inviteRequired", false),
@@ -426,8 +443,13 @@ class AppApiClient(
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
         val requestUrl = config.endpoint("api/v1/users/$action").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
+        val identity = identityStore.get()
         executeJson(
-            Request.Builder().url(requestUrl).post(body.toString().toRequestBody(JSON_MEDIA_TYPE)).appToken(config.appToken).build(),
+            Request.Builder().url(requestUrl)
+                .post(body.put("appVersionCode", BuildConfig.VERSION_CODE).put("deviceId", identity.deviceId).toString().toRequestBody(JSON_MEDIA_TYPE))
+                .appToken(config.appToken)
+                .header("X-Client-Channel", "ANDROID_APP")
+                .build(),
         ) { data ->
             val token = data.optString("token").takeIf { it.isNotBlank() }
                 ?: throw IllegalArgumentException("登录响应缺少 token")
@@ -590,9 +612,9 @@ class AppApiClient(
             .apply { keyMaterial?.keyId?.let { addQueryParameter("keyId", it) } }
             .apply { currentModelVersion?.takeIf { it.isNotBlank() }?.let { addQueryParameter("currentModelVersion", it) } }
             .build()
-        executeJson(Request.Builder().url(url).get().appToken(config.appToken).build()) { data ->
+        executeDeviceJson(Request.Builder().url(url).get().appToken(config.appToken).build()) { data ->
             if (!data.optBoolean("hasUpdate", false)) {
-                return@executeJson ModelCheckInfo(hasUpdate = false)
+                return@executeDeviceJson ModelCheckInfo(hasUpdate = false)
             }
             val model = data.optJSONObject("model") ?: throw IllegalArgumentException("模型检查响应缺少 model")
             val downloadUrl = model.optString("url").takeIf { it.isNotBlank() }
@@ -611,6 +633,12 @@ class AppApiClient(
                     inputSize = model.optInt("inputSize", 0),
                     labels = labels,
                     sha256 = model.optString("sha256"),
+                    inputName = model.optContractString("inputName", DEFAULT_NCNN_INPUT_NAME),
+                    outputName = model.optContractString("outputName", DEFAULT_NCNN_OUTPUT_NAME),
+                    outputLayout = model.optContractString("outputLayout", NCNN_OUTPUT_LAYOUT_FIELDS_BY_CANDIDATES),
+                    valuesPerDetection = model.optInt("valuesPerDetection", DEFAULT_NCNN_VALUES_PER_DETECTION),
+                    coordinatesNormalized = model.optBoolean("coordinatesNormalized", false),
+                    numClasses = model.optInt("numClasses", labels.size),
                     signature = model.optNullableString("signature"),
                     signatureAlgorithm = model.optNullableString("signatureAlgorithm"),
                     publicKeyId = model.optNullableString("publicKeyId"),
@@ -636,7 +664,7 @@ class AppApiClient(
             .put("securityLevel", key.securityLevel)
             .put("appVersionCode", BuildConfig.VERSION_CODE)
         val session = userSessionProvider.get()
-        executeJson(
+        executeDeviceJson(
             Request.Builder().url(requestUrl).post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
                 .appToken(config.appToken).userToken(session?.token).build(),
         ) { Unit }
@@ -659,7 +687,7 @@ class AppApiClient(
         errorMessage?.let { body.put("errorMessage", it) }
         val requestUrl = config.endpoint("api/v1/models/dispatches/$dispatchId/report").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
-        executeJson(
+        executeDeviceJson(
             Request.Builder()
                 .url(requestUrl)
                 .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
@@ -672,18 +700,19 @@ class AppApiClient(
         url: String,
         output: OutputStream,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
-    ): ApiResult<Long> = downloadBinary(url, output, onProgress)
+    ): ApiResult<Long> = downloadBinary(url, output, onProgress, deviceSigned = true)
 
     suspend fun downloadApk(
         url: String,
         output: OutputStream,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
-    ): ApiResult<Long> = downloadBinary(url, output, onProgress)
+    ): ApiResult<Long> = downloadBinary(url, output, onProgress, deviceSigned = false)
 
     private suspend fun downloadBinary(
         url: String,
         output: OutputStream,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
+        deviceSigned: Boolean,
     ): ApiResult<Long> = withContext(Dispatchers.IO) {
         val requestUrl = url.toHttpUrlOrNull() ?: return@withContext ApiResult.ParseError("下载地址无效")
         try {
@@ -691,7 +720,18 @@ class AppApiClient(
                 .readTimeout(MODEL_DOWNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .callTimeout(MODEL_DOWNLOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .build()
-            downloadClient.newCall(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()).execute().use { response ->
+            val baseRequest = Request.Builder().url(requestUrl).get()
+                .apply { if (!deviceSigned) appToken(config.appToken) }
+                .build()
+            val authorized = if (deviceSigned) deviceAuthClient?.authorize(baseRequest) ?: ApiResult.Success(baseRequest) else ApiResult.Success(baseRequest)
+            val request = when (authorized) {
+                is ApiResult.Success -> authorized.value
+                ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
+                is ApiResult.HttpError -> return@withContext authorized
+                is ApiResult.NetworkError -> return@withContext authorized
+                is ApiResult.ParseError -> return@withContext authorized
+            }
+            downloadClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext ApiResult.HttpError(response.code, response.message)
                 val body = response.body ?: return@withContext ApiResult.ParseError("下载响应为空")
                 val total = body.contentLength().takeIf { it >= 0L }
@@ -754,6 +794,17 @@ class AppApiClient(
         ApiResult.ParseError(error.message ?: "响应解析失败")
     }
 
+    private suspend fun <T> executeDeviceJson(request: Request, transform: (JSONObject) -> T): ApiResult<T> {
+        val authorized = deviceAuthClient?.authorize(request) ?: ApiResult.Success(request)
+        return when (authorized) {
+            is ApiResult.Success -> executeJson(authorized.value, transform)
+            ApiResult.NotConfigured -> ApiResult.NotConfigured
+            is ApiResult.HttpError -> authorized
+            is ApiResult.NetworkError -> authorized
+            is ApiResult.ParseError -> authorized
+        }
+    }
+
     private fun Request.Builder.appToken(token: String) = header("X-App-Token", token)
 
     private fun Request.Builder.userToken(token: String?) = token
@@ -809,3 +860,6 @@ private fun JSONObject.optNullableString(name: String): String? {
     if (!has(name) || isNull(name)) return null
     return optString(name).trim().takeUnless { it.isEmpty() || it.equals("null", ignoreCase = true) }
 }
+
+private fun JSONObject.optContractString(name: String, fallback: String): String =
+    if (!has(name) || isNull(name)) fallback else optString(name).trim()

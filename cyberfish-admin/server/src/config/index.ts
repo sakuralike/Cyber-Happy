@@ -31,6 +31,20 @@ loadEnvFile();
 
 const rootDir = process.cwd();
 
+function envBoolean(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (value === undefined || value === '') return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+  if (['0', 'false', 'no', 'off'].includes(value)) return false;
+  throw new Error(`${name} 必须是 true 或 false`);
+}
+
+function envPositiveInt(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} 必须是正整数`);
+  return value;
+}
+
 const raw = {
   nodeEnv: (process.env.NODE_ENV || 'development') as AppEnv,
   port: Number(process.env.PORT || 3001),
@@ -42,6 +56,11 @@ const raw = {
   maxUploadSize: Number(process.env.MAX_UPLOAD_SIZE || 209715200),
   logLevel: process.env.LOG_LEVEL || 'info',
   appApiToken: process.env.APP_API_TOKEN || 'cyberfish-app-token-dev',
+  deviceAuthDualMode: envBoolean('DEVICE_AUTH_DUAL_MODE', true),
+  deviceTokenTtlSeconds: envPositiveInt('DEVICE_TOKEN_TTL_SECONDS', 15 * 60),
+  deviceChallengeTtlSeconds: envPositiveInt('DEVICE_CHALLENGE_TTL_SECONDS', 5 * 60),
+  deviceRequestClockSkewSeconds: envPositiveInt('DEVICE_REQUEST_CLOCK_SKEW_SECONDS', 5 * 60),
+  privacyConsentMinAppCode: Number(process.env.PRIVACY_CONSENT_MIN_APP_CODE || 147),
   inviteCodeSecret: process.env.INVITE_CODE_SECRET || process.env.JWT_SECRET || 'cyberfish-invite-secret-dev',
   corsOrigin: process.env.CORS_ORIGIN || '*',
 };

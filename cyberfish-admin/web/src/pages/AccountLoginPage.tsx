@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Form, Input, Segmented, Typography, message } from 'antd';
+import { Button, Checkbox, Form, Input, Segmented, Typography, message } from 'antd';
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -20,20 +20,22 @@ export function AccountLoginPage() {
   const loginEnabled = userPage['auth.loginEnabled'] !== false;
   const registrationEnabled = userPage['auth.registrationEnabled'] !== false;
   const inviteRequired = userPage['auth.inviteRequired'] === true;
+  const privacyRequired = userPage['auth.privacyRequired'] !== false;
+  const privacyVersion = String(userPage['auth.privacyVersion'] ?? 'privacy-v1');
   const [mode, setMode] = useState<Mode>('login');
   const [loading, setLoading] = useState(false);
 
   if (isAuthed) return <Navigate to="/account" replace />;
 
-  const submit = async (values: { username: string; password: string; displayName?: string; email?: string }) => {
+  const submit = async (values: { username: string; password: string; displayName?: string; email?: string; inviteCode?: string; privacyAccepted?: boolean }) => {
     setLoading(true);
     try {
       if (mode === 'login') {
-        await login(values.username, values.password);
+        await login(values.username, values.password, privacyRequired ? privacyVersion : undefined);
         message.success('登录成功');
         navigate('/account');
       } else if (mode === 'register') {
-        await register(values);
+        await register({ ...values, ...(privacyRequired ? { privacyAccepted: true, privacyVersion } : {}) });
         message.success('注册成功');
         navigate('/account');
       } else {
@@ -66,6 +68,7 @@ export function AccountLoginPage() {
           <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2, message: '请输入至少 2 个字符的用户名' }]}><Input prefix={<UserOutlined />} autoFocus /></Form.Item>
           {mode === 'register' && <Form.Item name="displayName" label="昵称" rules={[{ max: 80 }]}><Input placeholder="默认使用用户名" /></Form.Item>}
           {mode === 'register' && inviteRequired && <Form.Item name="inviteCode" label="邀请码" rules={[{ required: true, message: '请输入邀请码' }]}><Input /></Form.Item>}
+          {privacyRequired && mode !== 'forgot' && <Form.Item name="privacyAccepted" valuePropName="checked" rules={[{ validator: (_, value) => value ? Promise.resolve() : Promise.reject(new Error('请先同意用户协议与隐私政策')) }]}><Checkbox>我已阅读并同意用户协议与隐私政策</Checkbox></Form.Item>}
           {(mode === 'register' || mode === 'forgot') && <Form.Item name="email" label="邮箱" rules={[{ required: mode === 'forgot', type: 'email', message: '请输入有效邮箱' }]}><Input placeholder={mode === 'forgot' ? '请输入注册时绑定的邮箱' : '可选'} /></Form.Item>}
           <Form.Item name="password" label="密码" rules={[{ required: true, min: 6, message: '密码至少 6 位' }]}><Input.Password prefix={<LockOutlined />} /></Form.Item>
           <Button type="primary" htmlType="submit" block loading={loading} disabled={(mode === 'login' && !loginEnabled) || (mode === 'register' && !registrationEnabled)}>{mode === 'login' ? '登录' : mode === 'register' ? '注册并登录' : '重置密码'}</Button>

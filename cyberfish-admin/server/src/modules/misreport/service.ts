@@ -22,6 +22,24 @@ function normalize<T extends { rawData?: string | null; snapshotUrls?: string | 
   };
 }
 
+async function validateMediaAssets(snapshotUrls: string[], videoUrl: string | undefined): Promise<void> {
+  const imageUrls = [...new Set(snapshotUrls.map((value) => value.trim()).filter(Boolean))];
+  const videoUrls = videoUrl?.trim() ? [videoUrl.trim()] : [];
+  const requested = [...imageUrls, ...videoUrls];
+  if (!requested.length) return;
+  if (requested.some((value) => !value.startsWith('/files/'))) {
+    throw AppError.badRequest('误报媒体必须使用平台文件地址');
+  }
+  const assets = await prisma.fileAsset.findMany({ where: { url: { in: requested } }, select: { url: true, bizType: true } });
+  const byUrl = new Map(assets.map((asset) => [asset.url, asset.bizType]));
+  for (const url of imageUrls) {
+    if (byUrl.get(url) !== 'IMAGE') throw AppError.badRequest('误报截图文件不存在或类型不匹配');
+  }
+  for (const url of videoUrls) {
+    if (byUrl.get(url) !== 'VIDEO') throw AppError.badRequest('误报视频文件不存在或类型不匹配');
+  }
+}
+
 /** 生成单号 MR + yyyyMMdd + 4 位序列（同日自增） */
 async function nextReportNo(): Promise<string> {
   const now = new Date();
@@ -311,6 +329,8 @@ export async function stats() {
 // ============================================================
 
 export async function create(input: CreateMisreportInput) {
+  const snapshotUrls = input.snapshotUrls ?? [];
+  await validateMediaAssets(snapshotUrls, input.videoUrl);
   const reportNo = await nextReportNo();
   const created = await prisma.misreport.create({
     data: {
@@ -327,9 +347,9 @@ export async function create(input: CreateMisreportInput) {
       userNote: input.userNote ?? '',
       rawData: JSON.stringify(input.rawData ?? {}),
       sceneTags: JSON.stringify(input.sceneTags ?? []),
-      snapshotUrls: JSON.stringify(input.snapshotUrls ?? []),
+      snapshotUrls: JSON.stringify(snapshotUrls),
       videoUrl: input.videoUrl ?? null,
-      thumbnailUrl: input.snapshotUrls?.[0] ?? null,
+      thumbnailUrl: snapshotUrls[0] ?? null,
       reportedAt: input.reportedAt ? new Date(input.reportedAt) : new Date(),
       status: MisreportStatus.PENDING,
     },

@@ -30,6 +30,35 @@ class NcnnModelContractTest {
         assertTrue(result.errors.any { it.contains("过期") })
     }
 
+    @Test
+    fun `invalid tensor contract is rejected`() {
+        val result = NcnnModelContract.validate(
+            descriptor().copy(
+                inputName = " ",
+                outputName = "bad\u0000name",
+                outputLayout = "AUTO",
+                valuesPerDetection = 4,
+                numClasses = 2,
+            ),
+        )
+
+        assertFalse(result.isValid)
+        assertTrue(result.errors.any { it.contains("输入节点") })
+        assertTrue(result.errors.any { it.contains("输出节点") })
+        assertTrue(result.errors.any { it.contains("输出布局") })
+        assertTrue(result.errors.any { it.contains("字段数") })
+        assertTrue(result.errors.any { it.contains("类别数") })
+    }
+
+    @Test
+    fun `both declared output layouts are accepted`() {
+        assertTrue(
+            NcnnModelContract.validate(
+                descriptor().copy(outputLayout = NCNN_OUTPUT_LAYOUT_CANDIDATES_BY_FIELDS),
+            ).isValid,
+        )
+    }
+
     private fun descriptor(framework: String = "NCNN", signatureAlgorithm: String = "ECDSA_P256_SHA256") = NcnnModelDescriptor(
         modelVersion = "yolo26n-ncnn-v1",
         architecture = "YOLO26n",

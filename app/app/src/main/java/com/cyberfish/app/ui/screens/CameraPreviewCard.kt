@@ -70,6 +70,7 @@ import com.cyberfish.app.capture.DetectionModeSnapshot
 import com.cyberfish.app.capture.DetectionRegionState
 import com.cyberfish.app.capture.DetectionTrackingMetrics
 import com.cyberfish.app.capture.FrameMetrics
+import com.cyberfish.app.capture.FrameTriggerMetrics
 import com.cyberfish.app.capture.NormalizedPreviewRect
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.UnavailableDetector
@@ -92,6 +93,7 @@ fun CameraPreviewCard(
     alertPreferences: AlertPreferences,
     onTrigger: (TriggerEvent) -> Unit,
     onFrameMetrics: (FrameMetrics) -> Unit = {},
+    onLiveFrameMetrics: (FrameMetrics?) -> Unit = {},
     detector: Detector = UnavailableDetector(),
 ) {
     val context = LocalContext.current
@@ -111,7 +113,7 @@ fun CameraPreviewCard(
     var lastPreviewSize by remember { mutableStateOf(IntSize.Zero) }
     var geometryEpoch by remember { mutableLongStateOf(detectionModeSnapshot.geometryEpoch) }
     val notifier = remember(context, alertPreferences) { AndroidAlertNotifier(context.applicationContext, alertPreferences) }
-    val triggerPipeline = remember(triggerConfig, notifier, detector) {
+    val triggerPipeline = remember(notifier, detector) {
         TriggerPipeline(
             config = triggerConfig,
             onTrigger = { event ->
@@ -127,12 +129,14 @@ fun CameraPreviewCard(
             },
         )
     }
+    SideEffect { triggerPipeline.updateConfig(triggerConfig) }
     val frameSource = remember(triggerPipeline, detector) {
         CameraFrameSource(
             context = context.applicationContext,
             detector = detector,
             onFrame = {
                 metrics = it
+                onLiveFrameMetrics(it)
                 if (it.timestampMillis - lastTelemetryAt >= 5_000L) {
                     lastTelemetryAt = it.timestampMillis
                     onFrameMetrics(it)
@@ -140,14 +144,12 @@ fun CameraPreviewCard(
             },
             onStatusChanged = { captureStatus = it },
             onDetection = { detection, timestampMillis ->
-                triggerPipeline.accept(detection, timestampMillis)?.let { snapshot ->
-                    DetectionTrackingMetrics(
-                        confidence = snapshot.confidence,
-                        widthRatioFromBaseline = snapshot.bboxWidthRatioFromBaseline,
-                        heightRatioFromBaseline = snapshot.bboxHeightRatioFromBaseline,
-                        areaRatioFromBaseline = snapshot.bboxAreaRatioFromBaseline,
-                    )
-                }
+                val snapshot = triggerPipeline.accept(detection, timestampMillis)
+                FrameTriggerMetrics(
+                    featureSnapshot = snapshot,
+                    triggerState = triggerPipeline.state,
+                    candidateDurationMillis = triggerPipeline.candidateDurationMillis(timestampMillis),
+                )
             },
             snapshotDir = snapshotDir,
             onSnapshotReady = { latestSnapshot.set(it) },
@@ -198,6 +200,7 @@ fun CameraPreviewCard(
             frameSource.stop()
             triggerPipeline.reset()
             metrics = null
+            onLiveFrameMetrics(null)
         }
         onDispose {
             frameSource.stop()
@@ -261,7 +264,7 @@ fun CameraPreviewCard(
                     modifier = Modifier.fillMaxWidth(),
                     status = status,
                     metrics = metrics,
-                    modelVersion = detector.modelVersion,
+                    modelVersion = metrics?.modelVersion ?: detector.modelVersion,
                     captureStatus = captureStatus,
                     detectorInputSize = detector.inputSize,
                 )
@@ -649,9 +652,10 @@ internal fun formatInputTelemetry(metrics: FrameMetrics?, detectorInputSize: Int
     else "分析 ${metrics.sourceWidthPx}×${metrics.sourceHeightPx} · 模型输入 ${detectorInputSize}²"
 
 internal fun formatPerformanceTelemetry(metrics: FrameMetrics?): String {
-    if (metrics == null) return "预处理 -- · 推理 -- · 总计 -- · FPS --"
+    if (metrics == null) return "预处理 -- · 推理 -- · 总计 -- · 分析 -- · 推理帧 --"
     return "预处理 ${metrics.preprocessingMillis}ms · 推理 ${metrics.inferenceMillis}ms · " +
-        "总计 ${metrics.latencyMillis}ms · ${metrics.framesPerSecond} FPS"
+        "总计 ${metrics.latencyMillis}ms · 分析 ${metrics.framesPerSecond} FPS · " +
+        "推理帧 ${metrics.inferenceFramesPerSecond} FPS"
 }
 
 private fun monitorStatus(

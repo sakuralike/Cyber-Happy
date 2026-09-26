@@ -7,6 +7,8 @@ import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.capture.PreviewRect
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.DetectionBounds
+import com.cyberfish.app.trigger.FeatureSnapshot
+import com.cyberfish.app.trigger.TriggerState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -42,6 +44,7 @@ class CameraPreviewCardTest {
             sourceHeightPx = 720,
             preprocessingMillis = 8L,
             inferenceMillis = 66L,
+            inferenceFramesPerSecond = 14,
         )
 
         assertEquals(
@@ -49,9 +52,39 @@ class CameraPreviewCardTest {
             formatInputTelemetry(metrics, 640),
         )
         assertEquals(
-            "预处理 8ms · 推理 66ms · 总计 78ms · 15 FPS",
+            "预处理 8ms · 推理 66ms · 总计 78ms · 分析 15 FPS · 推理帧 14 FPS",
             formatPerformanceTelemetry(metrics),
         )
+    }
+
+    @Test
+    fun `monitor metrics use the feature snapshot from the same frame`() {
+        val metrics = FrameMetrics(
+            detection = Detection(DetectionBounds(0f, 0f, 1f, 1f), 0.8f),
+            framesPerSecond = 15,
+            latencyMillis = 78L,
+            timestampMillis = 1_600L,
+            featureSnapshot = FeatureSnapshot(
+                timestampMillis = 1_600L,
+                verticalDisplacementPx = 3.25f,
+                verticalVelocityPxPerSecond = 12f,
+                jitterHz = 1.44f,
+                confidence = 0.8f,
+            ),
+            triggerState = TriggerState.Tracking,
+            candidateDurationMillis = 640L,
+        )
+
+        assertEquals("3.3 px", formatDisplacement(metrics))
+        assertEquals("1.4 Hz", formatJitter(metrics))
+        assertEquals("0.6 s", formatCandidateDuration(metrics))
+    }
+
+    @Test
+    fun `monitor metrics show an explicit empty state without a target`() {
+        assertEquals("--", formatDisplacement(null))
+        assertEquals("--", formatJitter(null))
+        assertEquals("--", formatCandidateDuration(null))
     }
 
     @Test

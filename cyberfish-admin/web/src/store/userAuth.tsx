@@ -5,8 +5,8 @@ import type { UserAccount } from '../api/user';
 interface UserAuthContextValue {
   user: UserAccount | null;
   isAuthed: boolean;
-  login: (username: string, password: string) => Promise<UserAccount>;
-  register: (input: { username: string; password: string; displayName?: string; email?: string }) => Promise<UserAccount>;
+  login: (username: string, password: string, privacyVersion?: string) => Promise<UserAccount>;
+  register: (input: { username: string; password: string; displayName?: string; email?: string; inviteCode?: string; privacyAccepted?: boolean; privacyVersion?: string }) => Promise<UserAccount>;
   updateUser: (user: UserAccount) => void;
   logout: () => void;
 }
@@ -36,8 +36,8 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<UserAuthContextValue>(() => ({
     user,
     isAuthed: !!token && !!user,
-    login: async (username, password) => {
-      const session = await userApi.login(username, password);
+    login: async (username, password, privacyVersion) => {
+      const session = await userApi.login(username, password, privacyVersion);
       userApi.saveUserSession(session);
       setToken(session.token);
       setUser(session.user);

@@ -24,6 +24,7 @@ import systemSettingsRoutes from './modules/system-settings/routes';
 import userRoutes from './modules/user/routes';
 import checkInRoutes from './modules/check-in/routes';
 import inviteRoutes from './modules/invite/routes';
+import deviceAuthRoutes from './modules/device-auth/routes';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -84,6 +85,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(userRoutes, { prefix: '/users' });
       await v1.register(checkInRoutes);
       await v1.register(inviteRoutes, { prefix: '/admin/invite-codes' });
+      await v1.register(deviceAuthRoutes);
       await v1.register(systemSettingsRoutes);
     },
     { prefix: '/api/v1' },

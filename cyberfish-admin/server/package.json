@@ -13,6 +13,7 @@
     "test:check-in": "tsx --test test/check-in.test.ts",
     "test:user-invite": "tsx --test test/user-invite.test.ts",
     "test:model-encryption": "tsx --test test/model-encryption.test.ts test/model-encryption-api.test.ts",
+    "test:device-auth": "tsx --test test/device-auth.test.ts test/device-auth-strict.test.ts",
     "test:app-version": "tsx --test test/app-version.test.ts",
     "db:push": "prisma db push --skip-generate",
     "db:generate": "prisma generate",

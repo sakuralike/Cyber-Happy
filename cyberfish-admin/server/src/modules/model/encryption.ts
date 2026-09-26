@@ -6,6 +6,8 @@ import { resolveStoredFile } from '../../lib/storage';
 export const MODEL_ENCRYPTION_ALGORITHM = 'AES_256_GCM_RSA_OAEP_SHA256';
 const MAGIC = Buffer.from('CFMODEL1', 'ascii');
 const TAG_LENGTH = 16;
+const MAX_CONTAINER_BYTES = 120 * 1024 * 1024;
+const MAX_HEADER_BYTES = 1024 * 1024;
 
 type DeviceKey = {
   deviceId: string;
@@ -81,13 +83,13 @@ export function validateDevicePublicKey(publicKey: string): string {
 }
 
 export function parseEncryptedContainer(input: Buffer): { header: Record<string, unknown>; ciphertext: Buffer; tag: Buffer } {
-  if (input.length < MAGIC.length + 4 + TAG_LENGTH || !input.subarray(0, MAGIC.length).equals(MAGIC)) {
+  if (input.length < MAGIC.length + 4 + TAG_LENGTH || input.length > MAX_CONTAINER_BYTES || !input.subarray(0, MAGIC.length).equals(MAGIC)) {
     throw new Error('encrypted model magic mismatch');
   }
   const headerLength = input.readUInt32BE(MAGIC.length);
   const headerStart = MAGIC.length + 4;
   const bodyStart = headerStart + headerLength;
-  if (headerLength <= 0 || bodyStart + TAG_LENGTH > input.length) throw new Error('encrypted model header invalid');
+  if (headerLength <= 0 || headerLength > MAX_HEADER_BYTES || bodyStart + TAG_LENGTH > input.length) throw new Error('encrypted model header invalid');
   const header = JSON.parse(input.subarray(headerStart, bodyStart).toString('utf8')) as Record<string, unknown>;
   return {
     header,
@@ -106,25 +108,38 @@ export async function encryptModelForDevice(model: ModelRow, device: DeviceKey):
     const actualSha256 = crypto.createHash('sha256').update(plaintext).digest('hex');
     if (actualSha256 !== model.sha256.toLowerCase()) throw AppError.invalidState('模型文件 SHA-256 与登记值不一致');
     const nonce = crypto.randomBytes(12);
-    const aad = `cyberfish-model-v1|${model.id}|${model.modelVersion}|${device.deviceId}|${model.sha256}`;
+    const wrappedKey = wrapKeyForAndroid(publicKeyObject(device.publicKey), dek);
+    const nonceText = nonce.toString('base64');
+    const wrappedKeyText = wrappedKey.toString('base64');
+    const authorizedUntil = device.authorizedUntil.toISOString();
+    const aad = [
+      'cyberfish-model-v2',
+      model.id,
+      model.modelVersion,
+      device.deviceId,
+      device.keyId,
+      authorizedUntil,
+      nonceText,
+      wrappedKeyText,
+      model.sha256,
+    ].join('|');
     const cipher = crypto.createCipheriv('aes-256-gcm', dek, nonce, { authTagLength: TAG_LENGTH });
     cipher.setAAD(Buffer.from(aad, 'utf8'));
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const tag = cipher.getAuthTag();
-    const wrappedKey = wrapKeyForAndroid(publicKeyObject(device.publicKey), dek);
     const header = Buffer.from(JSON.stringify({
-      version: 1,
+      version: 2,
       algorithm: MODEL_ENCRYPTION_ALGORITHM,
       modelId: model.id,
       modelVersion: model.modelVersion,
       deviceId: device.deviceId,
       keyId: device.keyId,
-      nonce: nonce.toString('base64'),
-      wrappedKey: wrappedKey.toString('base64'),
+      nonce: nonceText,
+      wrappedKey: wrappedKeyText,
       keyWrap: 'RSA_OAEP_SHA256_MGF1_SHA1',
       aad,
       plaintextSha256: model.sha256,
-      authorizedUntil: device.authorizedUntil.toISOString(),
+      authorizedUntil,
     }), 'utf8');
     const prefix = Buffer.alloc(MAGIC.length + 4);
     MAGIC.copy(prefix, 0);

@@ -21,13 +21,18 @@ const routes: FastifyPluginAsync = async (app) => {
     const data = await service.register(parseOrThrow(registerSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }), {
       ip: clientIp(request.headers as Record<string, unknown>),
       userAgent: String(request.headers['user-agent'] ?? ''),
-      channel: String(request.headers['x-client-channel'] ?? 'WEB'),
+      channel: request.isAppClient ? 'ANDROID_APP' : String(request.headers['x-client-channel'] ?? 'WEB'),
+      deviceId: request.isAppClient ? String((request.body as Record<string, unknown> | undefined)?.deviceId ?? '') : undefined,
     });
     return sendCreated(reply, data);
   });
 
   app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const data = await service.login(parseOrThrow(loginSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }));
+    const data = await service.login(parseOrThrow(loginSchema, request.body), (payload) => app.jwt.sign(payload, { expiresIn: '30d' }), {
+      ip: clientIp(request.headers as Record<string, unknown>),
+      userAgent: String(request.headers['user-agent'] ?? ''),
+      channel: request.isAppClient ? 'ANDROID_APP' : String(request.headers['x-client-channel'] ?? 'WEB'),
+    });
     return sendOk(reply, data);
   });
 

@@ -6,7 +6,14 @@ internal object NcnnNative {
         System.loadLibrary("cyberfish_ncnn")
     }
 
-    external fun create(param: ByteArray, bin: ByteArray): Long
+    external fun create(
+        param: ByteArray,
+        bin: ByteArray,
+        inputName: String,
+        outputName: String,
+        outputLayout: String,
+        valuesPerDetection: Int,
+    ): Long
 
     external fun detect(handle: Long, input: FloatArray, inputSize: Int): FloatArray?
 

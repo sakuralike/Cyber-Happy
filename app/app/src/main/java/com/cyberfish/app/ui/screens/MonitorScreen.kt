@@ -28,7 +28,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -61,13 +60,14 @@ fun MonitorScreen(
     isLoggedIn: Boolean = true,
     onRequireLogin: () -> Unit = {},
     onFrameMetrics: (FrameMetrics) -> Unit = {},
+    onConfidenceThresholdChange: (Float) -> Unit = {},
     detector: Detector = UnavailableDetector(),
 ) {
     val context = LocalContext.current
     var permissionGranted by rememberSaveable { mutableStateOf(hasCameraPermission(context)) }
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
     var monitoring by rememberSaveable { mutableStateOf(permissionGranted) }
-    var sensitivity by rememberSaveable { mutableFloatStateOf(0.62f) }
+    var liveFrameMetrics by remember { mutableStateOf<FrameMetrics?>(null) }
     var triggerEvent by remember { mutableStateOf<TriggerEvent?>(null) }
     var pendingMisreportEvent by remember { mutableStateOf<TriggerEvent?>(null) }
     var falsePositiveMarked by rememberSaveable { mutableStateOf(false) }
@@ -94,6 +94,7 @@ fun MonitorScreen(
                 alertPreferences = alertPreferences,
                 detector = detector,
                 onFrameMetrics = onFrameMetrics,
+                onLiveFrameMetrics = { liveFrameMetrics = it },
                 onTrigger = {
                     triggerEvent = it
                     falsePositiveMarked = false
@@ -133,18 +134,23 @@ fun MonitorScreen(
         }
         item {
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard("3.2 px", "相对基准位移", Modifier.weight(1f))
-                MetricCard("1.4 Hz", "抖动频率", Modifier.weight(1f))
-                MetricCard("0.6 s", "持续下沉", Modifier.weight(1f))
+                MetricCard(formatDisplacement(liveFrameMetrics), "相对基准位移", Modifier.weight(1f))
+                MetricCard(formatJitter(liveFrameMetrics), "抖动频率", Modifier.weight(1f))
+                MetricCard(formatCandidateDuration(liveFrameMetrics), "持续下沉", Modifier.weight(1f))
             }
         }
         item {
             SectionCard("检测灵敏度", Modifier.padding(horizontal = 24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(sensitivityLabel(sensitivity), Modifier.weight(1f), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("阈值 %.2f".format(sensitivity), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                    Text(sensitivityLabel(triggerConfig.minConfidence), Modifier.weight(1f), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("阈值 %.2f".format(triggerConfig.minConfidence), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
                 }
-                Slider(value = sensitivity, onValueChange = { sensitivity = it }, valueRange = 0.30f..0.95f, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                Slider(
+                    value = triggerConfig.minConfidence.coerceIn(0.30f, 0.95f),
+                    onValueChange = onConfidenceThresholdChange,
+                    valueRange = 0.30f..0.95f,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp).testTag("monitor-sensitivity"),
+                )
                 Text("灵敏度越高，轻微点动也会触发提醒", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -173,6 +179,15 @@ fun MonitorScreen(
 }
 
 private fun sensitivityLabel(value: Float) = when { value < 0.50f -> "低"; value < 0.72f -> "中"; else -> "高" }
+
+internal fun formatDisplacement(metrics: FrameMetrics?): String =
+    metrics?.featureSnapshot?.verticalDisplacementPx?.let { "%.1f px".format(it) } ?: "--"
+
+internal fun formatJitter(metrics: FrameMetrics?): String =
+    metrics?.featureSnapshot?.jitterHz?.let { "%.1f Hz".format(it) } ?: "--"
+
+internal fun formatCandidateDuration(metrics: FrameMetrics?): String =
+    if (metrics?.featureSnapshot == null) "--" else "%.1f s".format(metrics.candidateDurationMillis / 1_000f)
 
 private fun hasCameraPermission(context: android.content.Context) =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED

@@ -20,6 +20,8 @@ interface ModelKeyProvider {
 object EncryptedModelContainer {
     private val magic = "CFMODEL1".toByteArray(Charsets.US_ASCII)
     private const val TAG_BYTES = 16
+    private const val MAX_CONTAINER_BYTES = 120L * 1024 * 1024
+    private const val MAX_HEADER_BYTES = 1 * 1024 * 1024
 
     fun decrypt(
         file: File,
@@ -27,15 +29,17 @@ object EncryptedModelContainer {
         expectedDeviceId: String? = null,
         expectedModelVersion: String? = null,
     ): ByteArray {
+        require(file.length() in (magic.size + 4 + TAG_BYTES).toLong()..MAX_CONTAINER_BYTES) { "加密模型包大小无效" }
         val bytes = file.readBytes()
         require(bytes.size >= magic.size + 4 + TAG_BYTES) { "加密模型包过短" }
         require(bytes.copyOfRange(0, magic.size).contentEquals(magic)) { "加密模型包格式无效" }
         val headerLength = ByteBuffer.wrap(bytes, magic.size, 4).order(ByteOrder.BIG_ENDIAN).int
         val headerStart = magic.size + 4
         val bodyStart = headerStart + headerLength
-        require(headerLength > 0 && bodyStart + TAG_BYTES <= bytes.size) { "加密模型包头无效" }
+        require(headerLength > 0 && headerLength <= MAX_HEADER_BYTES && bodyStart + TAG_BYTES <= bytes.size) { "加密模型包头无效" }
         val header = JSONObject(String(bytes, headerStart, headerLength, Charsets.UTF_8))
-        require(header.optInt("version", 0) == 1) { "加密模型包版本不支持" }
+        val version = header.optInt("version", 0)
+        require(version == 1 || version == 2) { "加密模型包版本不支持" }
         require(header.optString("algorithm") == "AES_256_GCM_RSA_OAEP_SHA256") { "加密模型算法不支持" }
         require(header.optString("keyWrap") == "RSA_OAEP_SHA256_MGF1_SHA1") { "模型密钥封装算法不支持" }
         require(header.optString("keyId") == keyProvider.ensureKey().keyId) { "加密模型密钥标识不匹配" }
@@ -47,6 +51,20 @@ object EncryptedModelContainer {
         val wrappedKey = Base64.getDecoder().decode(header.optString("wrappedKey"))
         val aad = header.optString("aad").toByteArray(Charsets.UTF_8)
         require(nonce.size == 12 && wrappedKey.isNotEmpty() && aad.isNotEmpty()) { "加密模型包字段无效" }
+        if (version >= 2) {
+            val expectedAad = listOf(
+                "cyberfish-model-v2",
+                header.optString("modelId"),
+                header.optString("modelVersion"),
+                header.optString("deviceId"),
+                header.optString("keyId"),
+                header.optString("authorizedUntil"),
+                header.optString("nonce"),
+                header.optString("wrappedKey"),
+                header.optString("plaintextSha256"),
+            ).joinToString("|")
+            require(aad.contentEquals(expectedAad.toByteArray(Charsets.UTF_8))) { "加密模型包头认证信息不匹配" }
+        }
         val ciphertextWithTag = bytes.copyOfRange(bodyStart, bytes.size)
         val dek = keyProvider.decryptWrappedKey(wrappedKey)
         return try {

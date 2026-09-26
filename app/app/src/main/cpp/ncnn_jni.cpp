@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -11,10 +12,19 @@
 
 namespace {
 
+enum class OutputLayout {
+    FieldsByCandidates,
+    CandidatesByFields,
+};
+
 struct NcnnModel {
     ncnn::Net net;
     std::string param;
     std::vector<unsigned char> bin;
+    std::string inputName;
+    std::string outputName;
+    OutputLayout outputLayout = OutputLayout::FieldsByCandidates;
+    int valuesPerDetection = 0;
 };
 
 bool copyBytes(JNIEnv* env, jbyteArray source, std::vector<unsigned char>& target) {
@@ -26,6 +36,33 @@ bool copyBytes(JNIEnv* env, jbyteArray source, std::vector<unsigned char>& targe
     return !env->ExceptionCheck();
 }
 
+bool copyString(JNIEnv* env, jstring source, std::string& target) {
+    if (source == nullptr) return false;
+    const char* value = env->GetStringUTFChars(source, nullptr);
+    if (value == nullptr) return false;
+    target.assign(value);
+    env->ReleaseStringUTFChars(source, value);
+    return !env->ExceptionCheck() && !target.empty();
+}
+
+bool parseOutputLayout(const std::string& value, OutputLayout& outputLayout) {
+    if (value == "FIELDS_BY_CANDIDATES") {
+        outputLayout = OutputLayout::FieldsByCandidates;
+        return true;
+    }
+    if (value == "CANDIDATES_BY_FIELDS") {
+        outputLayout = OutputLayout::CandidatesByFields;
+        return true;
+    }
+    return false;
+}
+
+bool containsName(const std::vector<const char*>& names, const std::string& expected) {
+    return std::any_of(names.begin(), names.end(), [&expected](const char* name) {
+        return name != nullptr && expected == name;
+    });
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -33,10 +70,24 @@ Java_com_cyberfish_app_inference_NcnnNative_create(
     JNIEnv* env,
     jclass,
     jbyteArray paramBytes,
-    jbyteArray binBytes) {
+    jbyteArray binBytes,
+    jstring inputName,
+    jstring outputName,
+    jstring outputLayout,
+    jint valuesPerDetection) {
     auto model = std::make_unique<NcnnModel>();
     jsize paramLength = paramBytes == nullptr ? 0 : env->GetArrayLength(paramBytes);
-    if (paramLength <= 0 || !copyBytes(env, binBytes, model->bin)) return 0;
+    std::string outputLayoutValue;
+    if (paramLength <= 0 ||
+        valuesPerDetection < 5 ||
+        !copyBytes(env, binBytes, model->bin) ||
+        !copyString(env, inputName, model->inputName) ||
+        !copyString(env, outputName, model->outputName) ||
+        !copyString(env, outputLayout, outputLayoutValue) ||
+        !parseOutputLayout(outputLayoutValue, model->outputLayout)) {
+        return 0;
+    }
+    model->valuesPerDetection = valuesPerDetection;
 
     model->param.resize(static_cast<size_t>(paramLength));
     env->GetByteArrayRegion(
@@ -51,6 +102,10 @@ Java_com_cyberfish_app_inference_NcnnNative_create(
     const unsigned char* cursor = model->bin.data();
     ncnn::DataReaderFromMemory reader(cursor);
     if (model->net.load_model(reader) != 0) return 0;
+    if (!containsName(model->net.input_names(), model->inputName) ||
+        !containsName(model->net.output_names(), model->outputName)) {
+        return 0;
+    }
     return reinterpret_cast<jlong>(model.release());
 }
 
@@ -82,17 +137,27 @@ Java_com_cyberfish_app_inference_NcnnNative_detect(
 
     ncnn::Extractor extractor = model->net.create_extractor();
     extractor.set_light_mode(true);
-    if (extractor.input("in0", in) != 0) return nullptr;
+    if (extractor.input(model->inputName.c_str(), in) != 0) return nullptr;
     ncnn::Mat output;
-    if (extractor.extract("out0", output) != 0 || output.dims != 2 || output.h != 5) return nullptr;
+    if (extractor.extract(model->outputName.c_str(), output) != 0 || output.dims != 2 || output.elempack != 1) {
+        return nullptr;
+    }
 
-    const int candidates = output.w;
-    jfloatArray result = env->NewFloatArray(candidates * 5);
+    const bool fieldsByCandidates = model->outputLayout == OutputLayout::FieldsByCandidates;
+    const int fields = fieldsByCandidates ? output.h : output.w;
+    const int candidates = fieldsByCandidates ? output.w : output.h;
+    if (fields != model->valuesPerDetection || candidates <= 0) return nullptr;
+    const size_t resultSize = static_cast<size_t>(candidates) * static_cast<size_t>(fields);
+    if (resultSize > static_cast<size_t>(std::numeric_limits<jsize>::max())) return nullptr;
+
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(resultSize));
     if (result == nullptr) return nullptr;
-    std::vector<float> interleaved(static_cast<size_t>(candidates) * 5);
+    std::vector<float> interleaved(resultSize);
     for (int index = 0; index < candidates; ++index) {
-        for (int field = 0; field < 5; ++field) {
-            interleaved[index * 5 + field] = output.row(field)[index];
+        for (int field = 0; field < fields; ++field) {
+            interleaved[static_cast<size_t>(index) * fields + field] = fieldsByCandidates
+                ? output.row(field)[index]
+                : output.row(index)[field];
         }
     }
     env->SetFloatArrayRegion(result, 0, static_cast<jsize>(interleaved.size()), interleaved.data());

@@ -11,11 +11,17 @@ export const registerSchema = z.object({
   displayName: z.string().trim().min(1, '昵称不能为空').max(80).optional(),
   email: emailSchema.optional(),
   inviteCode: z.string().trim().max(80).optional(),
+  privacyAccepted: z.boolean().optional(),
+  privacyVersion: z.string().trim().max(80).optional(),
+  appVersionCode: z.number().int().nonnegative().optional(),
 });
 
 export const loginSchema = z.object({
   username: usernameSchema,
   password: passwordSchema,
+  privacyAccepted: z.boolean().optional(),
+  privacyVersion: z.string().trim().max(80).optional(),
+  appVersionCode: z.number().int().nonnegative().optional(),
 });
 
 export const forgotPasswordSchema = z.object({

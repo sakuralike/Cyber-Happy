@@ -140,6 +140,7 @@ export interface MlModel {
   inputName: string | null;
   inputLayout: 'NCHW' | 'NHWC';
   outputName: string | null;
+  outputLayout: 'FIELDS_BY_CANDIDATES' | 'CANDIDATES_BY_FIELDS';
   coordinatesNormalized: boolean;
   valuesPerDetection: number;
   createdAt: string;

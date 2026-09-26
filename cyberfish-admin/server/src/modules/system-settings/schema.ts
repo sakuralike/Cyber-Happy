@@ -53,6 +53,7 @@ export const userPageSettingSchemas = {
   "auth.methods.wechat": z.boolean(),
   "auth.methods.email": z.boolean(),
   "auth.privacyRequired": z.boolean(),
+  "auth.privacyVersion": z.string().trim().min(1).max(80),
   "auth.loginEnabled": z.boolean(),
   "auth.registrationEnabled": z.boolean(),
   "auth.inviteRequired": z.boolean(),

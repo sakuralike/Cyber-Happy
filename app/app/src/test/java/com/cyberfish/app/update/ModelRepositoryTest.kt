@@ -82,6 +82,25 @@ class ModelRepositoryTest {
     }
 
     @Test
+    fun `production repository rejects unencrypted model responses`() = runBlocking {
+        val repository = ModelRepository(
+            modelApi = FakeModelApi(),
+            storageDir = storageDir,
+            signatureVerifier = object : ModelSignatureVerifier {
+                override fun verify(file: File, descriptor: NcnnModelDescriptor) = true
+                override fun verifyBytes(bytes: ByteArray, descriptor: NcnnModelDescriptor) = true
+            },
+            detectorFactory = { _, descriptor -> TestDetector(descriptor.modelVersion) },
+            allowUnencryptedModels = false,
+        )
+        val result = repository.install(update("plaintext-production", "plaintext".toByteArray()))
+
+        assertFalse(result.activated)
+        assertEquals("ENCRYPTION_REQUIRED", result.errorCode)
+        assertFalse(File(storageDir, "active.bin").exists())
+    }
+
+    @Test
     fun `signature failure never activates`() = runBlocking {
         val repository = repository(FakeModelApi(), signatureValid = false)
 
@@ -155,15 +174,56 @@ class ModelRepositoryTest {
         assertEquals("model-encrypted", repository(FakeModelApi(), keyProvider = provider).activeVersion())
     }
 
-    private fun repository(api: FakeModelApi, signatureValid: Boolean = true, keyProvider: ModelKeyProvider? = null) = ModelRepository(
+    @Test
+    fun `dynamic NCNN contract survives metadata persistence and reload`() = runBlocking {
+        val descriptors = mutableListOf<NcnnModelDescriptor>()
+        val body = "signed bytes".toByteArray()
+        val dynamic = update("model-dynamic", body).let { update ->
+            update.copy(
+                descriptor = update.descriptor.copy(
+                    inputName = "images",
+                    outputName = "detections",
+                    outputLayout = "CANDIDATES_BY_FIELDS",
+                    valuesPerDetection = 6,
+                    coordinatesNormalized = true,
+                ),
+            )
+        }
+        val repository = repository(FakeModelApi(), capturedDescriptors = descriptors)
+
+        assertTrue(repository.install(dynamic).activated)
+        descriptors.clear()
+        repository(FakeModelApi(), capturedDescriptors = descriptors)
+
+        val restored = descriptors.single()
+        assertEquals("images", restored.inputName)
+        assertEquals("detections", restored.outputName)
+        assertEquals("CANDIDATES_BY_FIELDS", restored.outputLayout)
+        assertEquals(6, restored.valuesPerDetection)
+        assertTrue(restored.coordinatesNormalized)
+        assertEquals(1, restored.numClasses)
+    }
+
+    private fun repository(
+        api: FakeModelApi,
+        signatureValid: Boolean = true,
+        keyProvider: ModelKeyProvider? = null,
+        capturedDescriptors: MutableList<NcnnModelDescriptor>? = null,
+    ) = ModelRepository(
         modelApi = api,
         storageDir = storageDir,
         signatureVerifier = object : ModelSignatureVerifier {
             override fun verify(file: File, descriptor: NcnnModelDescriptor) = signatureValid
             override fun verifyBytes(bytes: ByteArray, descriptor: NcnnModelDescriptor) = signatureValid
         },
-        detectorFactory = { _, descriptor -> TestDetector(descriptor.modelVersion) },
-        bytesDetectorFactory = { _, descriptor -> TestDetector(descriptor.modelVersion) },
+        detectorFactory = { _, descriptor ->
+            capturedDescriptors?.add(descriptor)
+            TestDetector(descriptor.modelVersion)
+        },
+        bytesDetectorFactory = { _, descriptor ->
+            capturedDescriptors?.add(descriptor)
+            TestDetector(descriptor.modelVersion)
+        },
         modelKeyProvider = keyProvider,
         allowInsecureHttp = false,
     )

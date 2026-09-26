@@ -16,12 +16,16 @@ import {
   encryptedModelQuerySchema,
 } from './schema';
 import * as service from './service';
+import { assertDeviceId, requireDeviceAuth } from '../device-auth/guard';
 
 const routes: FastifyPluginAsync = async (app) => {
   const readGuard = app.requirePermission('model:read');
   const writeGuard = app.requirePermission('model:write');
   const dispatchGuard = app.requirePermission('model:dispatch');
   const rollbackGuard = app.requirePermission('model:rollback');
+  const modelCheckDeviceGuard = requireDeviceAuth(app, 'model:check');
+  const modelKeyDeviceGuard = requireDeviceAuth(app, 'model:key-register');
+  const modelReportDeviceGuard = requireDeviceAuth(app, 'model:report');
 
   // ---------------- 模型 CRUD ----------------
 
@@ -172,27 +176,33 @@ const routes: FastifyPluginAsync = async (app) => {
 
   // ---------------- APP 端 ----------------
 
-  app.post('/devices/register', async (request, reply) => {
+  app.post('/devices/register', { preValidation: [modelKeyDeviceGuard] }, async (request, reply) => {
     const input = parseOrThrow(registerDeviceKeySchema, request.body);
-    const appUser = request.headers.authorization ? await app.resolveAppUser(request) : undefined;
-    return sendOk(reply, await service.registerDeviceKey(input, appUser?.id));
+    assertDeviceId(request, input.deviceId);
+    const appUser = typeof request.headers.authorization === 'string' && request.headers.authorization.startsWith('Bearer ')
+      ? await app.resolveAppUser(request)
+      : undefined;
+    return sendOk(reply, await service.registerDeviceKey(input, appUser?.id, request.currentDevice?.credentialId));
   });
 
-  app.get('/encrypted/:id', async (request, reply) => {
+  app.get('/encrypted/:id', { preValidation: [modelCheckDeviceGuard] }, async (request, reply) => {
     const { id } = parseOrThrow(idParamSchema, request.params);
     const query = parseOrThrow(encryptedModelQuerySchema, request.query);
-    const encrypted = await service.encryptedModel(id, query);
+    assertDeviceId(request, query.deviceId);
+    const encrypted = await service.encryptedModel(id, query, request.currentDevice?.credentialId);
     return reply.type('application/vnd.cyberfish.model+encrypted').header('Cache-Control', 'no-store').send(encrypted);
   });
 
-  app.get('/check', async (request, reply) => {
+  app.get('/check', { preValidation: [modelCheckDeviceGuard] }, async (request, reply) => {
     const q = parseOrThrow(checkModelSchema, request.query);
-    return sendOk(reply, await service.checkModel(q));
+    assertDeviceId(request, q.deviceId);
+    return sendOk(reply, await service.checkModel(q, request.currentDevice?.credentialId));
   });
 
-  app.post('/dispatches/:id/report', async (request, reply) => {
+  app.post('/dispatches/:id/report', { preValidation: [modelReportDeviceGuard] }, async (request, reply) => {
     const { id } = parseOrThrow(idParamSchema, request.params);
     const input = parseOrThrow(reportDispatchSchema, request.body);
+    assertDeviceId(request, input.deviceId);
     return sendOk(reply, await service.reportDispatch(id, input));
   });
 };

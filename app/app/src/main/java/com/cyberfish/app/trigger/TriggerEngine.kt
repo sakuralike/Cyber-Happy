@@ -53,7 +53,7 @@ enum class TriggerAction(val label: String) {
 }
 
 class TriggerEngine(
-    private val config: TriggerConfig = TriggerConfig.forPreset(TriggerPreset.Balanced),
+    private var config: TriggerConfig = TriggerConfig.forPreset(TriggerPreset.Balanced),
     private val onAction: (TriggerEvent) -> Unit = {},
 ) {
     var state: TriggerState = TriggerState.Idle
@@ -147,6 +147,13 @@ class TriggerEngine(
         clearCandidate()
         cooldownUntilMillis = 0L
         trajectory.clear()
+    }
+
+    fun candidateDurationMillis(timestampMillis: Long): Long =
+        sinkStartedAtMillis?.let { (timestampMillis - it).coerceAtLeast(0L) } ?: 0L
+
+    fun updateConfig(config: TriggerConfig) {
+        this.config = config
     }
 
     private fun hasAuxiliaryEvidence(snapshot: FeatureSnapshot): Boolean {

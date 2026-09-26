@@ -35,6 +35,9 @@ const PUBLIC_PATHS = [
   '/api/v1/auth/login',
   '/api/v1/site-config',
   '/api/v1/site-config/apk',
+  '/api/v1/devices/enroll',
+  '/api/v1/devices/challenges',
+  '/api/v1/devices/token',
 ];
 
 function isPublic(url: string): boolean {
@@ -43,6 +46,15 @@ function isPublic(url: string): boolean {
     || path.startsWith('/api/v1/public/')
     || path.startsWith('/api/v1/users/')
     || path.startsWith('/files/apk/');
+}
+
+function isDeviceSignedPath(method: string, url: string): boolean {
+  const path = url.split('?')[0] ?? url;
+  if (method === 'POST' && path === '/api/v1/devices/refresh') return true;
+  if (method === 'POST' && path === '/api/v1/models/devices/register') return true;
+  if (method === 'GET' && path === '/api/v1/models/check') return true;
+  if (method === 'GET' && /^\/api\/v1\/models\/encrypted\/[^/]+$/.test(path)) return true;
+  return method === 'POST' && /^\/api\/v1\/models\/dispatches\/[^/]+\/report$/.test(path);
 }
 
 const authPlugin: FastifyPluginAsync = async (app) => {
@@ -132,10 +144,15 @@ const authPlugin: FastifyPluginAsync = async (app) => {
     }
     // 签到 POST 在 preValidation 阶段鉴权，使回放审计可读取已解析的请求体。
     if (request.method === 'POST' && request.url.split('?')[0] === '/api/v1/check-in') return;
-    // APP 端接口走 X-App-Token，跳过后台 JWT
+    // 设备 token 独立于用户 Authorization，路由 preValidation 会完成 scope 与请求签名校验。
+    if (typeof request.headers['x-device-authorization'] === 'string' && isDeviceSignedPath(request.method, request.url)) {
+      return;
+    }
+    // 兼容窗口内 APP 端接口可继续走 X-App-Token。
     const appToken = request.headers['x-app-token'];
     if (typeof appToken === 'string' && appToken === config.appApiToken) {
-      (request as FastifyRequest & { isAppClient?: boolean }).isAppClient = true;
+      if (!config.deviceAuthDualMode) throw AppError.unauthorized('共享 APP Token 通道已关闭');
+      request.isAppClient = true;
       return;
     }
     await app.authenticate(request, null as unknown as FastifyReply);

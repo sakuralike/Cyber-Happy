@@ -11,6 +11,9 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
@@ -93,6 +96,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     var showingCheckIn by rememberSaveable { mutableStateOf(false) }
     var returnToCheckInAfterLogin by rememberSaveable { mutableStateOf(false) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
+    val forceUpdateRequired = (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.updateType == "FORCE"
     var appInstallMessage by remember { mutableStateOf<String?>(null) }
     var appUpdateInProgress by remember { mutableStateOf(false) }
     var supportContent by remember { mutableStateOf(SupportContent()) }
@@ -143,6 +147,12 @@ fun CyberFishApp(permissionRevision: Int = 0) {
             repository.loadSupportContent()
         }
         if (supportResult is ApiResult.Success) supportContent = supportResult.value
+        when (val update = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
+            is ApiResult.Success -> if (update.value.hasUpdate && update.value.updateType == "FORCE") {
+                versionCheckState = VersionCheckState.UpdateAvailable(update.value)
+            }
+            else -> Unit
+        }
     }
     LaunchedEffect(userSession?.token) {
         checkInOverview = if (userSession == null) null else {
@@ -312,6 +322,16 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                     )
                                 }
                             },
+                            onConfidenceThresholdChange = { threshold ->
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    repository.savePreferences(
+                                        preferences.copy(
+                                            confidenceThreshold = threshold.coerceIn(0.30f, 0.95f),
+                                            triggerPreset = "自定义",
+                                        ),
+                                    )
+                                }
+                            },
                             detector = repository.modelRepository.detectorSlot,
                         )
                         AppTab.Records -> RecordsScreen(
@@ -461,9 +481,17 @@ fun CyberFishApp(permissionRevision: Int = 0) {
             }
         }
     }
+    if (forceUpdateRequired && selectedTab != AppTab.Settings) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("需要更新 APP") },
+            text = { Text("当前版本已不再受支持，请完成更新后继续使用。") },
+            confirmButton = { Button(onClick = { selectedTabName = AppTab.Settings.name }) { Text("去更新") } },
+        )
+    }
 }
 
-private fun AppPreferences.toTriggerConfig() = TriggerConfig(
+internal fun AppPreferences.toTriggerConfig() = TriggerConfig(
     sinkThresholdPx = sinkThresholdPx,
     trembleThresholdHz = trembleThresholdHz,
     minSinkDurationMillis = (durationSeconds * 1_000f).roundToLong(),

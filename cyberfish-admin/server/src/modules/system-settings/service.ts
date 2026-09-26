@@ -76,6 +76,7 @@ export const USER_PAGE_DEFAULTS: Record<string, unknown> = {
   "auth.methods.wechat": true,
   "auth.methods.email": false,
   "auth.privacyRequired": true,
+  "auth.privacyVersion": "privacy-v1",
   "auth.loginEnabled": true,
   "auth.registrationEnabled": true,
   "auth.inviteRequired": false,

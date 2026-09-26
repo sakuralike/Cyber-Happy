@@ -127,7 +127,7 @@ export function ModelPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ arch: 'YOLO26n', quant: 'FP32', framework: 'NCNN', inputSize: 640, numClasses: 1, labels: ['鱼漂'] });
+    form.setFieldsValue({ arch: 'YOLO26n', quant: 'FP32', framework: 'NCNN', inputSize: 640, numClasses: 1, labels: ['鱼漂'], outputLayout: 'FIELDS_BY_CANDIDATES', valuesPerDetection: 5 });
     setModalOpen(true);
   };
   const openEdit = (row: MlModel) => {
@@ -158,6 +158,7 @@ export function ModelPage() {
       inputName: row.inputName ?? undefined,
       inputLayout: row.inputLayout,
       outputName: row.outputName ?? undefined,
+      outputLayout: row.outputLayout,
       coordinatesNormalized: row.coordinatesNormalized,
       valuesPerDetection: row.valuesPerDetection,
     });
@@ -565,8 +566,11 @@ export function ModelPage() {
             <Form.Item name="inputLayout" label="输入布局" style={{ flex: 1 }}>
               <Select options={[{ value: 'NCHW', label: 'NCHW' }, { value: 'NHWC', label: 'NHWC' }]} />
             </Form.Item>
+            <Form.Item name="outputLayout" label="输出布局" style={{ flex: 1 }}>
+              <Select options={[{ value: 'FIELDS_BY_CANDIDATES', label: '字段 × 候选' }, { value: 'CANDIDATES_BY_FIELDS', label: '候选 × 字段' }]} />
+            </Form.Item>
             <Form.Item name="valuesPerDetection" label="每检测项列数" style={{ flex: 1 }}>
-              <InputNumber min={6} style={{ width: '100%' }} />
+              <InputNumber min={5} style={{ width: '100%' }} />
             </Form.Item>
           </Space>
           <Form.Item name="remark" label="备注">

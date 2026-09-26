@@ -1,7 +1,11 @@
 package com.cyberfish.app.update
 
 import com.cyberfish.app.inference.CloseableDetector
+import com.cyberfish.app.inference.DEFAULT_NCNN_INPUT_NAME
+import com.cyberfish.app.inference.DEFAULT_NCNN_OUTPUT_NAME
+import com.cyberfish.app.inference.DEFAULT_NCNN_VALUES_PER_DETECTION
 import com.cyberfish.app.inference.DetectorSlot
+import com.cyberfish.app.inference.NCNN_OUTPUT_LAYOUT_FIELDS_BY_CANDIDATES
 import com.cyberfish.app.inference.NcnnDetector
 import com.cyberfish.app.inference.NcnnModelContract
 import com.cyberfish.app.inference.NcnnModelDescriptor
@@ -121,6 +125,7 @@ class ModelRepository(
     },
     private val modelKeyProvider: ModelKeyProvider? = null,
     private val allowInsecureHttp: Boolean = false,
+    private val allowUnencryptedModels: Boolean = true,
 ) {
     private val stateFlow = MutableStateFlow(readState())
     private val mutationMutex = Mutex()
@@ -224,6 +229,9 @@ class ModelRepository(
         val descriptor = update.descriptor
         val contract = NcnnModelContract.validate(descriptor)
         if (!contract.isValid) return fail("CONTRACT_INVALID", contract.errors.joinToString("；"), false)
+        if (!update.encrypted && !allowUnencryptedModels) {
+            return fail("ENCRYPTION_REQUIRED", "生产模型必须使用设备加密下发", false)
+        }
         val downloadUrl = update.downloadUrl.trim()
         if (!isAllowedUrl(downloadUrl)) return fail("INSECURE_URL", "模型下载必须使用 HTTPS", false)
 
@@ -392,6 +400,7 @@ class ModelRepository(
 
     private fun createVerifiedDetector(file: File, stored: StoredModelMetadata): CloseableDetector {
         val descriptor = stored.descriptor
+        require(stored.encrypted || allowUnencryptedModels) { "生产模型必须使用设备加密下发" }
         val plaintext = if (stored.encrypted) {
             val provider = modelKeyProvider ?: error("设备模型密钥不可用")
             EncryptedModelContainer.decrypt(file, provider, expectedModelVersion = descriptor.modelVersion)
@@ -486,6 +495,12 @@ private fun NcnnModelDescriptor.toStoredJson(encrypted: Boolean): String = org.j
         .put("inputSize", inputSize)
         .put("labels", org.json.JSONArray(labels))
         .put("sha256", sha256)
+        .put("inputName", inputName)
+        .put("outputName", outputName)
+        .put("outputLayout", outputLayout)
+        .put("valuesPerDetection", valuesPerDetection)
+        .put("coordinatesNormalized", coordinatesNormalized)
+        .put("numClasses", numClasses)
         .put("signature", signature)
         .put("signatureAlgorithm", signatureAlgorithm)
         .put("publicKeyId", publicKeyId)
@@ -510,9 +525,18 @@ private fun ncnnModelDescriptorFromJson(raw: String): NcnnModelDescriptor {
         inputSize = data.optInt("inputSize", 0),
         labels = labels,
         sha256 = data.optString("sha256"),
+        inputName = data.optStoredContractString("inputName", DEFAULT_NCNN_INPUT_NAME),
+        outputName = data.optStoredContractString("outputName", DEFAULT_NCNN_OUTPUT_NAME),
+        outputLayout = data.optStoredContractString("outputLayout", NCNN_OUTPUT_LAYOUT_FIELDS_BY_CANDIDATES),
+        valuesPerDetection = data.optInt("valuesPerDetection", DEFAULT_NCNN_VALUES_PER_DETECTION),
+        coordinatesNormalized = data.optBoolean("coordinatesNormalized", false),
+        numClasses = data.optInt("numClasses", labels.size),
         signature = data.optString("signature").takeIf { it.isNotBlank() },
         signatureAlgorithm = data.optString("signatureAlgorithm").takeIf { it.isNotBlank() },
         publicKeyId = data.optString("publicKeyId").takeIf { it.isNotBlank() },
         signatureExpiresAtMillis = data.optLong("signatureExpiresAtMillis", Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE },
     )
 }
+
+private fun org.json.JSONObject.optStoredContractString(name: String, fallback: String): String =
+    if (!has(name) || isNull(name)) fallback else optString(name).trim()

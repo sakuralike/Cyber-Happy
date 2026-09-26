@@ -95,13 +95,13 @@ userHttp.interceptors.response.use(
   },
 );
 
-export const login = (username: string, password: string) =>
-  userHttp.post('/users/login', { username, password }) as Promise<UserSession>;
+export const login = (username: string, password: string, privacyVersion?: string) =>
+  userHttp.post('/users/login', { username, password, ...(privacyVersion ? { privacyAccepted: true, privacyVersion } : {}) }) as Promise<UserSession>;
 
 export const forgotPassword = (input: { username: string; email: string; newPassword: string }) =>
   userHttp.post('/users/forgot-password', input) as Promise<{ reset: boolean }>;
 
-export const register = (input: { username: string; password: string; displayName?: string; email?: string; inviteCode?: string }) =>
+export const register = (input: { username: string; password: string; displayName?: string; email?: string; inviteCode?: string; privacyAccepted?: boolean; privacyVersion?: string }) =>
   userHttp.post('/users/register', input) as Promise<UserSession>;
 
 export const fetchMe = () => userHttp.get('/users/me') as Promise<UserAccount>;

@@ -21,6 +21,7 @@ object ModelRuntime {
                 signatureVerifier = PublicKeyModelSignatureVerifier(ModelPublicKeys.fromBuildConfig()),
                 modelKeyProvider = keyProvider,
                 allowInsecureHttp = BuildConfig.DEBUG,
+                allowUnencryptedModels = BuildConfig.DEBUG,
             ).also { repository = it }
         }
     }

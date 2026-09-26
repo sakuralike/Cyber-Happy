@@ -54,25 +54,7 @@ class NcnnDetector private constructor(
         inputTransform: ModelInputTransform?,
         detectionRegion: DetectionBounds?,
     ): Detection? {
-        val candidates = ArrayList<Detection>(values.size / VALUES_PER_DETECTION)
-        for (offset in values.indices step VALUES_PER_DETECTION) {
-            if (offset + VALUES_PER_DETECTION > values.size) break
-            val confidence = values[offset + CONFIDENCE_INDEX]
-            if (!confidence.isFinite() || confidence <= 0f) continue
-            val centerX = values[offset]
-            val centerY = values[offset + 1]
-            val width = values[offset + 2]
-            val height = values[offset + 3]
-            val modelBounds = DetectionBounds(
-                (centerX - width / 2f) / inputSize,
-                (centerY - height / 2f) / inputSize,
-                (centerX + width / 2f) / inputSize,
-                (centerY + height / 2f) / inputSize,
-            )
-            val bounds = mapModelBoundsToSource(modelBounds, inputTransform) ?: continue
-            candidates += Detection(bounds, confidence)
-        }
-        return DetectionRegionGate.selectBest(candidates, detectionRegion)
+        return parseNcnnDetectionValues(descriptor, values, inputTransform, detectionRegion)
     }
 
     companion object {
@@ -83,24 +65,35 @@ class NcnnDetector private constructor(
         }
 
         fun fromBundle(bundle: File, descriptor: NcnnModelDescriptor): NcnnDetector {
+            require(bundle.length() in 1..MAX_BUNDLE_BYTES) { "NCNN 模型包大小无效" }
             ZipFile(bundle).use { zip ->
                 val paramEntry = zip.getEntry("model.param") ?: error("NCNN 模型包缺少 model.param")
                 val binEntry = zip.getEntry("model.bin") ?: error("NCNN 模型包缺少 model.bin")
-                val param = zip.getInputStream(paramEntry).use { it.readBytes() }
-                val bin = zip.getInputStream(binEntry).use { it.readBytes() }
+                require(zip.entries().asSequence().all { it.name == "model.param" || it.name == "model.bin" }) { "NCNN 模型包包含未知文件" }
+                val param = zip.getInputStream(paramEntry).use { readLimited(it, MAX_PARAM_BYTES) }
+                val bin = zip.getInputStream(binEntry).use { readLimited(it, MAX_BIN_BYTES) }
                 return create(descriptor, param, bin)
             }
         }
 
         fun fromBundleBytes(bundle: ByteArray, descriptor: NcnnModelDescriptor): NcnnDetector {
+            require(bundle.size.toLong() <= MAX_BUNDLE_BYTES) { "NCNN 模型包大小无效" }
             var param: ByteArray? = null
             var bin: ByteArray? = null
             ZipInputStream(bundle.inputStream()).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
+                    require(!entry.isDirectory && entry.name != "" && entry.name != "." && !entry.name.contains("..") && !entry.name.contains('/')) { "NCNN 模型包路径无效" }
                     when (entry.name) {
-                        "model.param" -> param = zip.readBytes()
-                        "model.bin" -> bin = zip.readBytes()
+                        "model.param" -> {
+                            require(param == null) { "NCNN 模型包重复 model.param" }
+                            param = readLimited(zip, MAX_PARAM_BYTES)
+                        }
+                        "model.bin" -> {
+                            require(bin == null) { "NCNN 模型包重复 model.bin" }
+                            bin = readLimited(zip, MAX_BIN_BYTES)
+                        }
+                        else -> error("NCNN 模型包包含未知文件")
                     }
                     zip.closeEntry()
                 }
@@ -129,15 +122,78 @@ class NcnnDetector private constructor(
         }
 
         private fun create(descriptor: NcnnModelDescriptor, param: ByteArray, bin: ByteArray): NcnnDetector {
-            val handle = NcnnNative.create(param, bin)
+            val contract = NcnnModelContract.validateRuntime(descriptor)
+            require(contract.isValid) { contract.errors.joinToString("；") }
+            val handle = NcnnNative.create(
+                param,
+                bin,
+                descriptor.inputName,
+                descriptor.outputName,
+                descriptor.outputLayout,
+                descriptor.valuesPerDetection,
+            )
             require(handle != 0L) { "NCNN 模型加载失败" }
             return NcnnDetector(descriptor, handle)
         }
 
-        private const val VALUES_PER_DETECTION = 5
-        private const val CONFIDENCE_INDEX = 4
+        private fun readLimited(input: InputStream, maxBytes: Long): ByteArray {
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(32 * 1024)
+            var total = 0L
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                require(total <= maxBytes) { "NCNN 模型包文件过大" }
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
+        }
+
+        private const val MAX_BUNDLE_BYTES = 120L * 1024 * 1024
+        private const val MAX_PARAM_BYTES = 2L * 1024 * 1024
+        private const val MAX_BIN_BYTES = 100L * 1024 * 1024
     }
 }
+
+internal fun parseNcnnDetectionValues(
+    descriptor: NcnnModelDescriptor,
+    values: FloatArray,
+    inputTransform: ModelInputTransform?,
+    detectionRegion: DetectionBounds?,
+): Detection? {
+    val valuesPerDetection = descriptor.valuesPerDetection
+    if (valuesPerDetection < 5 ||
+        descriptor.numClasses <= 0 ||
+        CONFIDENCE_INDEX + descriptor.numClasses > valuesPerDetection ||
+        values.isEmpty() ||
+        values.size % valuesPerDetection != 0
+    ) return null
+    val coordinateScale = if (descriptor.coordinatesNormalized) 1f else descriptor.inputSize.toFloat()
+    val candidates = ArrayList<Detection>(values.size / valuesPerDetection)
+    for (offset in values.indices step valuesPerDetection) {
+        var confidence = Float.NEGATIVE_INFINITY
+        for (classIndex in 0 until descriptor.numClasses) {
+            confidence = maxOf(confidence, values[offset + CONFIDENCE_INDEX + classIndex])
+        }
+        if (!confidence.isFinite() || confidence <= 0f) continue
+        val centerX = values[offset]
+        val centerY = values[offset + 1]
+        val width = values[offset + 2]
+        val height = values[offset + 3]
+        val modelBounds = DetectionBounds(
+            (centerX - width / 2f) / coordinateScale,
+            (centerY - height / 2f) / coordinateScale,
+            (centerX + width / 2f) / coordinateScale,
+            (centerY + height / 2f) / coordinateScale,
+        )
+        val bounds = mapModelBoundsToSource(modelBounds, inputTransform) ?: continue
+        candidates += Detection(bounds, confidence)
+    }
+    return DetectionRegionGate.selectBest(candidates, detectionRegion)
+}
+
+private const val CONFIDENCE_INDEX = 4
 
 internal fun mapModelBoundsToSource(
     bounds: DetectionBounds,
