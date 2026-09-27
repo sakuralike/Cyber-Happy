@@ -10,6 +10,16 @@ export interface DashboardQuery {
   granularity?: 'day' | 'week';
 }
 
+export interface MetricBackfillResult {
+  processed: number;
+  created: number;
+  updated: number;
+}
+
+export async function backfillMetrics(input: { from: string; to: string }): Promise<MetricBackfillResult> {
+  return http.post('/dashboard/metrics/backfill', input) as Promise<MetricBackfillResult>;
+}
+
 export async function overview(params: DashboardQuery): Promise<{
   range: { from: string; to: string; days: number };
   cards: MetricCard[];

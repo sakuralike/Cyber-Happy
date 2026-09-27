@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Card, Col, Row, Statistic, DatePicker, Select, Space, Typography, Spin, Empty, Button } from 'antd';
+import { Card, Col, Row, Statistic, DatePicker, Select, Space, Typography, Spin, Empty, Button, message } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined, ReloadOutlined, DownloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ResponsiveContainer,
   LineChart,
@@ -24,6 +24,7 @@ import { listModels } from '../api/model';
 import type { DashboardQuery } from '../api/dashboard';
 import { ROOT_CAUSE_MAP } from '../utils/constants';
 import { formatNumber, formatPercent } from '../utils/format';
+import { useAuth } from '../store/auth';
 
 const PIE_COLORS = ['#0B7C6E', '#2E6BFF', '#E8930C', '#DC2F3C', '#14B8A6', '#6B6F7E'];
 
@@ -39,6 +40,7 @@ function DeltaText({ delta, unit }: { delta: number; unit: string }) {
 }
 
 export function DashboardPage() {
+  const { hasPerm } = useAuth();
   const [range, setRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
     dayjs().subtract(29, 'day'),
     dayjs(),
@@ -62,6 +64,13 @@ export function DashboardPage() {
   const modelQ = useQuery({ queryKey: ['dash', 'model', params], queryFn: () => dashboardApi.modelUsage(params) });
   const misQ = useQuery({ queryKey: ['dash', 'mis', params], queryFn: () => dashboardApi.misreportAnalysis(params) });
   const healthQ = useQuery({ queryKey: ['dash', 'health', params], queryFn: () => dashboardApi.health(params) });
+  const backfillMut = useMutation({
+    mutationFn: () => dashboardApi.backfillMetrics({ from: range[0].format('YYYY-MM-DD'), to: range[1].format('YYYY-MM-DD') }),
+    onSuccess: (result) => {
+      message.success(`已补算 ${result.processed} 天指标，新增 ${result.created} 天，更新 ${result.updated} 天`);
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '指标补算失败'),
+  });
   const versionsQ = useQuery({
     queryKey: ['appVersions', 'options'],
     queryFn: () => listAppVersions({ page: 1, pageSize: 200 }),
@@ -105,7 +114,7 @@ export function DashboardPage() {
 
   return (
     <div>
-      <div className="page-heading"><div><h1>数据看板</h1><p>DAU / MAU · 模型调用 · 误报率 · T+0 准实时数据</p></div><Space><Button type="primary" icon={<DownloadOutlined />} onClick={exportReport}>导出报表</Button></Space></div>
+      <div className="page-heading"><div><h1>数据看板</h1><p>DAU / MAU · 模型调用 · 误报率 · T+0 准实时数据</p></div><Space>{hasPerm('dashboard:write') && <Button icon={<ReloadOutlined />} loading={backfillMut.isPending} onClick={() => backfillMut.mutate()}>补算指标</Button>}<Button type="primary" icon={<DownloadOutlined />} onClick={exportReport}>导出报表</Button></Space></div>
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {/* 筛选栏 */}
       <Card size="small">
