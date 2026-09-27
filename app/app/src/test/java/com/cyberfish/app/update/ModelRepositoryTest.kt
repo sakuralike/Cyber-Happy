@@ -232,6 +232,32 @@ class ModelRepositoryTest {
         assertEquals(2L, repository.highestAcceptedGeneration())
     }
 
+    @Test
+    fun `local rollback rejects previous model with lower generation`() = runBlocking {
+        val previousBody = "previous model".toByteArray()
+        val currentBody = "current model".toByteArray()
+        val repository = repository(FakeModelApi(bodies = mapOf(
+            "model-rollback-generation-1" to previousBody,
+            "model-rollback-generation-2" to currentBody,
+        )))
+        val previous = update("model-rollback-generation-1", previousBody).copy(
+            descriptor = update("model-rollback-generation-1", previousBody).descriptor.copy(generation = 1L),
+        )
+        val current = update("model-rollback-generation-2", currentBody).copy(
+            descriptor = update("model-rollback-generation-2", currentBody).descriptor.copy(generation = 2L),
+        )
+
+        assertTrue(repository.install(previous).activated)
+        assertTrue(repository.install(current).activated)
+
+        val result = repository.rollback()
+
+        assertFalse(result.activated)
+        assertEquals("MODEL_ROLLBACK_REJECTED", result.errorCode)
+        assertEquals("model-rollback-generation-2", repository.activeVersion())
+        assertEquals(2L, repository.highestAcceptedGeneration())
+    }
+
     private fun repository(
         api: FakeModelApi,
         signatureValid: Boolean = true,

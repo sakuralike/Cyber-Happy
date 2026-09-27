@@ -376,7 +376,7 @@ class ModelRepository(
             val contract = NcnnModelContract.validate(descriptor)
             require(contract.isValid) { contract.errors.joinToString("；") }
             if (descriptor.generation < highestAcceptedGeneration()) {
-                throw IllegalStateException("模型 generation 低于设备已接受版本")
+                return fail("MODEL_ROLLBACK_REJECTED", "模型 generation 低于设备已接受版本", false)
             }
             val nextDetector = createVerifiedDetector(previousFile, stored)
             rollbackInternal(activeFile, previousFile, activeMetadata, previousMetadata)

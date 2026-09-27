@@ -65,7 +65,7 @@ class TriggerEngine(
     private var cooldownUntilMillis = 0L
     private var attentionEmitted = false
     private var prepareRodEmitted = false
-    private var blackDriftEmitted = false
+    private var blackDriftDetected = false
     private val trajectory = ArrayDeque<Float>()
 
     fun evaluate(snapshot: FeatureSnapshot?): TriggerEvent? {
@@ -102,9 +102,8 @@ class TriggerEngine(
             emitAction(snapshot, TriggerAction.Attention, "检测到浮漂动作")
         }
 
-        if (!blackDriftEmitted && isBlackDrift(snapshot)) {
-            blackDriftEmitted = true
-            emitAction(snapshot, TriggerAction.BlackDrift, "浮漂深度下沉，黑漂")
+        if (!blackDriftDetected && isBlackDrift(snapshot)) {
+            blackDriftDetected = true
         }
 
         val sinkStartedAt = sinkStartedAtMillis
@@ -135,7 +134,13 @@ class TriggerEngine(
         }
         if (reverseConfirmationFrames < config.reverseConfirmationFrames) return null
 
-        val event = createEvent(snapshot, TriggerAction.FishOn, "持续下沉并完成反向确认")
+        val finalAction = if (blackDriftDetected) TriggerAction.BlackDrift else TriggerAction.FishOn
+        val finalReason = if (blackDriftDetected) {
+            "浮漂深度下沉并完成反向确认，黑漂"
+        } else {
+            "持续下沉并完成反向确认"
+        }
+        val event = createEvent(snapshot, finalAction, finalReason)
         state = TriggerState.Cooldown
         cooldownUntilMillis = snapshot.timestampMillis + config.cooldownMillis
         clearCandidate()
@@ -175,7 +180,7 @@ class TriggerEngine(
         reverseConfirmationFrames = 0
         attentionEmitted = false
         prepareRodEmitted = false
-        blackDriftEmitted = false
+        blackDriftDetected = false
     }
 
     private fun emitAction(snapshot: FeatureSnapshot, action: TriggerAction, reason: String) {

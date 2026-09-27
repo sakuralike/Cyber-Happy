@@ -171,7 +171,7 @@ class TriggerEngineTest {
     }
 
     @Test
-    fun `deep sink final action is black drift`() {
+    fun `deep sink final action is black drift without an early duplicate alert`() {
         val actions = mutableListOf<TriggerAction>()
         val engine = TriggerEngine(config) { actions += it.action }
 
@@ -181,8 +181,9 @@ class TriggerEngineTest {
         engine.evaluate(snapshot(933L, 32f, -12f))
         val event = engine.evaluate(snapshot(966L, 31f, -12f))
 
-        assertEquals(TriggerAction.FishOn, event?.action)
-        assertTrue(actions.contains(TriggerAction.BlackDrift))
+        assertEquals(TriggerAction.BlackDrift, event?.action)
+        assertEquals("浮漂深度下沉并完成反向确认，黑漂", event?.reason)
+        assertEquals(listOf(TriggerAction.Attention, TriggerAction.PrepareRod), actions)
     }
 
     private fun triggerOnce(engine: TriggerEngine) {

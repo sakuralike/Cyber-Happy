@@ -431,6 +431,9 @@ export async function rollback(modelId: string, input: RollbackInput, operatorId
   const to = await prisma.mlModel.findUnique({ where: { id: input.toModelId } });
   if (!to) throw AppError.notFound('回滚目标模型不存在');
   if (to.id === from.id) throw AppError.badRequest('不能回滚到自身');
+  if ((to.generation ?? 0) < (from.generation ?? 0)) {
+    throw AppError.invalidState('不允许回滚到 generation 更低的模型');
+  }
   ensurePublishableModel(to);
 
   // 找到原下发单（取最近一条非回滚单）作为回滚范围依据

@@ -48,7 +48,32 @@ class TriggerPipelineTest {
 
         assertEquals(1, events.size)
         assertTrue(events.single().features.verticalDisplacementPx >= 18f)
-        assertEquals("持续下沉并完成反向确认", events.single().reason)
+        assertEquals(TriggerAction.BlackDrift, events.single().action)
+        assertEquals("浮漂深度下沉并完成反向确认，黑漂", events.single().reason)
+    }
+
+    @Test
+    fun `black drift takes priority over fish on and emits one terminal alert`() {
+        val triggers = mutableListOf<TriggerEvent>()
+        val alerts = mutableListOf<TriggerEvent>()
+        val pipeline = TriggerPipeline(
+            config = testConfig,
+            onTrigger = triggers::add,
+            onAlert = alerts::add,
+        )
+        val driver = SequenceDriver(pipeline)
+
+        driver.feedSink()
+        driver.frame(centerY = 0.3f, height = 0.3f)
+        driver.frame(centerY = 0.2f, height = 0.3f)
+
+        assertEquals(1, triggers.size)
+        assertEquals(TriggerAction.BlackDrift, triggers.single().action)
+        assertEquals(
+            listOf(TriggerAction.Attention, TriggerAction.PrepareRod, TriggerAction.BlackDrift),
+            alerts.map { it.action },
+        )
+        assertTrue(alerts.none { it.action == TriggerAction.FishOn })
     }
 
     @Test

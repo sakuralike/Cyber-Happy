@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { MisreportStatus } from '../../lib/enums';
+import { FileBizType, MisreportStatus } from '../../lib/enums';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { buildListQuery, buildExportQuery, type RawListQuery } from '../../lib/query';
 import { parseJson } from '../../lib/serialize';
+import { uploadRule } from '../../lib/storage';
 import type {
   MisreportListQuery,
   ReviewInput,
@@ -22,21 +23,45 @@ function normalize<T extends { rawData?: string | null; snapshotUrls?: string | 
   };
 }
 
-async function validateMediaAssets(snapshotUrls: string[], videoUrl: string | undefined): Promise<void> {
+async function validateMediaAssets(
+  snapshotUrls: string[],
+  videoUrl: string | undefined,
+  ownerUserId: string,
+  deviceId: string,
+): Promise<void> {
   const imageUrls = [...new Set(snapshotUrls.map((value) => value.trim()).filter(Boolean))];
   const videoUrls = videoUrl?.trim() ? [videoUrl.trim()] : [];
   const requested = [...imageUrls, ...videoUrls];
   if (!requested.length) return;
+  if (!ownerUserId.trim() || !deviceId.trim()) throw AppError.forbidden('误报媒体缺少用户或设备归属');
   if (requested.some((value) => !value.startsWith('/files/'))) {
     throw AppError.badRequest('误报媒体必须使用平台文件地址');
   }
-  const assets = await prisma.fileAsset.findMany({ where: { url: { in: requested } }, select: { url: true, bizType: true } });
-  const byUrl = new Map(assets.map((asset) => [asset.url, asset.bizType]));
+  const assets = await prisma.fileAsset.findMany({
+    where: {
+      url: { in: requested },
+      ownerUserId,
+      deviceId,
+      status: 'READY',
+    },
+    select: { url: true, bizType: true, mimeType: true, size: true },
+  });
+  const byUrl = new Map(assets.map((asset) => [asset.url, asset]));
   for (const url of imageUrls) {
-    if (byUrl.get(url) !== 'IMAGE') throw AppError.badRequest('误报截图文件不存在或类型不匹配');
+    assertMediaAsset(byUrl.get(url), FileBizType.IMAGE);
   }
   for (const url of videoUrls) {
-    if (byUrl.get(url) !== 'VIDEO') throw AppError.badRequest('误报视频文件不存在或类型不匹配');
+    assertMediaAsset(byUrl.get(url), FileBizType.VIDEO);
+  }
+}
+
+function assertMediaAsset(
+  asset: { bizType: string; mimeType: string; size: bigint } | undefined,
+  expectedType: FileBizType,
+): void {
+  const rule = uploadRule(expectedType);
+  if (!asset || asset.bizType !== expectedType || !rule.mime.includes(asset.mimeType) || asset.size <= 0n || asset.size > BigInt(rule.maxSize)) {
+    throw AppError.badRequest('误报媒体不存在、未就绪、类型或大小不匹配');
   }
 }
 
@@ -330,7 +355,7 @@ export async function stats() {
 
 export async function create(input: CreateMisreportInput) {
   const snapshotUrls = input.snapshotUrls ?? [];
-  await validateMediaAssets(snapshotUrls, input.videoUrl);
+  await validateMediaAssets(snapshotUrls, input.videoUrl, input.userId, input.deviceId);
   const reportNo = await nextReportNo();
   const created = await prisma.misreport.create({
     data: {

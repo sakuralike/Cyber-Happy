@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { FileBizType } from '../../lib/enums';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
-import { saveStream, validateUpload, resolveStoredFile, removeFile } from '../../lib/storage';
+import { saveStream, validateUpload, resolveStoredFile, removeFile, uploadRule } from '../../lib/storage';
 import type { Readable } from 'node:stream';
 import { Prisma } from '@prisma/client';
 
@@ -19,7 +19,10 @@ export async function upload(
 ) {
   if (idempotencyKey) {
     const existing = await prisma.fileAsset.findUnique({ where: { idempotencyKey } });
-    if (existing) return normalizeAsset(existing);
+    if (existing) {
+      assertIdempotentAsset(existing, { bizType, mimeType, expectedSha256, ownerUserId, deviceId });
+      return normalizeAsset(existing);
+    }
   }
   validateUpload(bizType, originalName, mimeType, 0); // 先校验扩展名/MIME，体积在流中累计后二次校验
 
@@ -64,12 +67,43 @@ export async function upload(
     await removeFile(saved.storagePath);
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002' && idempotencyKey) {
       const existing = await prisma.fileAsset.findUnique({ where: { idempotencyKey } });
-      if (existing) return normalizeAsset(existing);
+      if (existing) {
+        assertIdempotentAsset(existing, { bizType, mimeType, expectedSha256, ownerUserId, deviceId });
+        return normalizeAsset(existing);
+      }
     }
     throw error;
   }
 
   return normalizeAsset(asset);
+}
+
+function assertIdempotentAsset(
+  asset: {
+    bizType: string;
+    mimeType: string;
+    size: bigint;
+    sha256: string;
+    ownerUserId: string | null;
+    deviceId: string | null;
+    status: string;
+  },
+  expected: {
+    bizType: FileBizType;
+    mimeType: string;
+    expectedSha256?: string;
+    ownerUserId?: string;
+    deviceId?: string;
+  },
+): void {
+  const ownerMatches = asset.ownerUserId === (expected.ownerUserId ?? null);
+  const deviceMatches = asset.deviceId === (expected.deviceId ?? null);
+  const hashMatches = !expected.expectedSha256 || asset.sha256.toLowerCase() === expected.expectedSha256.toLowerCase();
+  const rule = uploadRule(expected.bizType);
+  const contentMatches = asset.mimeType === expected.mimeType && asset.status === 'READY' && asset.size > 0n && asset.size <= BigInt(rule.maxSize);
+  if (asset.bizType !== expected.bizType || !ownerMatches || !deviceMatches || !hashMatches || !contentMatches) {
+    throw AppError.conflict('媒体幂等键已绑定其他资产');
+  }
 }
 
 function normalizeAsset(asset: {
