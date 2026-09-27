@@ -117,6 +117,22 @@ describe('user login and invitation registration controls', { concurrency: false
     assert.equal(row.usedCount, 2);
   });
 
+  it('keeps concurrent duplicate usernames to one account without double-consuming an invite', async () => {
+    await setPolicy({ 'auth.inviteRequired': true });
+    const code = await createInvite({ mode: 'MULTI', maxUses: 2 });
+    const responses = await Promise.all([0, 1].map((index) => app.inject({
+      method: 'POST',
+      url: '/api/v1/users/register',
+      headers: { 'x-forwarded-for': `192.0.2.${60 + index}` },
+      payload: { username: 'same-concurrent-user', password: 'secret123', inviteCode: code },
+    })));
+    assert.equal(responses.filter((response) => response.statusCode === 201).length, 1);
+    assert.equal(responses.filter((response) => response.statusCode === 409).length, 1);
+    const row = await prisma.inviteCode.findUnique({ where: { codeHash: inviteService.hashCode(code) } });
+    assert.equal(row.usedCount, 1);
+    assert.equal(await prisma.userAccount.count({ where: { username: 'same-concurrent-user' } }), 1);
+  });
+
   it('rejects new registration when the registration switch is disabled', async () => {
     await setPolicy({ 'auth.registrationEnabled': false, 'auth.inviteRequired': false });
     const response = await app.inject({ method: 'POST', url: '/api/v1/users/register', headers: { 'x-forwarded-for': '192.0.2.30' }, payload: { username: 'registration-disabled', password: 'secret123' } });

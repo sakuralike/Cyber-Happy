@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { config } from '../../config';
 import { prisma } from '../../lib/prisma';
 import { AppError, ErrorCode } from '../../lib/errors';
@@ -26,6 +27,19 @@ type UserRecord = {
   lastLoginAt: Date | null;
   createdAt: Date;
 };
+
+async function retryTransientTransaction<T>(operation: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const retryable = error instanceof Prisma.PrismaClientKnownRequestError &&
+        (error.code === 'P1008' || error.code === 'P2034');
+      if (!retryable || attempt + 1 >= maxAttempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (2 ** attempt)));
+    }
+  }
+}
 
 function publicUser(user: UserRecord) {
   return {
@@ -57,11 +71,11 @@ export async function register(
   if (!policy.registrationEnabled) throw new AppError(ErrorCode.AUTH_REGISTRATION_DISABLED, policy.registrationDisabledMessage, 403);
   const privacyEnforced = ensurePrivacyConsent(input.privacyAccepted, input.privacyVersion, policy, meta.channel, input.appVersionCode);
   if (policy.inviteRequired && !input.inviteCode) throw new AppError(ErrorCode.INVITE_REQUIRED, policy.inviteRequiredMessage, 422);
+  const existing = await prisma.userAccount.findUnique({ where: { username: input.username }, select: { id: true } });
+  if (existing) throw AppError.conflict('用户名已被使用');
   const passwordHash = await hashPassword(input.password);
 
-  const user = await prisma.$transaction(async (tx) => {
-    const existing = await tx.userAccount.findUnique({ where: { username: input.username } });
-    if (existing) throw AppError.conflict('用户名已被使用');
+  const user = await retryTransientTransaction(() => prisma.$transaction(async (tx) => {
     const created = await tx.userAccount.create({
       data: {
         username: input.username,
@@ -92,7 +106,12 @@ export async function register(
       } });
     }
     return created;
-  }, { maxWait: 30_000, timeout: 30_000 });
+  }, { maxWait: 30_000, timeout: 30_000 })).catch((error: unknown) => {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw AppError.conflict('用户名已被使用');
+    }
+    throw error;
+  });
   return sessionResult(user, signToken);
 }
 
