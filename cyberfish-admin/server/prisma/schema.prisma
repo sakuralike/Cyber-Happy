@@ -474,6 +474,8 @@ model Misreport {
   thumbnailUrl String?
   snapshotUrls String @default("[]") // JSON array
   videoUrl     String?
+  snapshotAssetIds String @default("[]") // JSON array of FileAsset IDs
+  videoAssetId    String?
 
   sceneTags String @default("[]") // JSON array
 

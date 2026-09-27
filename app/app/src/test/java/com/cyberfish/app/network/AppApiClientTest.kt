@@ -139,7 +139,7 @@ class AppApiClientTest {
         val snapshot = File.createTempFile("misreport-", ".jpg")
         snapshot.writeBytes(byteArrayOf(1, 2, 3))
         try {
-            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"code":0,"message":"ok","data":{"url":"/files/snapshot.jpg"}}"""))
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"code":0,"message":"ok","data":{"id":"asset-snapshot","url":"/files/snapshot.jpg"}}"""))
             server.enqueue(MockResponse().setResponseCode(201).setBody("""{"code":0,"message":"ok","data":{"id":"report-123"}}"""))
 
             val result = client(testSession()).submitMisreport(
@@ -161,7 +161,11 @@ class AppApiClientTest {
             assertEquals("IMAGE", upload.requestUrl?.queryParameter("bizType"))
             assertEquals("Bearer user-token", upload.getHeader("Authorization"))
             assertEquals("test-app-token", upload.getHeader("X-App-Token"))
-            assertEquals("Bearer user-token", server.takeRequest().getHeader("Authorization"))
+            val report = server.takeRequest()
+            assertEquals("Bearer user-token", report.getHeader("Authorization"))
+            val payload = JSONObject(report.body.readUtf8())
+            assertEquals("asset-snapshot", payload.getJSONArray("snapshotAssetIds").getString(0))
+            assertFalse(payload.has("snapshotUrls"))
         } finally {
             snapshot.delete()
         }

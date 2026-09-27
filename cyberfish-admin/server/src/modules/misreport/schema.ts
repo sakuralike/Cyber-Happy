@@ -67,6 +67,15 @@ export const createMisreportSchema = z.object({
   sceneTags: z.array(z.string().max(30)).max(20).optional(),
   snapshotUrls: z.array(z.string().max(500)).max(3).optional(),
   videoUrl: z.string().max(500).optional(),
+  snapshotAssetIds: z.array(z.string().trim().min(1).max(100)).max(3).optional(),
+  videoAssetId: z.string().trim().min(1).max(100).optional(),
+}).superRefine((input, context) => {
+  if (input.snapshotAssetIds?.length && input.snapshotUrls?.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['snapshotAssetIds'], message: '图片媒体不能同时使用 asset ID 和 URL' });
+  }
+  if (input.videoAssetId && input.videoUrl) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['videoAssetId'], message: '视频媒体不能同时使用 asset ID 和 URL' });
+  }
 });
 
 export type MisreportListQuery = z.infer<typeof misreportListSchema>;

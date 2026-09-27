@@ -461,7 +461,7 @@ function DetailDrawer({
       </Typography.Title>
       <Space wrap>
         {(data.snapshotUrls ?? []).length ? (
-          data.snapshotUrls.map((u, i) => <ProtectedImage key={i} src={u} width={160} />)
+          data.snapshotUrls.map((u, i) => <ProtectedImage key={i} src={data.snapshotAssetIds?.[i] ? `/api/v1/files/${data.snapshotAssetIds[i]}/download` : u} width={160} />)
         ) : (
           <Typography.Text type="secondary">暂无截图</Typography.Text>
         )}
@@ -472,7 +472,7 @@ function DetailDrawer({
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             视频
           </Typography.Title>
-          <ProtectedVideo src={data.videoUrl} />
+          <ProtectedVideo src={data.videoAssetId ? `/api/v1/files/${data.videoAssetId}/download` : data.videoUrl} />
         </>
       )}
 

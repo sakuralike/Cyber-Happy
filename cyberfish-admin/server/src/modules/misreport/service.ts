@@ -14,49 +14,79 @@ import type {
   CreateMisreportInput,
 } from './schema';
 
-function normalize<T extends { rawData?: string | null; snapshotUrls?: string | null; sceneTags?: string | null }>(row: T) {
+function normalize<T extends { rawData?: string | null; snapshotUrls?: string | null; snapshotAssetIds?: string | null; sceneTags?: string | null }>(row: T) {
   return {
     ...row,
     rawData: parseJson<Record<string, unknown>>(row.rawData ?? '{}', {}),
     snapshotUrls: parseJson<string[]>(row.snapshotUrls ?? '[]', []),
+    snapshotAssetIds: parseJson<string[]>(row.snapshotAssetIds ?? '[]', []),
     sceneTags: parseJson<string[]>(row.sceneTags ?? '[]', []),
   };
 }
 
 async function validateMediaAssets(
+  snapshotAssetIds: string[],
+  videoAssetId: string | undefined,
   snapshotUrls: string[],
   videoUrl: string | undefined,
   ownerUserId: string,
   deviceId: string,
-): Promise<void> {
+): Promise<{ snapshotUrls: string[]; snapshotAssetIds: string[]; videoUrl: string | null; videoAssetId: string | null }> {
+  const imageIds = [...new Set(snapshotAssetIds.map((value) => value.trim()).filter(Boolean))];
+  const videoIds = videoAssetId?.trim() ? [videoAssetId.trim()] : [];
   const imageUrls = [...new Set(snapshotUrls.map((value) => value.trim()).filter(Boolean))];
   const videoUrls = videoUrl?.trim() ? [videoUrl.trim()] : [];
-  const requested = [...imageUrls, ...videoUrls];
-  if (!requested.length) return;
+  const assetIds = [...imageIds, ...videoIds];
+  const requestedUrls = [...imageUrls, ...videoUrls];
+  if (!assetIds.length && !requestedUrls.length) return { snapshotUrls: [], snapshotAssetIds: [], videoUrl: null, videoAssetId: null };
   if (!ownerUserId.trim() || !deviceId.trim()) throw AppError.forbidden('误报媒体缺少用户或设备归属');
-  if (requested.some((value) => !value.startsWith('/files/'))) {
+  if (requestedUrls.some((value) => !value.startsWith('/files/'))) {
     throw AppError.badRequest('误报媒体必须使用平台文件地址');
   }
   const assets = await prisma.fileAsset.findMany({
     where: {
-      url: { in: requested },
+      OR: [
+        ...(assetIds.length ? [{ id: { in: assetIds } }] : []),
+        ...(requestedUrls.length ? [{ url: { in: requestedUrls } }] : []),
+      ],
       ownerUserId,
       deviceId,
       status: 'READY',
     },
-    select: { url: true, bizType: true, mimeType: true, size: true },
+    select: { id: true, url: true, bizType: true, mimeType: true, size: true },
   });
+  const byId = new Map(assets.map((asset) => [asset.id, asset]));
   const byUrl = new Map(assets.map((asset) => [asset.url, asset]));
-  for (const url of imageUrls) {
-    assertMediaAsset(byUrl.get(url), FileBizType.IMAGE);
-  }
-  for (const url of videoUrls) {
-    assertMediaAsset(byUrl.get(url), FileBizType.VIDEO);
-  }
+  const resolvedSnapshotAssets = [
+    ...imageIds.map((id) => {
+      const asset = byId.get(id);
+      assertMediaAsset(asset, FileBizType.IMAGE);
+      return asset!;
+    }),
+    ...imageUrls.map((url) => {
+      const asset = byUrl.get(url);
+      assertMediaAsset(asset, FileBizType.IMAGE);
+      return asset!;
+    }),
+  ];
+  const resolvedVideoAsset = videoIds.length
+    ? (() => {
+      const asset = byId.get(videoIds[0]);
+      assertMediaAsset(asset, FileBizType.VIDEO);
+      return asset!;
+    })()
+    : videoUrls.length ? byUrl.get(videoUrls[0]) ?? null : null;
+  if (videoUrls.length) assertMediaAsset(resolvedVideoAsset, FileBizType.VIDEO);
+  return {
+    snapshotUrls: resolvedSnapshotAssets.map((asset) => asset.url),
+    snapshotAssetIds: resolvedSnapshotAssets.map((asset) => asset.id),
+    videoUrl: resolvedVideoAsset?.url ?? null,
+    videoAssetId: resolvedVideoAsset?.id ?? null,
+  };
 }
 
 function assertMediaAsset(
-  asset: { bizType: string; mimeType: string; size: bigint } | undefined,
+  asset: { bizType: string; mimeType: string; size: bigint } | null | undefined,
   expectedType: FileBizType,
 ): void {
   const rule = uploadRule(expectedType);
@@ -354,8 +384,15 @@ export async function stats() {
 // ============================================================
 
 export async function create(input: CreateMisreportInput) {
-  const snapshotUrls = input.snapshotUrls ?? [];
-  await validateMediaAssets(snapshotUrls, input.videoUrl, input.userId, input.deviceId);
+  const media = await validateMediaAssets(
+    input.snapshotAssetIds ?? [],
+    input.videoAssetId,
+    input.snapshotUrls ?? [],
+    input.videoUrl,
+    input.userId,
+    input.deviceId,
+  );
+  const snapshotUrls = media.snapshotUrls;
   const reportNo = await nextReportNo();
   const created = await prisma.misreport.create({
     data: {
@@ -373,7 +410,9 @@ export async function create(input: CreateMisreportInput) {
       rawData: JSON.stringify(input.rawData ?? {}),
       sceneTags: JSON.stringify(input.sceneTags ?? []),
       snapshotUrls: JSON.stringify(snapshotUrls),
-      videoUrl: input.videoUrl ?? null,
+      videoUrl: media.videoUrl,
+      snapshotAssetIds: JSON.stringify(media.snapshotAssetIds),
+      videoAssetId: media.videoAssetId,
       thumbnailUrl: snapshotUrls[0] ?? null,
       reportedAt: input.reportedAt ? new Date(input.reportedAt) : new Date(),
       status: MisreportStatus.PENDING,

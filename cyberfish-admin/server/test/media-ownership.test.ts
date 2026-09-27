@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createMisreportSchema } from '../src/modules/misreport/schema';
 
 const serverDir = process.cwd();
 const testDir = mkdtempSync(join(serverDir, 'prisma', 'media-ownership-'));
@@ -36,7 +37,7 @@ function assetData(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function reportInput(userId: string, deviceId: string, media: { snapshotUrls?: string[]; videoUrl?: string } = {}) {
+function reportInput(userId: string, deviceId: string, media: { snapshotUrls?: string[]; videoUrl?: string; snapshotAssetIds?: string[]; videoAssetId?: string } = {}) {
   return {
     userId,
     deviceId,
@@ -44,6 +45,8 @@ function reportInput(userId: string, deviceId: string, media: { snapshotUrls?: s
     severity: 'MEDIUM' as const,
     snapshotUrls: media.snapshotUrls,
     videoUrl: media.videoUrl,
+    snapshotAssetIds: media.snapshotAssetIds,
+    videoAssetId: media.videoAssetId,
   };
 }
 
@@ -66,6 +69,14 @@ after(async () => {
 });
 
 describe('media ownership and idempotency', () => {
+  it('accepts ID-based and legacy URL-based media API payloads', () => {
+    const base = { deviceId: 'device-a', userId: userA.id, reportType: 'FALSE_POSITIVE' as const };
+    assert.equal(createMisreportSchema.safeParse({ ...base, snapshotAssetIds: ['asset-image'], videoAssetId: 'asset-video' }).success, true);
+    assert.equal(createMisreportSchema.safeParse({ ...base, snapshotUrls: ['/files/image.jpg'], videoUrl: '/files/video.mp4' }).success, true);
+    assert.equal(createMisreportSchema.safeParse({ ...base, snapshotAssetIds: ['asset-image'], snapshotUrls: ['/files/image.jpg'] }).success, false);
+    assert.equal(createMisreportSchema.safeParse({ ...base, videoAssetId: 'asset-video', videoUrl: '/files/video.mp4' }).success, false);
+  });
+
   it('accepts READY media only for the same user and device', async () => {
     const image = await prisma.fileAsset.create({ data: assetData() });
     const video = await prisma.fileAsset.create({
@@ -92,6 +103,34 @@ describe('media ownership and idempotency', () => {
     );
     await assert.rejects(
       service.create(reportInput(userA.id, 'device-other', { snapshotUrls: [image.url] })),
+      (error: unknown) => error instanceof Error && error.message.includes('不存在、未就绪'),
+    );
+  });
+
+  it('accepts media asset IDs and resolves them to the existing report URL fields', async () => {
+    const image = await prisma.fileAsset.create({ data: assetData() });
+    const video = await prisma.fileAsset.create({
+      data: assetData({
+        bizType: 'VIDEO',
+        originalName: 'clip.mp4',
+        filename: 'clip.mp4',
+        url: `/files/videos/${crypto.randomUUID()}.mp4`,
+        mimeType: 'video/mp4',
+        size: BigInt(256),
+      }),
+    });
+
+    const created = await service.create(reportInput(userA.id, 'device-a', {
+      snapshotAssetIds: [image.id],
+      videoAssetId: video.id,
+    }));
+    assert.deepEqual(created.snapshotUrls, [image.url]);
+    assert.deepEqual(created.snapshotAssetIds, [image.id]);
+    assert.equal(created.videoUrl, video.url);
+    assert.equal(created.videoAssetId, video.id);
+
+    await assert.rejects(
+      service.create(reportInput(userB.id, 'device-b', { snapshotAssetIds: [image.id] })),
       (error: unknown) => error instanceof Error && error.message.includes('不存在、未就绪'),
     );
   });

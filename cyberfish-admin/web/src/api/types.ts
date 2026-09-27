@@ -217,6 +217,8 @@ export interface Misreport {
   thumbnailUrl: string | null;
   snapshotUrls: string[];
   videoUrl: string | null;
+  snapshotAssetIds: string[];
+  videoAssetId: string | null;
   sceneTags: string[];
   rootCause: RootCause | null;
   groundTruth: GroundTruth | null;

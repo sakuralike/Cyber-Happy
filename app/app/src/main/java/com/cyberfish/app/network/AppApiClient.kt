@@ -570,7 +570,7 @@ class AppApiClient(
             .put("jitterHz", record.jitterHz)
             .put("confidence", record.confidence)
             .put("trajectoryPx", JSONArray(record.trajectoryCsv.split(',').mapNotNull { it.toDoubleOrNull() }))
-        val snapshotUrls = when (val result = record.snapshotPath?.let { uploadMedia(File(it), "IMAGE", session.token) }) {
+        val snapshotAssetIds = when (val result = record.snapshotPath?.let { uploadMedia(File(it), "IMAGE", session.token) }) {
             null -> emptyList()
             is ApiResult.Success -> listOf(result.value)
             ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
@@ -578,7 +578,7 @@ class AppApiClient(
             is ApiResult.NetworkError -> return@withContext ApiResult.NetworkError(result.message)
             is ApiResult.ParseError -> return@withContext ApiResult.ParseError(result.message)
         }
-        val videoUrl = when (val result = record.videoPath?.let { uploadMedia(File(it), "VIDEO", session.token) }) {
+        val videoAssetId = when (val result = record.videoPath?.let { uploadMedia(File(it), "VIDEO", session.token) }) {
             null -> null
             is ApiResult.Success -> result.value
             ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
@@ -600,8 +600,8 @@ class AppApiClient(
             .put("reportedAt", Instant.ofEpochMilli(record.occurredAtMillis).toString())
             .put("rawData", rawData)
             .put("sceneTags", JSONArray(listOf(record.modelVersion, "user-confirmed")))
-            .put("snapshotUrls", JSONArray(snapshotUrls))
-        videoUrl?.let { body.put("videoUrl", it) }
+            .put("snapshotAssetIds", JSONArray(snapshotAssetIds))
+        videoAssetId?.let { body.put("videoAssetId", it) }
         val requestUrl = config.endpoint("api/v1/misreports").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
         val request = Request.Builder()
@@ -949,7 +949,7 @@ class AppApiClient(
             Request.Builder().url(requestUrl).post(multipart).appToken(config.appToken).userToken(userToken)
                 .header("X-Device-Content-SHA256", contentSha256)
                 .build(),
-        ) { data -> data.optString("url").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("媒体上传响应缺少 url") }
+        ) { data -> data.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("媒体上传响应缺少 id") }
     }
 
     private fun sha256(file: File): String {
