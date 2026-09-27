@@ -21,12 +21,16 @@ const routes: FastifyPluginAsync = async (app) => {
     if ((request as FastifyRequest & { isAppClient?: boolean }).isAppClient) return;
     return readPermission(request, reply);
   };
+  const adminOrDeviceAuth = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (request.currentUser) return;
+    return requireDeviceAuth(app, 'media:write')(request, reply);
+  };
 
   /** 统一文件上传：multipart/form-data，字段 bizType + file */
-  app.post('/upload', { onRequest: [uploadGuard], preValidation: [requireDeviceAuth(app, 'media:write')] }, async (request, reply) => {
+  app.post('/upload', { onRequest: [uploadGuard], preValidation: [adminOrDeviceAuth] }, async (request, reply) => {
     const { bizType } = parseOrThrow(uploadQuerySchema, request.query);
-    const appUser = await app.resolveAppUser(request);
-    if (!appUser) throw AppError.unauthorized('媒体上传需要用户登录');
+    const appUser = request.currentUser ? undefined : await app.resolveAppUser(request);
+    if (!appUser && !request.currentUser) throw AppError.unauthorized('媒体上传需要用户登录');
     const deviceContentHash = typeof request.headers['x-device-content-sha256'] === 'string'
       ? request.headers['x-device-content-sha256'].trim()
       : '';
@@ -54,9 +58,9 @@ const routes: FastifyPluginAsync = async (app) => {
         bizType,
         part.filename || 'unknown',
         part.mimetype,
-        undefined,
+        request.currentUser?.id,
         deviceContentHash || undefined,
-        appUser.id,
+        appUser?.id,
         deviceId,
         idempotencyKey,
       );

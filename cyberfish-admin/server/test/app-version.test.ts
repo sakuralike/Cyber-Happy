@@ -154,6 +154,41 @@ describe('app version download modes', () => {
     }
   });
 
+  it('allows an authorized admin to upload an APK for version management', async () => {
+    const admin = await prisma.adminUser.create({
+      data: { username: `apk-upload-${Date.now()}`, passwordHash: 'test', displayName: 'APK 上传管理员', role: 'ADMIN' },
+    });
+    const app = await buildApp();
+    try {
+      const token = app.jwt.sign({ sub: admin.id, role: 'ADMIN', username: admin.username }, { expiresIn: '5m' });
+      const boundary = `----cyberfish-${Date.now()}`;
+      const apk = Buffer.from('signed-apk-fixture');
+      const body = Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="release.apk"\r\nContent-Type: application/vnd.android.package-archive\r\n\r\n`),
+        apk,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]);
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/files/upload?bizType=APK',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload: body,
+      });
+      assert.equal(response.statusCode, 201, response.body);
+      const asset = response.json().data;
+      assert.equal(asset.bizType, 'APK');
+      assert.equal(asset.size, apk.length);
+      const stored = await prisma.fileAsset.findUniqueOrThrow({ where: { id: asset.id } });
+      assert.equal(stored.uploadedById, admin.id);
+      assert.equal(stored.ownerUserId, null);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('clears mode-specific metadata when switching back to an external link', async () => {
     const apk = await createApk('beta-release', 'c'.repeat(64), 4321);
     const created = await service.create({
