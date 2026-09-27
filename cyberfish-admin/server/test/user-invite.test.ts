@@ -139,6 +139,40 @@ describe('user login and invitation registration controls', { concurrency: false
     await setPolicy({ 'auth.privacyRequired': false });
   });
 
+  it('requires an already signed-in user to accept a newly published privacy version', async () => {
+    const { hashPassword } = await import('../src/lib/hash');
+    const user = await prisma.userAccount.create({
+      data: { username: 'privacy-upgrade', passwordHash: await hashPassword('secret123'), displayName: 'privacy-upgrade' },
+    });
+    await prisma.userConsent.create({ data: { userId: user.id, consentType: 'USER_ACCESS', policyVersion: 'privacy-v1' } });
+    await setPolicy({ 'auth.privacyRequired': true, 'auth.privacyVersion': 'privacy-v2' });
+
+    const token = app.jwt.sign({ sub: user.id, username: user.username, kind: 'APP_USER' }, { expiresIn: '5m' });
+    const headers = { authorization: `Bearer ${token}` };
+    const status = await app.inject({ method: 'GET', url: '/api/v1/users/me/consent', headers });
+    assert.equal(status.statusCode, 200, status.body);
+    assert.deepEqual(status.json().data, {
+      privacyRequired: true,
+      currentVersion: 'privacy-v2',
+      consented: false,
+      required: true,
+      acceptedVersion: 'privacy-v1',
+      acceptedAt: status.json().data.acceptedAt,
+    });
+
+    const stale = await app.inject({ method: 'POST', url: '/api/v1/users/me/consent', headers, payload: { privacyAccepted: true, privacyVersion: 'privacy-v1' } });
+    assert.equal(stale.statusCode, 422);
+    assert.equal(stale.json().code, 42214);
+
+    const accepted = await app.inject({ method: 'POST', url: '/api/v1/users/me/consent', headers, payload: { privacyAccepted: true, privacyVersion: 'privacy-v2' } });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    assert.equal(accepted.json().data.required, false);
+    assert.equal(accepted.json().data.acceptedVersion, 'privacy-v2');
+    assert.equal(await prisma.userConsent.count({ where: { userId: user.id, policyVersion: 'privacy-v2' } }), 1);
+
+    await setPolicy({ 'auth.privacyRequired': false, 'auth.privacyVersion': 'privacy-v1' });
+  });
+
   it('creates codes once, hides secrets from list responses, and revokes future redemption', async () => {
     await setPolicy({ 'auth.registrationEnabled': true, 'auth.inviteRequired': true });
     const created = await app.inject({

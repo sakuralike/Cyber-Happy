@@ -73,6 +73,22 @@ class PublicKeyModelSignatureVerifier(
     override fun verifyBytes(bytes: ByteArray, descriptor: NcnnModelDescriptor): Boolean =
         runCatching { ByteArrayInputStream(bytes).use { verifyStream(it, descriptor) } }.getOrDefault(false)
 
+    fun verifyManifestHash(manifestHash: String, signature: String, algorithm: String, publicKeyId: String): Boolean {
+        if (algorithm != ECDSA_P256_SHA256) return false
+        val keyText = publicKeys[publicKeyId] ?: return false
+        return runCatching {
+            val publicKey: PublicKey = KeyFactory.getInstance("EC")
+                .generatePublic(X509EncodedKeySpec(decodeBase64(keyText)))
+            val ecKey = publicKey as? ECPublicKey ?: return false
+            if (ecKey.params.order.bitLength() != P256_BIT_LENGTH || ecKey.params.curve.field.fieldSize != P256_BIT_LENGTH) return false
+            Signature.getInstance("SHA256withECDSA").run {
+                initVerify(publicKey)
+                update(manifestHash.toByteArray(Charsets.UTF_8))
+                verify(decodeBase64(signature))
+            }
+        }.getOrDefault(false)
+    }
+
     private fun verifyStream(input: java.io.InputStream, descriptor: NcnnModelDescriptor): Boolean {
         val signatureText = descriptor.signature ?: return false
         val keyText = publicKeys[descriptor.publicKeyId] ?: return false
@@ -126,12 +142,16 @@ class ModelRepository(
     private val modelKeyProvider: ModelKeyProvider? = null,
     private val allowInsecureHttp: Boolean = false,
     private val allowUnencryptedModels: Boolean = true,
+    private val expectedDeviceId: String? = null,
+    private val allowLegacyV1: Boolean = false,
+    private val manifestVerifier: ModelManifestVerifier? = null,
 ) {
     private val stateFlow = MutableStateFlow(readState())
     private val mutationMutex = Mutex()
     private val lastProgressReport = AtomicLong(0L)
     @Volatile
     private var pendingUpdate: ModelUpdateInfo? = null
+    private val highestGenerationFile = File(storageDir, "highest-generation.txt")
     val state: StateFlow<ModelState> = stateFlow.asStateFlow()
 
     init {
@@ -232,6 +252,9 @@ class ModelRepository(
         if (!update.encrypted && !allowUnencryptedModels) {
             return fail("ENCRYPTION_REQUIRED", "生产模型必须使用设备加密下发", false)
         }
+        if (descriptor.generation < highestAcceptedGeneration()) {
+            return fail("MODEL_ROLLBACK_REJECTED", "模型 generation 低于设备已接受版本", false)
+        }
         val downloadUrl = update.downloadUrl.trim()
         if (!isAllowedUrl(downloadUrl)) return fail("INSECURE_URL", "模型下载必须使用 HTTPS", false)
 
@@ -273,7 +296,20 @@ class ModelRepository(
                 report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "ENCRYPTION_UNAVAILABLE", errorMessage = "设备模型密钥不可用")
                 return fail("ENCRYPTION_UNAVAILABLE", "设备模型密钥不可用", false)
             }
-            runCatching { EncryptedModelContainer.decrypt(partFile, provider, expectedModelVersion = descriptor.modelVersion) }
+            runCatching {
+                EncryptedModelContainer.decrypt(
+                    partFile,
+                    provider,
+                    expectedDeviceId = expectedDeviceId ?: descriptor.deviceId,
+                    expectedModelVersion = descriptor.modelVersion,
+                    expectedModelId = descriptor.modelId,
+                    expectedGeneration = descriptor.generation,
+                    expectedManifestHash = descriptor.manifestHash,
+                    expectedDescriptor = descriptor,
+                    manifestVerifier = manifestVerifier,
+                    allowLegacyV1 = allowLegacyV1,
+                )
+            }
                 .getOrElse {
                     partFile.delete()
                     report(update.dispatchId, ModelDispatchStatus.FAILED, errorCode = "DECRYPT_FAILED", errorMessage = "模型解密失败")
@@ -309,6 +345,7 @@ class ModelRepository(
             atomicMove(partFile, modelFile)
             atomicWrite(metadataFile, descriptor.toStoredJson(update.encrypted))
             detectorSlot.replace(nextDetector)
+            persistHighestGeneration(descriptor.generation)
             plaintext?.fill(0)
             updateState(ModelState(ModelInstallStatus.READY, descriptor.modelVersion, 100))
             report(update.dispatchId, ModelDispatchStatus.SUCCESS, 100)
@@ -338,6 +375,9 @@ class ModelRepository(
             val descriptor = stored.descriptor
             val contract = NcnnModelContract.validate(descriptor)
             require(contract.isValid) { contract.errors.joinToString("；") }
+            if (descriptor.generation < highestAcceptedGeneration()) {
+                throw IllegalStateException("模型 generation 低于设备已接受版本")
+            }
             val nextDetector = createVerifiedDetector(previousFile, stored)
             rollbackInternal(activeFile, previousFile, activeMetadata, previousMetadata)
             detectorSlot.replace(nextDetector)
@@ -350,6 +390,14 @@ class ModelRepository(
     }
 
     fun activeVersion(): String? = readStoredModel()?.descriptor?.modelVersion
+
+    fun highestAcceptedGeneration(): Long {
+        val persisted = runCatching {
+            highestGenerationFile.takeIf { it.isFile }?.readText()?.trim()?.toLong()
+        }.getOrNull() ?: 0L
+        val active = readStoredModel()?.descriptor?.generation ?: 0L
+        return maxOf(persisted, active)
+    }
 
     private fun currentVersionForCheck(): String? = activeVersion().takeIf {
         stateFlow.value.status == ModelInstallStatus.READY || stateFlow.value.status == ModelInstallStatus.ROLLED_BACK
@@ -388,6 +436,11 @@ class ModelRepository(
         stateFlow.value = next
     }
 
+    private fun persistHighestGeneration(generation: Long) {
+        if (generation < highestAcceptedGeneration()) return
+        atomicWrite(highestGenerationFile, generation.toString())
+    }
+
     private fun readState(): ModelState = readStoredModel()?.let { ModelState(ModelInstallStatus.READY, it.descriptor.modelVersion, 100) }
         ?: ModelState(ModelInstallStatus.NO_MODEL, "NCNN_NOT_READY")
 
@@ -401,9 +454,21 @@ class ModelRepository(
     private fun createVerifiedDetector(file: File, stored: StoredModelMetadata): CloseableDetector {
         val descriptor = stored.descriptor
         require(stored.encrypted || allowUnencryptedModels) { "生产模型必须使用设备加密下发" }
+        require(descriptor.generation >= highestAcceptedGeneration()) { "模型 generation 低于设备已接受版本" }
         val plaintext = if (stored.encrypted) {
             val provider = modelKeyProvider ?: error("设备模型密钥不可用")
-            EncryptedModelContainer.decrypt(file, provider, expectedModelVersion = descriptor.modelVersion)
+            EncryptedModelContainer.decrypt(
+                file,
+                provider,
+                expectedDeviceId = expectedDeviceId ?: descriptor.deviceId,
+                expectedModelVersion = descriptor.modelVersion,
+                expectedModelId = descriptor.modelId,
+                expectedGeneration = descriptor.generation,
+                expectedManifestHash = descriptor.manifestHash,
+                expectedDescriptor = descriptor,
+                manifestVerifier = manifestVerifier,
+                allowLegacyV1 = allowLegacyV1,
+            )
         } else null
         return try {
             require((plaintext?.let(::sha256) ?: sha256(file)).equals(descriptor.sha256, ignoreCase = true)) { "模型 SHA-256 校验失败" }
@@ -495,6 +560,10 @@ private fun NcnnModelDescriptor.toStoredJson(encrypted: Boolean): String = org.j
         .put("inputSize", inputSize)
         .put("labels", org.json.JSONArray(labels))
         .put("sha256", sha256)
+        .put("modelId", modelId)
+        .put("deviceId", deviceId)
+        .put("generation", generation)
+        .put("manifestHash", manifestHash)
         .put("inputName", inputName)
         .put("outputName", outputName)
         .put("outputLayout", outputLayout)
@@ -525,6 +594,10 @@ private fun ncnnModelDescriptorFromJson(raw: String): NcnnModelDescriptor {
         inputSize = data.optInt("inputSize", 0),
         labels = labels,
         sha256 = data.optString("sha256"),
+        modelId = data.optString("modelId").takeIf { it.isNotBlank() },
+        deviceId = data.optString("deviceId").takeIf { it.isNotBlank() },
+        generation = data.optLong("generation", 0L),
+        manifestHash = data.optString("manifestHash").takeIf { it.isNotBlank() },
         inputName = data.optStoredContractString("inputName", DEFAULT_NCNN_INPUT_NAME),
         outputName = data.optStoredContractString("outputName", DEFAULT_NCNN_OUTPUT_NAME),
         outputLayout = data.optStoredContractString("outputLayout", NCNN_OUTPUT_LAYOUT_FIELDS_BY_CANDIDATES),

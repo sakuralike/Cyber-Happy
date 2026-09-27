@@ -4,6 +4,7 @@ import com.cyberfish.app.data.local.FishRecordEntity
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.Request
 import org.json.JSONObject
 import com.cyberfish.app.update.ModelKeyMaterial
 import com.cyberfish.app.update.ModelKeyProvider
@@ -175,6 +176,46 @@ class AppApiClientTest {
         val failure = result as ApiResult.HttpError
         assertEquals(401, failure.statusCode)
         assertEquals("APP token 无效", failure.message)
+    }
+
+    @Test
+    fun `user 401 clears the user session once`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"code":40101,"message":"登录已过期","data":null}"""))
+        val sessions = RecordingSessionProvider(testSession())
+
+        val result = client(sessionProvider = sessions).fetchPrivacyConsent()
+
+        assertEquals(401, (result as ApiResult.HttpError).statusCode)
+        assertEquals(1, sessions.clearCount)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `device 401 clears token and retries exactly once`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"code":40102,"message":"设备令牌无效","data":null}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"code":0,"message":"ok","data":{"hasUpdate":false}}"""))
+        val deviceAuth = RecordingDeviceAuthenticator()
+
+        val result = client(deviceAuthClient = deviceAuth).checkForUpdate()
+
+        assertTrue(result is ApiResult.Success)
+        assertEquals(2, deviceAuth.authorizeCount)
+        assertEquals(1, deviceAuth.clearCount)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `device auth failure does not retry indefinitely`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"code":40302,"message":"设备已撤销","data":null}"""))
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"code":40302,"message":"设备已撤销","data":null}"""))
+        val deviceAuth = RecordingDeviceAuthenticator()
+
+        val result = client(deviceAuthClient = deviceAuth).checkForUpdate()
+
+        assertEquals(403, (result as ApiResult.HttpError).statusCode)
+        assertEquals(2, deviceAuth.authorizeCount)
+        assertEquals(1, deviceAuth.clearCount)
+        assertEquals(2, server.requestCount)
     }
 
     @Test
@@ -426,7 +467,11 @@ class AppApiClientTest {
         ),
     )
 
-    private fun client(session: UserSession? = null) = AppApiClient(
+    private fun client(
+        session: UserSession? = null,
+        sessionProvider: UserSessionProvider? = null,
+        deviceAuthClient: DeviceRequestAuthenticator? = null,
+    ) = AppApiClient(
         config = ApiConfig(server.url("/").toString(), "test-app-token"),
         identityStore = object : DeviceIdentityProvider {
             override suspend fun get() = DeviceIdentity(
@@ -436,8 +481,34 @@ class AppApiClientTest {
                 osVersion = "Android 14",
             )
         },
-        userSessionProvider = object : UserSessionProvider {
+        userSessionProvider = sessionProvider ?: object : UserSessionProvider {
             override suspend fun get() = session
         },
+        deviceAuthClient = deviceAuthClient,
     )
+
+    private class RecordingSessionProvider(private var session: UserSession?) : UserSessionProvider {
+        var clearCount = 0
+
+        override suspend fun get() = session
+
+        override suspend fun clear() {
+            clearCount++
+            session = null
+        }
+    }
+
+    private class RecordingDeviceAuthenticator : DeviceRequestAuthenticator {
+        var authorizeCount = 0
+        var clearCount = 0
+
+        override suspend fun authorize(request: Request): ApiResult<Request> {
+            authorizeCount++
+            return ApiResult.Success(request)
+        }
+
+        override fun clear() {
+            clearCount++
+        }
+    }
 }

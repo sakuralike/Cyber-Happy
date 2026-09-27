@@ -11,6 +11,7 @@ import type {
   FeedbackListQuery,
   ForgotPasswordInput,
   LoginInput,
+  PrivacyConsentInput,
   RegisterInput,
   UpdateMeInput,
 } from './schema';
@@ -162,8 +163,61 @@ async function authPolicy() {
     registrationDisabledMessage: String(data['auth.registrationDisabledMessage'] || '用户注册暂未开放，请联系管理员'),
     inviteRequiredMessage: String(data['auth.inviteRequiredMessage'] || '当前注册需要邀请码'),
     privacyRequired: data['auth.privacyRequired'] !== false,
-    privacyVersion: 'privacy-v1',
+    privacyVersion: String(data['auth.privacyVersion'] || 'privacy-v1'),
   };
+}
+
+export async function getConsentStatus(userId: string) {
+  const policy = await authPolicy();
+  const consent = await prisma.userConsent.findFirst({
+    where: { userId, consentType: 'USER_ACCESS' },
+    orderBy: { acceptedAt: 'desc' },
+    select: { policyVersion: true, acceptedAt: true },
+  });
+  const consented = !policy.privacyRequired || consent?.policyVersion === policy.privacyVersion;
+  return {
+    privacyRequired: policy.privacyRequired,
+    currentVersion: policy.privacyVersion,
+    consented,
+    required: policy.privacyRequired && !consented,
+    acceptedVersion: consent?.policyVersion ?? null,
+    acceptedAt: consent?.acceptedAt ?? null,
+  };
+}
+
+export async function acceptConsent(
+  userId: string,
+  input: PrivacyConsentInput,
+  meta: { ip?: string; userAgent?: string; channel?: string } = {},
+) {
+  const policy = await authPolicy();
+  if (input.privacyVersion !== policy.privacyVersion) {
+    throw new AppError(ErrorCode.PRIVACY_REQUIRED, '请使用当前发布的用户协议与隐私政策', 422);
+  }
+  await prisma.userConsent.upsert({
+    where: {
+      userId_consentType_policyVersion: {
+        userId,
+        consentType: 'USER_ACCESS',
+        policyVersion: policy.privacyVersion,
+      },
+    },
+    create: {
+      userId,
+      consentType: 'USER_ACCESS',
+      policyVersion: policy.privacyVersion,
+      channel: meta.channel ?? 'WEB',
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent?.slice(0, 500) ?? null,
+    },
+    update: {
+      acceptedAt: new Date(),
+      channel: meta.channel ?? 'WEB',
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent?.slice(0, 500) ?? null,
+    },
+  });
+  return getConsentStatus(userId);
 }
 
 export async function forgotPassword(input: ForgotPasswordInput) {

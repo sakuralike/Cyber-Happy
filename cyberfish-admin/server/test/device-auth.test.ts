@@ -26,14 +26,54 @@ let credentialId: string;
 let deviceId: string;
 let signingKeyId: string;
 let deviceToken: string;
+let serverCanonicalJson: (value: unknown) => string;
 
-function canonicalJson(value: unknown): string {
+function quoteCanonicalString(value: string): string {
+  let result = '"';
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    switch (character) {
+      case '"': result += '\\"'; break;
+      case '\\': result += '\\\\'; break;
+      case '\b': result += '\\b'; break;
+      case '\f': result += '\\f'; break;
+      case '\n': result += '\\n'; break;
+      case '\r': result += '\\r'; break;
+      case '\t': result += '\\t'; break;
+      default: {
+        const code = value.charCodeAt(index);
+        result += code < 0x20 ? `\\u${code.toString(16).padStart(4, '0')}` : character;
+      }
+    }
+  }
+  return `${result}"`;
+}
+
+function canonicalNumber(value: number): string {
+  if (!Number.isFinite(value)) throw new Error('non-finite number');
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error('unsafe integer');
+  if (Object.is(value, -0)) return '0';
+  const [coefficient, exponentText] = value.toString().toLowerCase().split('e');
+  if (exponentText === undefined) return coefficient;
+  const sign = coefficient.startsWith('-') ? '-' : '';
+  const unsigned = sign ? coefficient.slice(1) : coefficient;
+  const [integer, fraction = ''] = unsigned.split('.');
+  const digits = integer + fraction;
+  const decimalPosition = integer.length + Number(exponentText);
+  if (decimalPosition <= 0) return `${sign}0.${'0'.repeat(-decimalPosition)}${digits}`;
+  if (decimalPosition >= digits.length) return `${sign}${digits}${'0'.repeat(decimalPosition - digits.length)}`;
+  return `${sign}${digits.slice(0, decimalPosition)}.${digits.slice(decimalPosition)}`;
+}
+
+function androidCanonicalJson(value: unknown): string {
   if (value === undefined) return '';
   if (value === null) return 'null';
-  if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (typeof value === 'string') return quoteCanonicalString(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return canonicalNumber(value);
+  if (Array.isArray(value)) return `[${value.map(androidCanonicalJson).join(',')}]`;
   const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
+  return `{${Object.keys(record).sort().map((key) => `${quoteCanonicalString(key)}:${androidCanonicalJson(record[key])}`).join(',')}}`;
 }
 
 function rfc3986(value: string): string {
@@ -59,7 +99,7 @@ function signedHeaders(input: {
 }) {
   const timestamp = String(input.timestamp ?? Math.floor(Date.now() / 1000));
   const nonce = input.nonce ?? crypto.randomBytes(18).toString('base64url');
-  const bodyHash = crypto.createHash('sha256').update(canonicalJson(input.body), 'utf8').digest('hex');
+  const bodyHash = crypto.createHash('sha256').update(androidCanonicalJson(input.body), 'utf8').digest('hex');
   const url = new URL(input.url, 'http://test.local');
   const canonical = [
     'CYBERFISH-REQUEST-V1',
@@ -88,6 +128,7 @@ before(async () => {
     stdio: 'pipe',
   });
   ({ prisma } = await import('../src/lib/prisma'));
+  ({ canonicalJson: serverCanonicalJson } = await import('../src/modules/device-auth/service'));
   app = await (await import('../src/app')).buildApp();
   const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   signingPrivateKey = pair.privateKey;
@@ -101,6 +142,18 @@ after(async () => {
 });
 
 describe('device credential authentication', () => {
+  it('freezes Android-compatible canonical JSON escaping, ordering, and number form', () => {
+    const value = {
+      z: 'rsa/MIIB/浮漂',
+      a: { unicode: '鱼漂/准备提杆', values: [42, 1.25, 1e-7, null], nested: [[1, 2], ['中鱼']] },
+      'slash/key': 'A/B',
+      escaped: '"\\\n\t',
+    };
+    const expected = '{"a":{"nested":[[1,2],["中鱼"]],"unicode":"鱼漂/准备提杆","values":[42,1.25,0.0000001,null]},"escaped":"\\\"\\\\\\n\\t","slash/key":"A/B","z":"rsa/MIIB/浮漂"}';
+    assert.equal(androidCanonicalJson(value), expected);
+    assert.equal(serverCanonicalJson(value), expected);
+  });
+
   it('enrolls a P-256 credential and exchanges a one-time challenge for a scoped token', async () => {
     deviceId = 'device-auth-1';
     const enroll = await app.inject({
@@ -180,14 +233,19 @@ describe('device credential authentication', () => {
       username: 'device-auth-user', passwordHash: 'not-used', displayName: 'Device User', status: 'ACTIVE',
     } });
     const userToken = app.jwt.sign({ sub: user.id, kind: 'APP_USER' }, { expiresIn: '1h' });
-    const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    let rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    while (!rsa.publicKey.export({ type: 'spki', format: 'der' }).toString('base64').includes('/')) {
+      rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    }
     const body = {
       deviceId,
       publicKey: rsa.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
       algorithm: 'RSA_OAEP_SHA256',
       securityLevel: 'TEE',
       appVersionCode: 146,
+      metadata: { unicode: '浮漂/准备提杆', values: [42, 1.25, 1e-7], nested: [[1, 2], ['中鱼']] },
     };
+    assert.match(body.publicKey, /\//);
     const url = '/api/v1/models/devices/register';
     const headers = { ...signedHeaders({ method: 'POST', url, body }), authorization: `Bearer ${userToken}` };
     const response = await app.inject({ method: 'POST', url, headers, payload: body });

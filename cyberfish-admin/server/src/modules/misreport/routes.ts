@@ -11,6 +11,7 @@ import {
   createMisreportSchema,
 } from './schema';
 import * as service from './service';
+import { assertDeviceId, requireDeviceAuth } from '../device-auth/guard';
 
 const routes: FastifyPluginAsync = async (app) => {
   const readGuard = app.requirePermission('misreport:read');
@@ -64,10 +65,11 @@ const routes: FastifyPluginAsync = async (app) => {
   });
 
   /** APP 端上报 */
-  app.post('/', { onRequest: [app.authenticateUser] }, async (request, reply) => {
+  app.post('/', { onRequest: [app.authenticateUser], preValidation: [requireDeviceAuth(app, 'event:write')] }, async (request, reply) => {
     const appUser = request.currentAppUser;
     if (!appUser) throw AppError.unauthorized('请先登录后上报误报');
     const input = parseOrThrow(createMisreportSchema, request.body);
+    assertDeviceId(request, input.deviceId);
     return sendCreated(reply, await service.create({ ...input, userId: appUser.id }));
   });
 

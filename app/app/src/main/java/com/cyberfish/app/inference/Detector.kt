@@ -174,4 +174,8 @@ interface Detector {
     fun detect(frame: CameraFrame): Detection?
 }
 
+interface RuntimeOptionsDetector : Detector {
+    fun setRuntimeOptions(options: NcnnRuntimeOptions)
+}
+
 interface CloseableDetector : Detector, Closeable

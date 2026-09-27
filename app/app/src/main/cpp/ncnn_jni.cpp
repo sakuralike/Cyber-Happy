@@ -74,7 +74,8 @@ Java_com_cyberfish_app_inference_NcnnNative_create(
     jstring inputName,
     jstring outputName,
     jstring outputLayout,
-    jint valuesPerDetection) {
+    jint valuesPerDetection,
+    jint numThreads) {
     auto model = std::make_unique<NcnnModel>();
     jsize paramLength = paramBytes == nullptr ? 0 : env->GetArrayLength(paramBytes);
     std::string outputLayoutValue;
@@ -88,6 +89,7 @@ Java_com_cyberfish_app_inference_NcnnNative_create(
         return 0;
     }
     model->valuesPerDetection = valuesPerDetection;
+    model->net.opt.num_threads = std::max(1, static_cast<int>(numThreads));
 
     model->param.resize(static_cast<size_t>(paramLength));
     env->GetByteArrayRegion(
@@ -107,6 +109,17 @@ Java_com_cyberfish_app_inference_NcnnNative_create(
         return 0;
     }
     return reinterpret_cast<jlong>(model.release());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_cyberfish_app_inference_NcnnNative_setNumThreads(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jint numThreads) {
+    auto* model = reinterpret_cast<NcnnModel*>(handle);
+    if (model == nullptr) return;
+    model->net.opt.num_threads = std::max(1, static_cast<int>(numThreads));
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL

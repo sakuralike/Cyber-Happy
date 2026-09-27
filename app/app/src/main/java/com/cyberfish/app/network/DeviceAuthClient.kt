@@ -46,10 +46,15 @@ class DeviceAuthClient(
             .header(DEVICE_KEY_ID, access.signingKeyId)
         val body = request.body
         val mediaType = body?.contentType()?.toString().orEmpty().lowercase()
-        if (body == null || mediaType.contains("json")) {
-            val rawBody = if (body == null) "" else Buffer().also(body::writeTo).readUtf8()
-            val canonicalBody = if (rawBody.isBlank()) "" else canonicalJson(rawBody)
-            val bodyHash = sha256Hex(canonicalBody.toByteArray(Charsets.UTF_8))
+        if (body == null || mediaType.contains("json") || mediaType.contains("multipart/")) {
+            val rawBody = if (body == null || mediaType.contains("multipart/")) "" else Buffer().also(body::writeTo).readUtf8()
+            val bodyHash = if (mediaType.contains("multipart/")) {
+                request.header(DEVICE_CONTENT_SHA256)?.lowercase()?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }
+                    ?: return ApiResult.ParseError("媒体摘要缺失或格式无效")
+            } else {
+                val canonicalBody = if (rawBody.isBlank()) "" else canonicalJson(rawBody)
+                sha256Hex(canonicalBody.toByteArray(Charsets.UTF_8))
+            }
             val timestamp = nowMillis() / 1_000L
             val nonce = newDeviceNonce()
             val signature = signingKeyProvider.sign(
@@ -183,6 +188,7 @@ class DeviceAuthClient(
         const val DEVICE_TIMESTAMP = "X-Timestamp"
         const val DEVICE_NONCE = "X-Nonce"
         const val DEVICE_BODY_SHA256 = "X-Body-SHA256"
+        const val DEVICE_CONTENT_SHA256 = "X-Device-Content-SHA256"
         const val DEVICE_SIGNATURE = "X-Device-Signature"
         const val TOKEN_REFRESH_MARGIN_MILLIS = 60_000L
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

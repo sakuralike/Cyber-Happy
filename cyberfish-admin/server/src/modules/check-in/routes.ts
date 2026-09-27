@@ -1,25 +1,21 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { config } from '../../config';
-import { AppError } from '../../lib/errors';
 import { parseOrThrow } from '../../lib/zod';
 import { sendOk, sendPage } from '../../lib/response';
 import { checkInBodySchema, checkInStatsQuerySchema, historySchema, riskEventQuerySchema } from './schema';
 import * as service from './service';
+import { assertDeviceId, requireDeviceAuth } from '../device-auth/guard';
 
 const routes: FastifyPluginAsync = async (app) => {
-  app.get('/check-in/overview', { onRequest: [app.authenticateUser] }, async (request, reply) =>
+  const deviceGuard = requireDeviceAuth(app, 'event:write');
+  app.get('/check-in/overview', { onRequest: [app.authenticateUser], preValidation: [deviceGuard] }, async (request, reply) =>
     sendOk(reply, await service.overview(request.currentAppUser!.id)),
   );
 
   app.post('/check-in', {
-    preValidation: [
-      async (request) => {
-        if (request.headers['x-app-token'] !== config.appApiToken) throw AppError.unauthorized();
-      },
-      app.authenticateUser,
-    ],
+    preValidation: [deviceGuard, app.authenticateUser],
   }, async (request, reply) => {
     const body = parseOrThrow(checkInBodySchema, request.body ?? {});
+    assertDeviceId(request, body.deviceId);
     try {
       const result = await service.checkIn(
         request.currentAppUser!.id,
@@ -38,7 +34,7 @@ const routes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  app.get('/check-in/history', { onRequest: [app.authenticateUser] }, async (request, reply) => {
+  app.get('/check-in/history', { onRequest: [app.authenticateUser], preValidation: [deviceGuard] }, async (request, reply) => {
     const result = await service.history(request.currentAppUser!.id, parseOrThrow(historySchema, request.query));
     return sendPage(reply, result.list, result.total, result.page, result.pageSize);
   });

@@ -36,8 +36,8 @@ class ProfileScreenTest {
                         supportContent = SupportContent(),
                         onOpenFishingSpots = {},
                         onExportRecords = { exportRequested = true },
-                        onLogin = { _, _ -> ApiResult.HttpError(401, "未登录") },
-                        onRegister = { _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onLogin = { _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onRegister = { _, _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
                         onLogout = {},
                         onSubmitFeedback = { _, _ -> ApiResult.HttpError(401, "未登录") },
                     )
@@ -64,8 +64,8 @@ class ProfileScreenTest {
                         supportContent = SupportContent(),
                         onOpenFishingSpots = { opened = true },
                         onExportRecords = {},
-                        onLogin = { _, _ -> ApiResult.HttpError(401, "未登录") },
-                        onRegister = { _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onLogin = { _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onRegister = { _, _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
                         onLogout = {},
                         onSubmitFeedback = { _, _ -> ApiResult.HttpError(401, "未登录") },
                     )
@@ -91,8 +91,8 @@ class ProfileScreenTest {
                         supportContent = SupportContent(),
                         onOpenFishingSpots = {},
                         onExportRecords = {},
-                        onLogin = { _, _ -> ApiResult.HttpError(401, "未登录") },
-                        onRegister = { _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onLogin = { _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onRegister = { _, _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
                         onLogout = {},
                         onSubmitFeedback = { _, _ -> ApiResult.HttpError(401, "未登录") },
                     )
@@ -137,8 +137,8 @@ class ProfileScreenTest {
                         onOpenFishingSpots = {},
                         onOpenCheckIn = { opened = true },
                         onExportRecords = {},
-                        onLogin = { _, _ -> ApiResult.HttpError(401, "未登录") },
-                        onRegister = { _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onLogin = { _, _, _ -> ApiResult.HttpError(401, "未登录") },
+                        onRegister = { _, _, _, _, _, _ -> ApiResult.HttpError(401, "未登录") },
                         onLogout = {},
                         onSubmitFeedback = { _, _ -> ApiResult.HttpError(401, "未登录") },
                     )

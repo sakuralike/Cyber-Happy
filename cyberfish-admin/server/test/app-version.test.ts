@@ -78,14 +78,66 @@ describe('app version download modes', () => {
     const apk = await createApk('server-release', 'b'.repeat(64), 1234);
     const server = await service.create({
       versionName: '2.2.0', versionCode: 220, platform: 'ANDROID', channel: 'official', updateType: 'OPTIONAL',
-      releaseNotes: '', downloadMode: 'SERVER', apkFileId: apk.id,
+      releaseNotes: '', downloadMode: 'SERVER', apkFileId: apk.id, applicationId: 'com.cyberfish.app', certificateSha256: '1'.repeat(64),
     });
     await service.doAction(server.id, { action: 'PUBLISH_ONLINE' });
     const serverCheck = await service.checkUpdate({ versionCode: 219, deviceId: 'server-device', platform: 'ANDROID', channel: 'official' });
     assert.equal(serverCheck.latest?.downloadMode, 'SERVER');
-    assert.equal(serverCheck.latest?.apkUrl, '/files/apk/server-release.apk');
+    assert.match(serverCheck.latest?.apkUrl ?? '', new RegExp(`/api/v1/app-versions/${server.id}/download`));
     assert.equal(serverCheck.latest?.apkSize, 1234);
     assert.equal(serverCheck.latest?.sha256, 'b'.repeat(64));
+  });
+
+  it('returns readiness metadata and increments downloads only after a completed GET', async () => {
+    const apkPath = join(testUploadDir, 'apk', 'counted-release.apk');
+    mkdirSync(join(testUploadDir, 'apk'), { recursive: true });
+    writeFileSync(apkPath, 'counted-apk');
+    const apk = await prisma.fileAsset.create({
+      data: {
+        bizType: 'APK', originalName: 'counted-release.apk', filename: 'counted-release.apk',
+        storagePath: apkPath, url: '/files/apk/counted-release.apk', mimeType: 'application/vnd.android.package-archive',
+        size: BigInt(Buffer.byteLength('counted-apk')), sha256: 'd'.repeat(64),
+      },
+    });
+    const version = await service.create({
+      versionName: '2.5.0', versionCode: 250, platform: 'ANDROID', channel: 'counted', updateType: 'OPTIONAL',
+      releaseNotes: '', downloadMode: 'SERVER', apkFileId: apk.id, applicationId: 'com.cyberfish.app', certificateSha256: 'e'.repeat(64),
+    });
+    await service.doAction(version.id, { action: 'PUBLISH_ONLINE' });
+    const detail = await service.detail(version.id);
+    assert.equal(detail.readiness.ready, true);
+    assert.equal(detail.readiness.checks.applicationId.value, 'com.cyberfish.app');
+    assert.equal(detail.readiness.checks.certificateSha256.ready, true);
+    const app = await buildApp();
+    try {
+      const before = await prisma.appVersion.findUniqueOrThrow({ where: { id: version.id } });
+      assert.equal(before.downloadCount, 0);
+      const headers = { 'x-app-token': process.env.APP_API_TOKEN ?? 'cyberfish-app-token-dev' };
+      const head = await app.inject({ method: 'HEAD', url: `/api/v1/app-versions/${version.id}/download?deviceId=counted-device`, headers });
+      assert.notEqual(head.statusCode, 200);
+      const afterHead = await prisma.appVersion.findUniqueOrThrow({ where: { id: version.id } });
+      assert.equal(afterHead.downloadCount, 0);
+      const response = await app.inject({ method: 'GET', url: `/api/v1/app-versions/${version.id}/download?deviceId=counted-device`, headers });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.body, 'counted-apk');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const afterGet = await prisma.appVersion.findUniqueOrThrow({ where: { id: version.id } });
+      assert.equal(afterGet.downloadCount, 1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('blocks publish when server APK identity metadata is missing', async () => {
+    const apk = await createApk('missing-identity', 'f'.repeat(64), 10);
+    const version = await service.create({
+      versionName: '2.5.1', versionCode: 251, platform: 'ANDROID', channel: 'readiness', updateType: 'OPTIONAL',
+      releaseNotes: '', downloadMode: 'SERVER', apkFileId: apk.id,
+    });
+    await assert.rejects(
+      service.doAction(version.id, { action: 'PUBLISH_ONLINE' }),
+      /applicationId|证书/,
+    );
   });
 
   it('serves hosted APK files without an admin or APP token', async () => {

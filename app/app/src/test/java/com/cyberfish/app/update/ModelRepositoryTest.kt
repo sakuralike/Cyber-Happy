@@ -166,7 +166,11 @@ class ModelRepositoryTest {
         val plaintext = "encrypted model".toByteArray()
         val body = encryptedContainer(plaintext, "model-encrypted", provider.ensureKey(), keyPair.public.encoded)
         val update = update("model-encrypted", plaintext).copy(downloadUrl = "https://example.test/model-encrypted", encrypted = true)
-        val repository = repository(FakeModelApi(bodies = mapOf("model-encrypted" to body)), keyProvider = provider)
+        val repository = repository(
+            FakeModelApi(bodies = mapOf("model-encrypted" to body)),
+            keyProvider = provider,
+            allowLegacyV1 = true,
+        )
 
         assertTrue(repository.install(update).activated)
         assertFalse(File(storageDir, "active.bin").readBytes().contentEquals(plaintext))
@@ -204,11 +208,36 @@ class ModelRepositoryTest {
         assertEquals(1, restored.numClasses)
     }
 
+    @Test
+    fun `lower model generation is rejected after a newer model is accepted`() = runBlocking {
+        val currentBody = "current model".toByteArray()
+        val staleBody = "stale model".toByteArray()
+        val repository = repository(FakeModelApi(bodies = mapOf(
+            "model-generation-2" to currentBody,
+            "model-generation-1" to staleBody,
+        )))
+        val current = update("model-generation-2", currentBody).copy(
+            descriptor = update("model-generation-2", currentBody).descriptor.copy(generation = 2L),
+        )
+        assertTrue(repository.install(current).activated)
+
+        val stale = update("model-generation-1", staleBody).copy(
+            descriptor = update("model-generation-1", staleBody).descriptor.copy(generation = 1L),
+        )
+        val result = repository.install(stale)
+
+        assertFalse(result.activated)
+        assertEquals("MODEL_ROLLBACK_REJECTED", result.errorCode)
+        assertEquals("model-generation-2", repository.activeVersion())
+        assertEquals(2L, repository.highestAcceptedGeneration())
+    }
+
     private fun repository(
         api: FakeModelApi,
         signatureValid: Boolean = true,
         keyProvider: ModelKeyProvider? = null,
         capturedDescriptors: MutableList<NcnnModelDescriptor>? = null,
+        allowLegacyV1: Boolean = false,
     ) = ModelRepository(
         modelApi = api,
         storageDir = storageDir,
@@ -226,6 +255,7 @@ class ModelRepositoryTest {
         },
         modelKeyProvider = keyProvider,
         allowInsecureHttp = false,
+        allowLegacyV1 = allowLegacyV1,
     )
 
     private fun update(version: String, body: ByteArray, sha256: String = body.sha256()) = ModelUpdateInfo(

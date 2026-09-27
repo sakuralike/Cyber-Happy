@@ -13,7 +13,10 @@ internal object NcnnNative {
         outputName: String,
         outputLayout: String,
         valuesPerDetection: Int,
+        numThreads: Int,
     ): Long
+
+    external fun setNumThreads(handle: Long, numThreads: Int)
 
     external fun detect(handle: Long, input: FloatArray, inputSize: Int): FloatArray?
 

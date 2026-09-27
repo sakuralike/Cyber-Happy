@@ -45,6 +45,7 @@ function isPublic(url: string): boolean {
   return PUBLIC_PATHS.includes(path)
     || path.startsWith('/api/v1/public/')
     || path.startsWith('/api/v1/users/')
+    || path === '/api/v1/misreports'
     || path.startsWith('/files/apk/');
 }
 
@@ -53,6 +54,13 @@ function isDeviceSignedPath(method: string, url: string): boolean {
   if (method === 'POST' && path === '/api/v1/devices/refresh') return true;
   if (method === 'POST' && path === '/api/v1/models/devices/register') return true;
   if (method === 'GET' && path === '/api/v1/models/check') return true;
+  if (method === 'GET' && path === '/api/v1/app-versions/check') return true;
+  if (method === 'GET' && (path === '/api/v1/check-in/overview' || path === '/api/v1/check-in/history')) return true;
+  if (method === 'POST' && path === '/api/v1/check-in') return true;
+  if (method === 'GET' && /^\/api\/v1\/app-versions\/[^/]+\/download$/.test(path)) return true;
+  if (method === 'POST' && path === '/api/v1/app-events') return true;
+  if (method === 'POST' && path === '/api/v1/misreports') return true;
+  if (method === 'POST' && path === '/api/v1/files/upload') return true;
   if (method === 'GET' && /^\/api\/v1\/models\/encrypted\/[^/]+$/.test(path)) return true;
   return method === 'POST' && /^\/api\/v1\/models\/dispatches\/[^/]+\/report$/.test(path);
 }
@@ -142,10 +150,17 @@ const authPlugin: FastifyPluginAsync = async (app) => {
     if (request.url.split('?')[0].startsWith('/files/models/')) {
       throw AppError.forbidden('模型文件仅允许设备加密下发');
     }
-    // 签到 POST 在 preValidation 阶段鉴权，使回放审计可读取已解析的请求体。
-    if (request.method === 'POST' && request.url.split('?')[0] === '/api/v1/check-in') return;
     // 设备 token 独立于用户 Authorization，路由 preValidation 会完成 scope 与请求签名校验。
     if (typeof request.headers['x-device-authorization'] === 'string' && isDeviceSignedPath(request.method, request.url)) {
+      return;
+    }
+    // 双鉴权兼容窗口内，旧 APP Token 仍交给签到路由的用户鉴权；strict 模式必须走设备签名。
+    if (request.method === 'POST' && request.url.split('?')[0] === '/api/v1/check-in' &&
+      typeof request.headers['x-device-authorization'] !== 'string') {
+      const appToken = request.headers['x-app-token'];
+      if (typeof appToken === 'string' && appToken === config.appApiToken && config.deviceAuthDualMode) {
+        request.isAppClient = true;
+      }
       return;
     }
     // 兼容窗口内 APP 端接口可继续走 X-App-Token。

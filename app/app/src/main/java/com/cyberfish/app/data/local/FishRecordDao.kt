@@ -32,6 +32,9 @@ interface FishRecordDao {
     @Query("SELECT * FROM fish_records WHERE triggerTimestampMillis = :triggerTimestampMillis LIMIT 1")
     suspend fun findByTriggerTimestamp(triggerTimestampMillis: Long): FishRecordEntity?
 
+    @Query("UPDATE fish_records SET videoPath = :videoPath WHERE triggerTimestampMillis = :triggerTimestampMillis")
+    suspend fun attachVideoPath(triggerTimestampMillis: Long, videoPath: String): Int
+
     @Query("UPDATE fish_records SET isFalsePositive = 1, misreportState = :state, misreportLastError = NULL WHERE triggerTimestampMillis = :triggerTimestampMillis")
     suspend fun markMisreportPending(triggerTimestampMillis: Long, state: String): Int
 

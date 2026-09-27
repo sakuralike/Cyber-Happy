@@ -5,11 +5,21 @@ import com.cyberfish.app.network.AppUpdateInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 
 class AppUpdatePolicyTest {
+    @Test
+    fun `force gate only blocks a newer force update`() {
+        assertTrue(AppUpdateGateStore.isBlockingUpdate(update()))
+        assertFalse(AppUpdateGateStore.isBlockingUpdate(update().copy(hasUpdate = false)))
+        assertFalse(AppUpdateGateStore.isBlockingUpdate(update().copy(updateType = "OPTIONAL")))
+        assertFalse(AppUpdateGateStore.isBlockingUpdate(update().copy(versionCode = null)))
+    }
+
     @Test
     fun `release update requires https checksum bounded size and a newer version`() {
         val valid = update()

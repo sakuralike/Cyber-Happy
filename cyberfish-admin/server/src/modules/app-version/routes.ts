@@ -10,6 +10,9 @@ import {
   checkUpdateSchema,
 } from './schema';
 import * as service from './service';
+import { assertDeviceId, requireDeviceAuth } from '../device-auth/guard';
+import { AppError } from '../../lib/errors';
+import fs from 'node:fs';
 
 const routes: FastifyPluginAsync = async (app) => {
   const readGuard = app.requirePermission('appVersion:read');
@@ -28,6 +31,25 @@ const routes: FastifyPluginAsync = async (app) => {
   app.get('/:id', { onRequest: [app.authenticate, readGuard] }, async (request, reply) => {
     const { id } = parseOrThrow(idParamSchema, request.params);
     return sendOk(reply, await service.detail(id));
+  });
+
+  app.get('/:id/download', { preValidation: [requireDeviceAuth(app, 'app-version:check')] }, async (request, reply) => {
+    if (request.method !== 'GET') throw AppError.notFound('仅支持 GET 下载');
+    const { id } = parseOrThrow(idParamSchema, request.params);
+    const query = request.query as Record<string, unknown>;
+    const deviceId = typeof query.deviceId === 'string' ? query.deviceId : undefined;
+    if (request.currentDevice) assertDeviceId(request, deviceId ?? '');
+    const { version, asset, fullPath } = await service.download(id, deviceId);
+    reply
+      .type(asset.mimeType)
+      .header('Content-Length', String(asset.size))
+      .header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(asset.originalName)}`);
+    reply.raw.once('finish', () => {
+      if (reply.raw.statusCode >= 200 && reply.raw.statusCode < 300) {
+        void service.recordDownloadCompleted(version.id);
+      }
+    });
+    return reply.send(fs.createReadStream(fullPath));
   });
 
   /** 新建 */
@@ -98,7 +120,7 @@ const routes: FastifyPluginAsync = async (app) => {
   });
 
   /** APP 端：检查更新（走 X-App-Token） */
-  app.get('/check', async (request, reply) => {
+  app.get('/check', { preValidation: [requireDeviceAuth(app, 'app-version:check')] }, async (request, reply) => {
     const q = parseOrThrow(checkUpdateSchema, request.query);
     return sendOk(reply, await service.checkUpdate(q));
   });

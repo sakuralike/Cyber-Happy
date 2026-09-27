@@ -11,6 +11,7 @@ import {
   feedbackSchema,
   forgotPasswordSchema,
   loginSchema,
+  privacyConsentSchema,
   registerSchema,
   updateMeSchema,
 } from './schema';
@@ -46,6 +47,22 @@ const routes: FastifyPluginAsync = async (app) => {
 
   app.get('/me', { onRequest: [app.authenticateUser] }, async (request, reply) =>
     sendOk(reply, await service.me(request.currentAppUser!.id)),
+  );
+
+  app.get('/me/consent', { onRequest: [app.authenticateUser] }, async (request, reply) =>
+    sendOk(reply, await service.getConsentStatus(request.currentAppUser!.id)),
+  );
+
+  app.post('/me/consent', { onRequest: [app.authenticateUser] }, async (request, reply) =>
+    sendOk(reply, await service.acceptConsent(
+      request.currentAppUser!.id,
+      parseOrThrow(privacyConsentSchema, request.body),
+      {
+        ip: clientIp(request.headers as Record<string, unknown>),
+        userAgent: String(request.headers['user-agent'] ?? ''),
+        channel: isAppRequest(request) ? 'ANDROID_APP' : String(request.headers['x-client-channel'] ?? 'WEB'),
+      },
+    )),
   );
 
   app.patch('/me', { onRequest: [app.authenticateUser] }, async (request, reply) =>

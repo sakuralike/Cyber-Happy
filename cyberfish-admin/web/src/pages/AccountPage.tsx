@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Avatar, Button, Input, message, Spin, Upload } from 'antd';
+import { Avatar, Button, Checkbox, Input, message, Spin, Typography, Upload } from 'antd';
 import { CheckCircleOutlined, InfoCircleOutlined, LoadingOutlined, MessageOutlined, QuestionCircleOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
@@ -27,12 +27,13 @@ const statusText: Record<string, string> = {
 };
 
 export function AccountPage() {
-  const { user, logout, updateUser } = useUserAuth();
+  const { user, logout, updateUser, consentStatus, consentLoading, acceptConsent } = useUserAuth();
   const navigate = useNavigate();
   const [section, setSection] = useState<AccountSection>('overview');
   const meQuery = useQuery({ queryKey: ['user', 'me'], queryFn: userApi.fetchMe, enabled: !!user });
-  const reportsQuery = useQuery({ queryKey: ['user', 'misreports'], queryFn: () => userApi.listMisreports({ page: 1, pageSize: 20 }), enabled: !!user });
-  const feedbackQuery = useQuery({ queryKey: ['user', 'feedback'], queryFn: () => userApi.listFeedback({ page: 1, pageSize: 20 }), enabled: !!user && section === 'feedback' });
+  const consentReady = !!user && !!consentStatus && !consentStatus.required;
+  const reportsQuery = useQuery({ queryKey: ['user', 'misreports'], queryFn: () => userApi.listMisreports({ page: 1, pageSize: 20 }), enabled: consentReady });
+  const feedbackQuery = useQuery({ queryKey: ['user', 'feedback'], queryFn: () => userApi.listFeedback({ page: 1, pageSize: 20 }), enabled: consentReady && section === 'feedback' });
   const configQuery = useQuery({ queryKey: ['public-config'], queryFn: getPublicConfigAll });
   useConfigStream(['USER_PAGE', 'SITE']);
   const currentUser = meQuery.data ?? user;
@@ -42,6 +43,19 @@ export function AccountPage() {
   const nav = useMemo(() => allNav.filter((item) => !item.setting || userPage[item.setting] !== false), [userPage]);
   const emptyText = String(userPage['user.emptyState.text'] ?? '暂无记录');
   useEffect(() => { if (!nav.some((item) => item.key === section)) setSection('overview'); }, [nav, section]);
+
+  if (consentLoading || !consentStatus) {
+    return <main className="account-page"><div className="account-panel"><Spin /></div></main>;
+  }
+
+  if (consentStatus.required) {
+    return <ConsentRequired
+      version={consentStatus.currentVersion}
+      content={String(userPage['about.privacy'] ?? '请阅读并同意最新用户协议与隐私政策。')}
+      onAccept={acceptConsent}
+      onLogout={() => { logout(); navigate('/'); }}
+    />;
+  }
 
   return (
     <div className="account-page">
@@ -59,6 +73,26 @@ export function AccountPage() {
       </div>
     </div>
   );
+}
+
+function ConsentRequired({ version, content, onAccept, onLogout }: { version: string; content: string; onAccept: (version: string) => Promise<unknown>; onLogout: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [accepted, setAccepted] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async () => {
+    setLoading(true);
+    setError('');
+    try { await onAccept(version); }
+    catch (cause) { setError((cause as Error).message || '提交失败，请稍后重试'); }
+    finally { setLoading(false); }
+  };
+  return <main className="account-page"><div className="account-panel account-content">
+    <AccountHeader title="请重新确认协议" detail={`当前发布版本：${version}`} />
+    <p>{content}</p>
+    <Checkbox checked={accepted} onChange={(event) => setAccepted(event.target.checked)}>我已阅读并同意用户协议与隐私政策</Checkbox>
+    {error && <Typography.Text type="danger">{error}</Typography.Text>}
+    <div style={{ marginTop: 20 }}><Button type="primary" loading={loading} disabled={!accepted} onClick={submit}>同意并继续</Button><Button onClick={onLogout} style={{ marginLeft: 12 }}>退出登录</Button></div>
+  </div></main>;
 }
 
 function AccountHeader({ title, detail }: { title: string; detail: string }) { return <header><h1>{title}</h1><p>{detail}</p></header>; }

@@ -238,20 +238,59 @@ export async function exchangeToken(input: ExchangeTokenInput, sign: SignToken) 
   return issueToken(row.credential, sign);
 }
 
+function quoteCanonicalString(value: string): string {
+  let result = '"';
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    switch (character) {
+      case '"': result += '\\"'; break;
+      case '\\': result += '\\\\'; break;
+      case '\b': result += '\\b'; break;
+      case '\f': result += '\\f'; break;
+      case '\n': result += '\\n'; break;
+      case '\r': result += '\\r'; break;
+      case '\t': result += '\\t'; break;
+      default: {
+        const code = value.charCodeAt(index);
+        result += code < 0x20 ? `\\u${code.toString(16).padStart(4, '0')}` : character;
+      }
+    }
+  }
+  return `${result}"`;
+}
+
+function canonicalJsonNumber(value: number): string {
+  if (!Number.isFinite(value)) throw AppError.badRequest('请求正文包含无效数字');
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    throw AppError.badRequest('请求正文包含超出安全范围的整数');
+  }
+  if (Object.is(value, -0)) return '0';
+
+  const [coefficient, exponentText] = value.toString().toLowerCase().split('e');
+  if (exponentText === undefined) return coefficient;
+
+  const sign = coefficient.startsWith('-') ? '-' : '';
+  const unsigned = sign ? coefficient.slice(1) : coefficient;
+  const [integer, fraction = ''] = unsigned.split('.');
+  const digits = integer + fraction;
+  const decimalPosition = integer.length + Number(exponentText);
+  if (decimalPosition <= 0) return `${sign}0.${'0'.repeat(-decimalPosition)}${digits}`;
+  if (decimalPosition >= digits.length) return `${sign}${digits}${'0'.repeat(decimalPosition - digits.length)}`;
+  return `${sign}${digits.slice(0, decimalPosition)}.${digits.slice(decimalPosition)}`;
+}
+
 function canonicalJsonValue(value: unknown): string {
   if (value === null) return 'null';
-  if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw AppError.badRequest('请求正文包含无效数字');
-    return JSON.stringify(value);
-  }
+  if (typeof value === 'string') return quoteCanonicalString(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return canonicalJsonNumber(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJsonValue).join(',')}]`;
   if (typeof value === 'object') {
     const object = value as Record<string, unknown>;
     return `{${Object.keys(object)
       .filter((key) => object[key] !== undefined)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJsonValue(object[key])}`)
+      .map((key) => `${quoteCanonicalString(key)}:${canonicalJsonValue(object[key])}`)
       .join(',')}}`;
   }
   throw AppError.badRequest('请求正文无法规范化');
@@ -368,20 +407,26 @@ export async function verifySignedRequest(
     request.body !== undefined &&
     contentType &&
     contentType !== 'application/json' &&
+    contentType !== 'multipart/form-data' &&
     !Buffer.isBuffer(request.body) &&
     typeof request.body !== 'string'
   ) {
     throw AppError.badRequest('当前设备签名只支持 JSON 请求；multipart 请使用设备 token 与 scope 校验');
   }
   const actualBodyHash = requestBodySha256(request.body);
-  if (!safeTextEqual(suppliedBodyHash, actualBodyHash)) throw AppError.unauthorized('设备请求正文哈希不匹配');
+  const contentHash = String(request.headers['x-device-content-sha256'] ?? '').trim().toLowerCase();
+  const signedBodyHash = contentType === 'multipart/form-data' ? contentHash : actualBodyHash;
+  if (contentType === 'multipart/form-data' && !/^[a-f0-9]{64}$/.test(contentHash)) {
+    throw AppError.unauthorized('设备媒体摘要格式无效');
+  }
+  if (!safeTextEqual(suppliedBodyHash, signedBodyHash)) throw AppError.unauthorized('设备请求正文哈希不匹配');
 
   const url = new URL(request.raw.url ?? request.url, 'http://device.local');
   const canonical = deviceRequestCanonical({
     method: request.method,
     path: url.pathname,
     query: canonicalQuery(request.raw.url ?? request.url),
-    bodySha256: actualBodyHash,
+    bodySha256: signedBodyHash,
     timestamp,
     nonce,
   });

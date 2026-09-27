@@ -8,6 +8,7 @@ object ModelPublicKeys {
 
     private val BUILT_IN = mapOf(
         "cyberfish-ncnn-v1" to "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEexCYbXHx7m2ZBZA6d0eJwOsctH1tsymp28GIMSWx+2xhYwq+FD/Gb5S5QGjtDjkBB8L2ztcPFE0O+oLOuZ+Fdg==",
+        "ec-c125efc6cf32cdab8264bde596769307" to "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmh9vuNZHcfdrU0J+DBQEvikxA3a3sscMh7271nHfQInCzoHtYc0kfAAMZipBZokkxluygFZt2qA/FVtokGXPfw==",
     )
 
     internal fun parse(raw: String): Map<String, String> {

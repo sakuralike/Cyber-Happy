@@ -28,3 +28,15 @@ export const createInviteCodes = (input: { mode: InviteMode; quantity: number; m
 
 export const revokeInviteCode = (id: string) =>
   http.post(`/admin/invite-codes/${id}/revoke`) as Promise<InviteCode>;
+
+export interface InviteRedemption {
+  id: string;
+  registeredAt: string;
+  ip: string | null;
+  deviceId: string | null;
+  channel: string;
+  user: { id: string; username: string; displayName: string };
+}
+
+export const listInviteRedemptions = (id: string, params: Record<string, unknown> = {}) =>
+  http.get(`/admin/invite-codes/${id}/redemptions`, { params }) as Promise<PageData<InviteRedemption>>;

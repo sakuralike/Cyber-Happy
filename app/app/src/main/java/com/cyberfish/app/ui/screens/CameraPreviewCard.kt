@@ -72,9 +72,13 @@ import com.cyberfish.app.capture.DetectionTrackingMetrics
 import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.capture.FrameTriggerMetrics
 import com.cyberfish.app.capture.NormalizedPreviewRect
+import com.cyberfish.app.capture.RollingVideoClipCoordinator
+import com.cyberfish.app.capture.VideoClipResult
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.UnavailableDetector
 import com.cyberfish.app.inference.Detector
+import com.cyberfish.app.inference.NcnnRuntimeOptions
+import com.cyberfish.app.inference.RuntimeOptionsDetector
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.trigger.TriggerPipeline
@@ -94,6 +98,8 @@ fun CameraPreviewCard(
     onTrigger: (TriggerEvent) -> Unit,
     onFrameMetrics: (FrameMetrics) -> Unit = {},
     onLiveFrameMetrics: (FrameMetrics?) -> Unit = {},
+    onVideoClipReady: (VideoClipResult) -> Unit = {},
+    runtimeOptions: NcnnRuntimeOptions = NcnnRuntimeOptions.forPerformanceMode(NcnnRuntimeOptions.MODE_STANDARD),
     detector: Detector = UnavailableDetector(),
 ) {
     val context = LocalContext.current
@@ -101,6 +107,7 @@ fun CameraPreviewCard(
     val mainExecutor = remember(context) { ContextCompat.getMainExecutor(context) }
     val currentOnTrigger = rememberUpdatedState(onTrigger)
     val snapshotDir = remember(context) { File(context.filesDir, "media") }
+    val videoCoordinator = remember(context) { RollingVideoClipCoordinator(File(context.filesDir, "video")) }
     val latestSnapshot = remember { AtomicReference<File?>(null) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var metrics by remember { mutableStateOf<FrameMetrics?>(null) }
@@ -130,10 +137,14 @@ fun CameraPreviewCard(
         )
     }
     SideEffect { triggerPipeline.updateConfig(triggerConfig) }
+    SideEffect {
+        (detector as? RuntimeOptionsDetector)?.setRuntimeOptions(runtimeOptions)
+    }
     val frameSource = remember(triggerPipeline, detector) {
         CameraFrameSource(
             context = context.applicationContext,
             detector = detector,
+            runtimeOptions = runtimeOptions,
             onFrame = {
                 metrics = it
                 onLiveFrameMetrics(it)
@@ -160,8 +171,11 @@ fun CameraPreviewCard(
             onDetectionReset = {
                 triggerPipeline.reset()
             },
+            videoClipCoordinator = videoCoordinator,
+            onVideoClipReady = onVideoClipReady,
         )
     }
+    SideEffect { frameSource.setRuntimeOptions(runtimeOptions) }
 
     fun dispatchModeIntent(intent: DetectionModeIntent) {
         val previous = detectionModeSnapshot

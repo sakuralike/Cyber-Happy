@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { saveStream, validateUpload, resolveStoredFile, removeFile } from '../../lib/storage';
 import type { Readable } from 'node:stream';
+import { Prisma } from '@prisma/client';
 
 export async function upload(
   stream: Readable,
@@ -11,7 +12,15 @@ export async function upload(
   originalName: string,
   mimeType: string,
   uploadedById?: string,
+  expectedSha256?: string,
+  ownerUserId?: string,
+  deviceId?: string,
+  idempotencyKey?: string,
 ) {
+  if (idempotencyKey) {
+    const existing = await prisma.fileAsset.findUnique({ where: { idempotencyKey } });
+    if (existing) return normalizeAsset(existing);
+  }
   validateUpload(bizType, originalName, mimeType, 0); // 先校验扩展名/MIME，体积在流中累计后二次校验
 
   const saved = await saveStream(stream, bizType, originalName);
@@ -28,21 +37,51 @@ export async function upload(
     await removeFile(saved.storagePath);
     throw new AppError(42200, '上传文件为空', 422);
   }
+  if (expectedSha256 && saved.sha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+    await removeFile(saved.storagePath);
+    throw new AppError(40100, '媒体内容摘要与设备签名不一致', 401);
+  }
 
-  const asset = await prisma.fileAsset.create({
-    data: {
-      bizType,
-      originalName,
-      filename: saved.filename,
-      storagePath: saved.storagePath,
-      url: saved.url,
-      mimeType,
-      size: BigInt(saved.size),
-      sha256: saved.sha256,
-      uploadedById: uploadedById ?? null,
-    },
-  });
+  let asset;
+  try {
+    asset = await prisma.fileAsset.create({
+      data: {
+        bizType,
+        originalName,
+        filename: saved.filename,
+        storagePath: saved.storagePath,
+        url: saved.url,
+        mimeType,
+        size: BigInt(saved.size),
+        sha256: saved.sha256,
+        uploadedById: uploadedById ?? null,
+        ownerUserId: ownerUserId ?? null,
+        deviceId: deviceId ?? null,
+        idempotencyKey: idempotencyKey ?? null,
+      },
+    });
+  } catch (error) {
+    await removeFile(saved.storagePath);
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002' && idempotencyKey) {
+      const existing = await prisma.fileAsset.findUnique({ where: { idempotencyKey } });
+      if (existing) return normalizeAsset(existing);
+    }
+    throw error;
+  }
 
+  return normalizeAsset(asset);
+}
+
+function normalizeAsset(asset: {
+  id: string;
+  bizType: string;
+  originalName: string;
+  filename: string;
+  size: bigint;
+  sha256: string;
+  url: string;
+  createdAt: Date;
+}) {
   return {
     id: asset.id,
     bizType: asset.bizType,

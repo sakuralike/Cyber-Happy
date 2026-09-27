@@ -2,6 +2,8 @@ package com.cyberfish.app.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -13,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -42,7 +45,10 @@ import com.cyberfish.app.network.AppEventType
 import com.cyberfish.app.network.CheckInOverview
 import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.VersionCheckState
+import com.cyberfish.app.network.PrivacyConsentStatus
+import com.cyberfish.app.capture.VideoClipResult
 import com.cyberfish.app.trigger.TriggerConfig
+import com.cyberfish.app.inference.NcnnRuntimeOptions
 import com.cyberfish.app.ui.components.PillTabBar
 import com.cyberfish.app.ui.components.AvatarCropDialog
 import com.cyberfish.app.ui.screens.FishingSpotMapScreen
@@ -67,6 +73,8 @@ import com.cyberfish.app.network.AppDownloadMode
 import com.cyberfish.app.update.ApkInstallPreparation
 import com.cyberfish.app.update.AppUpdateWorker
 import com.cyberfish.app.update.installApk
+import com.cyberfish.app.update.AppUpdateGateStore
+import com.cyberfish.app.BuildConfig
 
 internal enum class AppTab(val label: String) {
     Monitor("监控"),
@@ -91,15 +99,23 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     val records by repository.records.collectAsState(initial = null as List<FishRecord>?)
     val modelState by repository.modelState.collectAsState()
     val userSession by repository.userSession.collectAsState(initial = null)
+    val forcedAppUpdate by repository.forcedAppUpdate.collectAsState(initial = null)
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.Monitor.name) }
     var showingFishingSpots by rememberSaveable { mutableStateOf(false) }
     var showingCheckIn by rememberSaveable { mutableStateOf(false) }
     var returnToCheckInAfterLogin by rememberSaveable { mutableStateOf(false) }
     var versionCheckState by remember { mutableStateOf<VersionCheckState>(VersionCheckState.Idle) }
-    val forceUpdateRequired = (versionCheckState as? VersionCheckState.UpdateAvailable)?.update?.updateType == "FORCE"
+    val currentForceUpdate = (versionCheckState as? VersionCheckState.UpdateAvailable)
+        ?.update
+        ?.takeIf { AppUpdateGateStore.isBlockingUpdate(it) }
+    val forceUpdate = currentForceUpdate ?: forcedAppUpdate
+    val forceUpdateRequired = forceUpdate?.versionCode?.let { it > BuildConfig.VERSION_CODE } == true
     var appInstallMessage by remember { mutableStateOf<String?>(null) }
     var appUpdateInProgress by remember { mutableStateOf(false) }
     var supportContent by remember { mutableStateOf(SupportContent()) }
+    var privacyConsentStatus by remember { mutableStateOf<PrivacyConsentStatus?>(null) }
+    var privacyConsentLoading by remember { mutableStateOf(false) }
+    var privacyAccepted by rememberSaveable { mutableStateOf(false) }
     var checkInOverview by remember { mutableStateOf<CheckInOverview?>(null) }
     var avatarCropUri by remember { mutableStateOf<Uri?>(null) }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -141,20 +157,51 @@ fun CyberFishApp(permissionRevision: Int = 0) {
     }
     LaunchedEffect(repository) {
         repository.resumeUserSession()
-        repository.scheduleModelUpdates()
-        val supportResult = withContext(Dispatchers.IO) {
-            repository.reportEvent(AppEventType.LAUNCH)
-            repository.loadSupportContent()
-        }
+        repository.clearSatisfiedForcedAppUpdate()
+        val supportResult = withContext(Dispatchers.IO) { repository.loadSupportContent() }
         if (supportResult is ApiResult.Success) supportContent = supportResult.value
+    }
+    LaunchedEffect(userSession?.token) {
+        if (userSession == null) return@LaunchedEffect
         when (val update = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
-            is ApiResult.Success -> if (update.value.hasUpdate && update.value.updateType == "FORCE") {
+            is ApiResult.Success -> if (AppUpdateGateStore.isBlockingUpdate(update.value) &&
+                update.value.versionCode!! > BuildConfig.VERSION_CODE
+            ) {
+                repository.rememberForcedAppUpdate(update.value)
+                versionCheckState = VersionCheckState.UpdateAvailable(update.value)
+            } else if (update.value.hasUpdate) {
                 versionCheckState = VersionCheckState.UpdateAvailable(update.value)
             }
             else -> Unit
         }
+        repository.scheduleModelUpdates()
+        repository.enqueueModelUpdate()
+    }
+    LaunchedEffect(forcedAppUpdate) {
+        if (forcedAppUpdate != null && versionCheckState !is VersionCheckState.UpdateAvailable) {
+            versionCheckState = VersionCheckState.UpdateAvailable(forcedAppUpdate!!)
+        }
     }
     LaunchedEffect(userSession?.token) {
+        privacyConsentStatus = null
+        privacyAccepted = false
+        if (userSession != null) {
+            privacyConsentLoading = true
+            privacyConsentStatus = when (val result = repository.fetchPrivacyConsent()) {
+                is ApiResult.Success -> result.value
+                else -> PrivacyConsentStatus(
+                    privacyRequired = true,
+                    currentVersion = supportContent.privacyVersion,
+                    consented = false,
+                    required = true,
+                )
+            }
+            privacyConsentLoading = false
+        } else {
+            privacyConsentLoading = false
+        }
+    }
+    LaunchedEffect(userSession?.token, supportContent.privacyVersion) {
         checkInOverview = if (userSession == null) null else {
             when (val result = repository.fetchCheckInOverview()) {
                 is ApiResult.Success -> result.value
@@ -191,6 +238,36 @@ fun CyberFishApp(permissionRevision: Int = 0) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    DisposableEffect(lifecycleOwner, repository, userSession?.token) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && userSession != null) {
+                coroutineScope.launch {
+                    when (val result = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
+                        is ApiResult.Success -> {
+                            if (AppUpdateGateStore.isBlockingUpdate(result.value) &&
+                                result.value.versionCode!! > BuildConfig.VERSION_CODE
+                            ) {
+                                repository.rememberForcedAppUpdate(result.value)
+                                versionCheckState = VersionCheckState.UpdateAvailable(result.value)
+                            } else if (result.value.hasUpdate) {
+                                versionCheckState = VersionCheckState.UpdateAvailable(result.value)
+                            }
+                        }
+                        else -> Unit
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(forceUpdateRequired) {
+        if (forceUpdateRequired) {
+            showingFishingSpots = false
+            showingCheckIn = false
+            selectedTabName = AppTab.Settings.name
+        }
     }
     val darkTheme = resolveDarkTheme(
         preferences = preferences,
@@ -281,7 +358,9 @@ fun CyberFishApp(permissionRevision: Int = 0) {
             bottomBar = {
                 PillTabBar(
                     selectedTab = selectedTab,
-                    onTabSelected = { selectedTabName = it.name },
+                    onTabSelected = { tab ->
+                        if (!forceUpdateRequired || tab == AppTab.Settings) selectedTabName = tab.name
+                    },
                 )
             },
         ) { paddingValues ->
@@ -322,6 +401,13 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                     )
                                 }
                             },
+                            onVideoClipReady = { clip: VideoClipResult ->
+                                clip.videoPath?.let { path ->
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        repository.attachVideoPath(clip.triggerAtMillis, path)
+                                    }
+                                }
+                            },
                             onConfidenceThresholdChange = { threshold ->
                                 coroutineScope.launch(Dispatchers.IO) {
                                     repository.savePreferences(
@@ -332,6 +418,7 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                     )
                                 }
                             },
+                            runtimeOptions = NcnnRuntimeOptions.forPerformanceMode(preferences.performanceMode),
                             detector = repository.modelRepository.detectorSlot,
                         )
                         AppTab.Records -> RecordsScreen(
@@ -362,7 +449,14 @@ fun CyberFishApp(permissionRevision: Int = 0) {
                                     appInstallMessage = null
                                     versionCheckState = VersionCheckState.Checking
                                     versionCheckState = when (val result = withContext(Dispatchers.IO) { repository.checkForUpdate() }) {
-                                        is ApiResult.Success -> if (result.value.hasUpdate) VersionCheckState.UpdateAvailable(result.value) else VersionCheckState.UpToDate
+                                        is ApiResult.Success -> {
+                                            if (AppUpdateGateStore.isBlockingUpdate(result.value) &&
+                                                result.value.versionCode!! > BuildConfig.VERSION_CODE
+                                            ) {
+                                                repository.rememberForcedAppUpdate(result.value)
+                                            }
+                                            if (result.value.hasUpdate) VersionCheckState.UpdateAvailable(result.value) else VersionCheckState.UpToDate
+                                        }
                                         ApiResult.NotConfigured -> VersionCheckState.NotConfigured
                                         is ApiResult.HttpError -> VersionCheckState.Failed("${result.statusCode} ${result.message}")
                                         is ApiResult.NetworkError -> VersionCheckState.Failed(result.message)
@@ -487,6 +581,41 @@ fun CyberFishApp(permissionRevision: Int = 0) {
             title = { Text("需要更新 APP") },
             text = { Text("当前版本已不再受支持，请完成更新后继续使用。") },
             confirmButton = { Button(onClick = { selectedTabName = AppTab.Settings.name }) { Text("去更新") } },
+        )
+    }
+    val privacyBlocked = userSession != null && (privacyConsentStatus == null || privacyConsentLoading || privacyConsentStatus?.required == true)
+    if (privacyBlocked && !forceUpdateRequired) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("请先同意最新隐私政策") },
+            text = {
+                Column {
+                    Text(supportContent.privacyContent)
+                    Text("协议版本：${privacyConsentStatus?.currentVersion ?: supportContent.privacyVersion}")
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Checkbox(checked = privacyAccepted, onCheckedChange = { privacyAccepted = it })
+                        Text("我已阅读并同意用户协议与隐私政策")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = privacyAccepted && !privacyConsentLoading,
+                    onClick = {
+                        coroutineScope.launch {
+                            val version = privacyConsentStatus?.currentVersion ?: supportContent.privacyVersion
+                            when (val result = withContext(Dispatchers.IO) { repository.acceptPrivacyConsent(version) }) {
+                                is ApiResult.Success -> {
+                                    privacyConsentStatus = result.value
+                                    privacyAccepted = false
+                                }
+                                else -> Unit
+                            }
+                        }
+                    },
+                ) { Text("同意并继续") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { coroutineScope.launch { repository.logout() } }) { Text("退出账号") } },
         )
     }
 }

@@ -1,6 +1,8 @@
 package com.cyberfish.app.capture
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.Surface
 import androidx.annotation.OptIn
@@ -13,6 +15,14 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.camera.view.TransformExperimental
 import androidx.camera.view.transform.OutputTransform
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
+import androidx.camera.video.FallbackStrategy
 import androidx.core.content.ContextCompat
 import androidx.core.view.doOnLayout
 import androidx.lifecycle.LifecycleOwner
@@ -20,6 +30,7 @@ import com.cyberfish.app.inference.CameraFrame
 import com.cyberfish.app.inference.DetectionBounds
 import com.cyberfish.app.inference.DetectionRegionGate
 import com.cyberfish.app.inference.Detector
+import com.cyberfish.app.inference.NcnnRuntimeOptions
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -28,6 +39,7 @@ import java.util.concurrent.Executors
 class CameraFrameSource(
     private val context: Context,
     private val detector: Detector,
+    runtimeOptions: NcnnRuntimeOptions = NcnnRuntimeOptions.forPerformanceMode(NcnnRuntimeOptions.MODE_STANDARD),
     private val onFrame: (FrameMetrics) -> Unit,
     private val onStatusChanged: (CaptureStatus) -> Unit,
     private val onDetection: (
@@ -44,6 +56,8 @@ class CameraFrameSource(
     private val onSnapshotReady: (File) -> Unit = {},
     private val onZoomCapabilitiesChanged: (Float) -> Unit = {},
     private val onDetectionReset: () -> Unit = {},
+    private val videoClipCoordinator: RollingVideoClipCoordinator? = null,
+    private val onVideoClipReady: (VideoClipResult) -> Unit = {},
 ) : FrameSource {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -63,6 +77,10 @@ class CameraFrameSource(
     private var lastReportedAt = 0L
     private var lastSnapshotAt = 0L
     @Volatile
+    private var runtimeOptions = runtimeOptions
+    @Volatile
+    private var lastAnalysisAt = 0L
+    @Volatile
     private var latestSnapshotFile: File? = null
     @Volatile
     private var previewOutputTransform: OutputTransform? = null
@@ -77,11 +95,30 @@ class CameraFrameSource(
         triggerEnabled = true,
     )
     private var lastDetectionScopeRevision = Long.MIN_VALUE
+    private val videoHandler = Handler(Looper.getMainLooper())
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var activeVideoRecording: Recording? = null
+    private var videoSegmentFile: File? = null
+    private var videoSegmentStartedAtMillis = 0L
+    private var videoSegmentGeneration = 0
+    private var lastVideoTriggerState = com.cyberfish.app.trigger.TriggerState.Idle
 
     fun latestSnapshot(): File? = latestSnapshotFile?.takeIf { it.isFile }
 
+    fun latestVideoClip(): VideoClipResult? = videoClipCoordinator?.latestResult()
+
+    fun markVideoTrigger(timestampMillis: Long): String? = videoClipCoordinator?.markTrigger(timestampMillis)
+
+    fun onVideoSegmentFinalized(segment: VideoClipSegment): VideoClipResult? =
+        videoClipCoordinator?.onSegmentFinalized(segment)?.also(onVideoClipReady)
+
     fun setDetectionMode(snapshot: DetectionModeSnapshot) {
         detectionModeSnapshot = snapshot
+    }
+
+    fun setRuntimeOptions(options: NcnnRuntimeOptions) {
+        runtimeOptions = options
+        lastAnalysisAt = 0L
     }
 
     fun refreshPreviewGeometry(previewView: PreviewView) {
@@ -90,8 +127,10 @@ class CameraFrameSource(
 
     override fun start(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         val currentGeneration = ++generation
+        videoClipCoordinator?.start()
         onStatusChanged(CaptureStatus.Starting)
         lastSnapshotAt = 0L
+        lastAnalysisAt = 0L
         val providerFuture = ProcessCameraProvider.getInstance(context)
         providerFuture.addListener({
             if (currentGeneration != generation) return@addListener
@@ -130,23 +169,37 @@ class CameraFrameSource(
             analysis.setAnalyzer(analysisExecutor) { image ->
                 analyzeImage(image, expectedGeneration, previewView)
             }
-            val useCaseGroup = UseCaseGroup.Builder()
+            val video = videoClipCoordinator?.let {
+                runCatching {
+                    val quality = QualitySelector.from(
+                        Quality.SD,
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
+                    )
+                    VideoCapture.withOutput(Recorder.Builder().setQualitySelector(quality).build())
+                }.getOrNull()
+            }
+            val baseUseCases = UseCaseGroup.Builder()
                 .setViewPort(viewPort)
                 .addUseCase(preview)
                 .addUseCase(analysis)
-                .build()
+            val useCaseGroup = baseUseCases.apply { video?.let(::addUseCase) }.build()
             provider.unbindAll()
-            val boundCamera = provider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                useCaseGroup,
-            )
+            val boundCamera = try {
+                provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, useCaseGroup)
+            } catch (videoBindError: Exception) {
+                if (video == null) throw videoBindError
+                videoCapture = null
+                provider.unbindAll()
+                provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, baseUseCases.build())
+            }
             if (expectedGeneration == generation) {
                 camera = boundCamera
+                videoCapture = video
                 refreshPreviewOutputTransform(previewView, expectedGeneration)
                 maxZoomRatio = boundCamera.cameraInfo.zoomState.value?.maxZoomRatio?.coerceAtLeast(1f) ?: 1f
                 onZoomCapabilitiesChanged(maxZoomRatio)
                 onStatusChanged(CaptureStatus.Running)
+                startVideoSegment(expectedGeneration)
             }
         } catch (_: Exception) {
             if (expectedGeneration == generation) onStatusChanged(CaptureStatus.Failed)
@@ -155,9 +208,17 @@ class CameraFrameSource(
 
     override fun stop() {
         generation += 1
+        videoSegmentGeneration = generation
+        videoHandler.removeCallbacksAndMessages(null)
+        activeVideoRecording?.stop()
+        activeVideoRecording = null
+        videoSegmentFile = null
+        videoCapture = null
+        videoClipCoordinator?.stop()
         camera = null
         previewOutputTransform = null
         maxZoomRatio = 1f
+        lastAnalysisAt = 0L
         lastDetectionScopeRevision = Long.MIN_VALUE
         onZoomCapabilitiesChanged(1f)
         cameraProvider?.unbindAll()
@@ -188,6 +249,64 @@ class CameraFrameSource(
         analysisExecutor.shutdown()
     }
 
+    private fun startVideoSegment(expectedGeneration: Int) {
+        val coordinator = videoClipCoordinator ?: return
+        val capture = videoCapture ?: return
+        if (expectedGeneration != generation || activeVideoRecording != null) return
+        val startedAt = SystemClock.elapsedRealtime()
+        val file = coordinator.nextSegmentFile(startedAt) ?: return
+        val output = FileOutputOptions.Builder(file).build()
+        val recording = runCatching {
+            capture.output.prepareRecording(context, output).start(mainExecutor) { event ->
+                if (event !is VideoRecordEvent.Finalize) return@start
+                val recordedFile = videoSegmentFile
+                val recordedStartedAt = videoSegmentStartedAtMillis
+                activeVideoRecording = null
+                videoSegmentFile = null
+                if (event.error == VideoRecordEvent.Finalize.ERROR_NONE && recordedFile != null) {
+                    val clip = coordinator.onSegmentFinalized(
+                        VideoClipSegment(
+                            file = recordedFile,
+                            startedAtMillis = recordedStartedAt,
+                            endedAtMillis = SystemClock.elapsedRealtime(),
+                        ),
+                    )
+                    clip?.let { ready ->
+                        val merged = if (ready.videoPath == null) {
+                            VideoSegmentMerger.merge(
+                                ready.segments,
+                                File(file.parentFile, "${ready.clipId}.mp4"),
+                            )
+                        } else ready.segments.singleOrNull()
+                        onVideoClipReady(ready.copy(videoPath = merged?.absolutePath))
+                        coordinator.releaseSegments(ready.segments)
+                        if (merged != null && ready.segments.size > 1) {
+                            ready.segments.filter { it != merged }.forEach(File::delete)
+                        } else if (merged == null) {
+                            ready.segments.forEach(File::delete)
+                        }
+                        coordinator.clearResult()
+                    }
+                } else {
+                    recordedFile?.delete()
+                }
+                if (expectedGeneration == generation && videoSegmentGeneration == expectedGeneration) {
+                    startVideoSegment(expectedGeneration)
+                }
+            }
+        }.getOrNull() ?: run {
+            file.delete()
+            return
+        }
+        videoSegmentGeneration = expectedGeneration
+        videoSegmentFile = file
+        videoSegmentStartedAtMillis = startedAt
+        activeVideoRecording = recording
+        videoHandler.postDelayed({
+            if (expectedGeneration == generation && activeVideoRecording === recording) recording.stop()
+        }, VIDEO_SEGMENT_MILLIS)
+    }
+
     private fun analyzeImage(
         image: androidx.camera.core.ImageProxy,
         expectedGeneration: Int,
@@ -196,6 +315,10 @@ class CameraFrameSource(
         val startedAt = SystemClock.elapsedRealtimeNanos()
         try {
             if (expectedGeneration != generation) return
+            val analysisStartedAt = SystemClock.elapsedRealtime()
+            val options = runtimeOptions
+            if (lastAnalysisAt != 0L && analysisStartedAt - lastAnalysisAt < options.analysisIntervalMillis) return
+            lastAnalysisAt = analysisStartedAt
             val frameTransform = coordinateMapper.capture(image)
             val scope = detectionModeSnapshot
             if (scope.revision != lastDetectionScopeRevision) {
@@ -245,6 +368,12 @@ class CameraFrameSource(
                 }
             }
             val triggerMetrics = onDetection(detection, now)
+            if (triggerMetrics.triggerState == com.cyberfish.app.trigger.TriggerState.Cooldown &&
+                lastVideoTriggerState != com.cyberfish.app.trigger.TriggerState.Cooldown
+            ) {
+                videoClipCoordinator?.markTrigger(now)
+            }
+            lastVideoTriggerState = triggerMetrics.triggerState
             val featureSnapshot = triggerMetrics.featureSnapshot
             val trackingMetrics = featureSnapshot?.let { snapshot ->
                 DetectionTrackingMetrics(
@@ -340,6 +469,7 @@ class CameraFrameSource(
         ((SystemClock.elapsedRealtimeNanos() - startedAtNanos) / NANOS_PER_MILLISECOND).coerceAtLeast(0L)
 
     private companion object {
+        const val VIDEO_SEGMENT_MILLIS = 1_000L
         const val NANOS_PER_MILLISECOND = 1_000_000L
         const val ONE_SECOND_MILLIS = 1_000L
         const val REPORT_INTERVAL_MILLIS = 80L

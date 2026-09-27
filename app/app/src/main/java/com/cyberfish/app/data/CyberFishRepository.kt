@@ -29,11 +29,13 @@ import com.cyberfish.app.network.SupportContent
 import com.cyberfish.app.network.UserAccount
 import com.cyberfish.app.network.UserSession
 import com.cyberfish.app.network.UserSessionStore
+import com.cyberfish.app.network.PrivacyConsentStatus
 import com.cyberfish.app.network.MisreportUploadWorker
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.update.ModelRuntime
 import com.cyberfish.app.update.ModelUpdateWorker
 import com.cyberfish.app.update.AndroidModelKeyStore
+import com.cyberfish.app.update.AppUpdateGateStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +53,7 @@ class CyberFishRepository(context: Context) {
     private val userSessionStore = UserSessionStore(appContext)
     private val deviceIdentityStore = DeviceIdentityStore(appContext)
     private val modelKeyStore = AndroidModelKeyStore()
+    private val appUpdateGateStore = AppUpdateGateStore(appContext)
     private val deviceAuthClient = DeviceAuthClient(
         config = ApiConfig.fromBuildConfig(),
         identityProvider = deviceIdentityStore,
@@ -70,6 +73,7 @@ class CyberFishRepository(context: Context) {
     val records: Flow<List<FishRecord>> = recordDao.observeAll().map { records -> records.map(FishRecordEntity::toDomain) }
     val preferences: Flow<AppPreferences> = preferencesStore.data
     val userSession: Flow<UserSession?> = userSessionStore.session
+    val forcedAppUpdate: Flow<AppUpdateInfo?> = appUpdateGateStore.forcedUpdate
 
     suspend fun saveTrigger(event: TriggerEvent) {
         recordDao.insert(FishRecordEntity.fromEvent(event, System.currentTimeMillis()))
@@ -104,11 +108,28 @@ class CyberFishRepository(context: Context) {
         MisreportUploadWorker.enqueue(appContext, triggerTimestampMillis)
     }
 
+    suspend fun attachVideoPath(triggerTimestampMillis: Long, path: String): Boolean = withContext(Dispatchers.IO) {
+        val root = appContext.filesDir.canonicalFile
+        val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return@withContext false
+        if (!file.isFile || !file.path.startsWith(root.path + File.separator)) return@withContext false
+        recordDao.attachVideoPath(triggerTimestampMillis, file.absolutePath) > 0
+    }
+
     suspend fun savePreferences(preferences: AppPreferences) {
         preferencesStore.save(preferences)
     }
 
     suspend fun checkForUpdate(): ApiResult<AppUpdateInfo> = appApiClient.checkForUpdate()
+
+    suspend fun rememberForcedAppUpdate(update: AppUpdateInfo) = appUpdateGateStore.remember(update)
+
+    suspend fun clearSatisfiedForcedAppUpdate() =
+        appUpdateGateStore.clearIfSatisfied(com.cyberfish.app.BuildConfig.VERSION_CODE)
+
+    suspend fun fetchPrivacyConsent(): ApiResult<PrivacyConsentStatus> = appApiClient.fetchPrivacyConsent()
+
+    suspend fun acceptPrivacyConsent(version: String): ApiResult<PrivacyConsentStatus> =
+        appApiClient.acceptPrivacyConsent(version)
 
     suspend fun reportEvent(
         eventType: AppEventType,

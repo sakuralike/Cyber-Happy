@@ -21,6 +21,15 @@ export interface UserSession {
   user: UserAccount;
 }
 
+export interface UserConsentStatus {
+  privacyRequired: boolean;
+  currentVersion: string;
+  consented: boolean;
+  required: boolean;
+  acceptedVersion: string | null;
+  acceptedAt: string | null;
+}
+
 export interface UserMisreport {
   id: string;
   reportNo: string;
@@ -105,6 +114,11 @@ export const register = (input: { username: string; password: string; displayNam
   userHttp.post('/users/register', input) as Promise<UserSession>;
 
 export const fetchMe = () => userHttp.get('/users/me') as Promise<UserAccount>;
+
+export const fetchConsentStatus = () => userHttp.get('/users/me/consent') as Promise<UserConsentStatus>;
+
+export const acceptConsent = (privacyVersion: string) =>
+  userHttp.post('/users/me/consent', { privacyAccepted: true, privacyVersion }) as Promise<UserConsentStatus>;
 
 export const updateMe = (input: { displayName: string; email?: string | null }) =>
   userHttp.patch('/users/me', input) as Promise<UserAccount>;

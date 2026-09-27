@@ -7,7 +7,10 @@ data class ApiConfig(
     val appToken: String,
 ) {
     val isConfigured: Boolean
-        get() = baseUrl.isNotBlank() && appToken.isNotBlank()
+        get() = baseUrl.isNotBlank()
+
+    val hasLegacyAppToken: Boolean
+        get() = appToken.isNotBlank()
 
     fun endpoint(path: String): String = resolve(path)
 

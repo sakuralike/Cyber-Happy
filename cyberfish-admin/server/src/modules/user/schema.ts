@@ -35,6 +35,11 @@ export const updateMeSchema = z.object({
   email: emailSchema.optional(),
 });
 
+export const privacyConsentSchema = z.object({
+  privacyAccepted: z.literal(true),
+  privacyVersion: z.string().trim().min(1).max(80),
+});
+
 export const changePasswordSchema = z
   .object({
     currentPassword: passwordSchema,
@@ -57,6 +62,7 @@ export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;
+export type PrivacyConsentInput = z.infer<typeof privacyConsentSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;
 export type FeedbackListQuery = z.infer<typeof feedbackListSchema>;

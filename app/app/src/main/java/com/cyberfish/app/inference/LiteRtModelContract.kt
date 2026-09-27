@@ -8,6 +8,10 @@ data class NcnnModelDescriptor(
     val inputSize: Int,
     val labels: List<String>,
     val sha256: String,
+    val modelId: String? = null,
+    val deviceId: String? = null,
+    val generation: Long = 0L,
+    val manifestHash: String? = null,
     val inputName: String = DEFAULT_NCNN_INPUT_NAME,
     val outputName: String = DEFAULT_NCNN_OUTPUT_NAME,
     val outputLayout: String = NCNN_OUTPUT_LAYOUT_FIELDS_BY_CANDIDATES,
@@ -46,6 +50,9 @@ object NcnnModelContract {
             if (descriptor.inputSize <= 0) add("模型输入尺寸无效")
             if (descriptor.labels.isEmpty()) add("模型类别不能为空")
             if (!descriptor.sha256.matches(SHA256_PATTERN)) add("模型 SHA-256 无效")
+            if (descriptor.modelId != null && !descriptor.modelId.matches(MODEL_ID_PATTERN)) add("模型 ID 格式无效")
+            if (descriptor.generation < 0L) add("模型 generation 无效")
+            if (descriptor.manifestHash != null && !descriptor.manifestHash.matches(SHA256_PATTERN)) add("模型 manifest SHA-256 无效")
             if (!descriptor.inputName.isValidBlobName()) add("模型输入节点名称无效")
             if (!descriptor.outputName.isValidBlobName()) add("模型输出节点名称无效")
             if (descriptor.outputLayout !in SUPPORTED_OUTPUT_LAYOUTS) add("模型输出布局不支持")
@@ -57,6 +64,7 @@ object NcnnModelContract {
     }
 
     private val MODEL_VERSION_PATTERN = Regex("[A-Za-z0-9._-]{1,80}")
+    private val MODEL_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,160}")
     private val SHA256_PATTERN = Regex("[A-Fa-f0-9]{64}")
     private val SUPPORTED_SIGNATURE_ALGORITHMS = setOf("ECDSA_P256_SHA256")
     private val SUPPORTED_OUTPUT_LAYOUTS = setOf(

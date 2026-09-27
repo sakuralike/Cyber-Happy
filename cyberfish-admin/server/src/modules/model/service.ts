@@ -4,7 +4,8 @@ import { AppError } from '../../lib/errors';
 import { buildListQuery, type RawListQuery } from '../../lib/query';
 import { parseJson } from '../../lib/serialize';
 import { inGray } from '../../lib/hash';
-import { encryptModelForDevice, validateDevicePublicKey } from './encryption';
+import { encryptModelForDevice, manifestHashForDevice, validateDevicePublicKey } from './encryption';
+import { config } from '../../config';
 import type {
   ModelListQuery,
   CreateModelInput,
@@ -38,11 +39,74 @@ function ensurePublishableModel(model: {
   signature: string | null;
   signatureAlgorithm: string | null;
   publicKeyId: string | null;
+  containerVersion?: number;
+  generation?: number;
+  manifestSignature?: string | null;
+  manifestSignatureAlgorithm?: string | null;
+  manifestPublicKeyId?: string | null;
+  manifestHash?: string | null;
+  arch?: string;
+  quant?: string;
+  inputSize?: number;
+  numClasses?: number;
+  labels?: string;
+  inputName?: string | null;
+  inputLayout?: string;
+  outputName?: string | null;
+  outputLayout?: string;
+  coordinatesNormalized?: boolean;
+  valuesPerDetection?: number;
 }) {
   if (model.framework !== 'NCNN') throw AppError.invalidState('仅允许下发 NCNN 模型');
   if (!model.fileUrl || !model.sha256?.match(/^[a-fA-F0-9]{64}$/)) throw AppError.invalidState('模型文件或 SHA-256 缺失');
   if (!model.signature || model.signatureAlgorithm !== 'ECDSA_P256_SHA256' || !model.publicKeyId) {
     throw AppError.invalidState('模型签名、签名算法或公钥标识缺失');
+  }
+  const containerVersion = model.containerVersion ?? 1;
+  if (containerVersion === 1) {
+    if (!config.modelLegacyV1Allowed) {
+      throw AppError.invalidState('当前仅允许 CFMODEL2 模型容器');
+    }
+    return;
+  }
+  if (containerVersion !== 2 || !config.modelContainerV2Enabled) {
+    throw AppError.invalidState('模型容器版本与服务端开关不匹配');
+  }
+  if (!config.modelManifestSigningPrivateKey) {
+    throw AppError.invalidState('CFMODEL2 manifest 签名私钥未配置');
+  }
+  if (!Number.isInteger(model.generation) || (model.generation ?? 0) < 1) {
+    throw AppError.invalidState('模型 generation 缺失或无效');
+  }
+  if (model.manifestSignatureAlgorithm && model.manifestSignatureAlgorithm !== 'ECDSA_P256_SHA256') {
+    throw AppError.invalidState('CFMODEL2 manifest 签名算法不支持');
+  }
+  if (model.manifestHash !== undefined && model.manifestHash !== null && !model.manifestHash.match(/^[a-fA-F0-9]{64}$/)) {
+    throw AppError.invalidState('CFMODEL2 manifest SHA-256 格式无效');
+  }
+  if (!model.arch || !model.quant || !Number.isInteger(model.inputSize) || (model.inputSize ?? 0) <= 0) {
+    throw AppError.invalidState('CFMODEL2 模型架构或输入尺寸缺失');
+  }
+  if (!Number.isInteger(model.numClasses) || (model.numClasses ?? 0) <= 0 || !model.labels) {
+    throw AppError.invalidState('CFMODEL2 类别契约缺失');
+  }
+  let labels: unknown;
+  try {
+    labels = JSON.parse(model.labels);
+  } catch {
+    throw AppError.invalidState('CFMODEL2 类别契约不是有效 JSON');
+  }
+  if (!Array.isArray(labels) || labels.length !== model.numClasses || labels.some((label) => typeof label !== 'string' || !label.trim())) {
+    throw AppError.invalidState('CFMODEL2 类别数与标签不一致');
+  }
+  if (!model.inputName || !model.inputLayout || !model.outputName || !model.outputLayout) {
+    throw AppError.invalidState('CFMODEL2 NCNN 输入输出契约缺失');
+  }
+  if (!['NCHW', 'NHWC'].includes(model.inputLayout) || !['FIELDS_BY_CANDIDATES', 'CANDIDATES_BY_FIELDS'].includes(model.outputLayout)) {
+    throw AppError.invalidState('CFMODEL2 NCNN 输入输出布局不支持');
+  }
+  if (!Number.isInteger(model.valuesPerDetection) || (model.valuesPerDetection ?? 0) < 4 + model.numClasses) {
+    throw AppError.invalidState('CFMODEL2 输出字段数无效');
   }
 }
 
@@ -136,6 +200,12 @@ export async function create(input: CreateModelInput, operatorId?: string) {
       signatureAlgorithm: input.signatureAlgorithm ?? null,
       publicKeyId: input.publicKeyId ?? null,
       signatureExpiresAt: input.signatureExpiresAt ?? null,
+      manifestSignature: input.manifestSignature ?? null,
+      manifestSignatureAlgorithm: input.manifestSignatureAlgorithm ?? null,
+      manifestPublicKeyId: input.manifestPublicKeyId ?? null,
+      manifestHash: input.manifestHash ?? null,
+      containerVersion: input.containerVersion,
+      generation: input.generation,
       runtimeSignatureName: input.runtimeSignatureName ?? null,
       inputName: input.inputName ?? null,
       inputLayout: input.inputLayout,
@@ -178,6 +248,12 @@ export async function update(id: string, input: UpdateModelInput) {
   if (input.signatureAlgorithm !== undefined) data.signatureAlgorithm = input.signatureAlgorithm;
   if (input.publicKeyId !== undefined) data.publicKeyId = input.publicKeyId;
   if (input.signatureExpiresAt !== undefined) data.signatureExpiresAt = input.signatureExpiresAt;
+  if (input.manifestSignature !== undefined) data.manifestSignature = input.manifestSignature;
+  if (input.manifestSignatureAlgorithm !== undefined) data.manifestSignatureAlgorithm = input.manifestSignatureAlgorithm;
+  if (input.manifestPublicKeyId !== undefined) data.manifestPublicKeyId = input.manifestPublicKeyId;
+  if (input.manifestHash !== undefined) data.manifestHash = input.manifestHash;
+  if (input.containerVersion !== undefined) data.containerVersion = input.containerVersion;
+  if (input.generation !== undefined) data.generation = input.generation;
   if (input.runtimeSignatureName !== undefined) data.runtimeSignatureName = input.runtimeSignatureName;
   if (input.inputName !== undefined) data.inputName = input.inputName;
   if (input.inputLayout !== undefined) data.inputLayout = input.inputLayout;
@@ -229,6 +305,9 @@ export async function doAction(id: string, input: ModelActionInput, operatorId?:
 // 下发
 // ============================================================
 
+const DEVICE_PAGE_SIZE = 1000;
+const DEVICE_LOG_BATCH_SIZE = 500;
+
 /** 依据下发目标筛选命中的设备列表 */
 async function matchDevices(
   targetType: DispatchInput['targetType'],
@@ -249,14 +328,54 @@ async function matchDevices(
     if (ids.length) where.deviceId = { in: ids };
   }
 
-  const users = await prisma.appUser.findMany({
-    where,
-    select: { deviceId: true, modelVersion: true },
-    orderBy: { deviceId: 'asc' },
-    take: 5000,
-  });
+  const devices: { deviceId: string; fromModelVersion: string }[] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const users = await prisma.appUser.findMany({
+      where,
+      select: { deviceId: true, modelVersion: true },
+      orderBy: { deviceId: 'asc' },
+      take: DEVICE_PAGE_SIZE,
+      ...(cursor ? { cursor: { deviceId: cursor }, skip: 1 } : {}),
+    });
+    if (!users.length) break;
+    devices.push(...users.map((u) => ({ deviceId: u.deviceId, fromModelVersion: u.modelVersion || '' })));
+    if (users.length < DEVICE_PAGE_SIZE) break;
+    cursor = users[users.length - 1]!.deviceId;
+  }
+  return devices;
+}
 
-  return users.map((u) => ({ deviceId: u.deviceId, fromModelVersion: u.modelVersion || '' }));
+async function listDispatchDeviceIds(dispatchId: string, status?: string): Promise<string[]> {
+  const deviceIds: string[] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const logs = await prisma.deviceDispatchLog.findMany({
+      where: { dispatchId, ...(status ? { status } : {}) },
+      select: { id: true, deviceId: true },
+      orderBy: { id: 'asc' },
+      take: DEVICE_PAGE_SIZE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (!logs.length) break;
+    deviceIds.push(...logs.map((log) => log.deviceId));
+    if (logs.length < DEVICE_PAGE_SIZE) break;
+    cursor = logs[logs.length - 1]!.id;
+  }
+  return deviceIds;
+}
+
+async function createDispatchDeviceLogs(
+  dispatchId: string,
+  logs: Array<{ deviceId: string; fromModelVersion: string; toModelVersion: string; status: string }>,
+): Promise<void> {
+  for (let offset = 0; offset < logs.length; offset += DEVICE_LOG_BATCH_SIZE) {
+    const batch = logs.slice(offset, offset + DEVICE_LOG_BATCH_SIZE).map((log) => ({
+      dispatchId,
+      ...log,
+    }));
+    await prisma.$transaction((tx) => tx.deviceDispatchLog.createMany({ data: batch }));
+  }
 }
 
 export async function dispatch(modelId: string, input: DispatchInput, operatorId?: string) {
@@ -282,16 +401,14 @@ export async function dispatch(modelId: string, input: DispatchInput, operatorId
       remark: input.remark ?? null,
       operatorId: operatorId ?? null,
       appVersionId: input.appVersionId ?? null,
-      deviceLogs: {
-        create: targeted.map((d) => ({
-          deviceId: d.deviceId,
-          fromModelVersion: d.fromModelVersion,
-          toModelVersion: model.modelVersion,
-          status: 'PENDING',
-        })),
-      },
     },
   });
+  await createDispatchDeviceLogs(dispatch.id, targeted.map((d) => ({
+    deviceId: d.deviceId,
+    fromModelVersion: d.fromModelVersion,
+    toModelVersion: model.modelVersion,
+    status: 'PENDING',
+  })));
 
   // 模型状态推进
   const nextStatus = input.grayPercent >= 100 ? 'ONLINE' : 'GRAY';
@@ -323,18 +440,8 @@ export async function rollback(modelId: string, input: RollbackInput, operatorId
   });
 
   const deviceIds = origin
-    ? (
-        await prisma.deviceDispatchLog.findMany({
-          where: {
-            dispatchId: origin.id,
-            ...(input.scope === 'FAILED_ONLY' ? { status: 'FAILED' } : {}),
-          },
-          select: { deviceId: true },
-        })
-      ).map((d) => d.deviceId)
-    : (await prisma.appUser.findMany({ select: { deviceId: true }, take: 5000 })).map(
-        (u) => u.deviceId,
-      );
+    ? await listDispatchDeviceIds(origin.id, input.scope === 'FAILED_ONLY' ? 'FAILED' : undefined)
+    : (await matchDevices('GLOBAL', {})).map((device) => device.deviceId);
 
   const target = await prisma.modelDispatch.create({
     data: {
@@ -349,16 +456,14 @@ export async function rollback(modelId: string, input: RollbackInput, operatorId
       remark: `回滚：${from.modelVersion} → ${to.modelVersion}（${input.reason}）`,
       operatorId: operatorId ?? null,
       startedAt: new Date(),
-      deviceLogs: {
-        create: deviceIds.map((deviceId) => ({
-          deviceId,
-          fromModelVersion: from.modelVersion,
-          toModelVersion: to.modelVersion,
-          status: 'PENDING',
-        })),
-      },
     },
   });
+  await createDispatchDeviceLogs(target.id, deviceIds.map((deviceId) => ({
+    deviceId,
+    fromModelVersion: from.modelVersion,
+    toModelVersion: to.modelVersion,
+    status: 'PENDING',
+  })));
 
   await prisma.mlModel.update({
     where: { id: modelId },
@@ -514,10 +619,15 @@ export async function checkModel(q: CheckModelQuery, credentialId?: string) {
   }
   await assertCredentialModelKey(credentialId, deviceKey);
   await prisma.modelDeviceKey.update({ where: { id: deviceKey.id }, data: { lastSeenAt: new Date(), appVersionCode: q.appVersionCode } });
+  const currentModel = q.currentModelVersion
+    ? await prisma.mlModel.findUnique({ where: { modelVersion: q.currentModelVersion }, select: { generation: true } })
+    : null;
+  const currentGeneration = currentModel?.generation ?? 0;
   const candidates = await prisma.mlModel.findMany({
     where: {
       status: { in: ['ONLINE', 'GRAY'] },
       framework: 'NCNN',
+      generation: { gt: currentGeneration },
       ...(q.currentModelVersion ? { modelVersion: { not: q.currentModelVersion } } : {}),
     },
     orderBy: { createdAt: 'desc' },
@@ -557,6 +667,12 @@ export async function checkModel(q: CheckModelQuery, credentialId?: string) {
       url: `/api/v1/models/encrypted/${hit.id}?deviceId=${encodeURIComponent(q.deviceId)}&keyId=${encodeURIComponent(deviceKey.keyId)}`,
       size: hit.fileSize ? Number(hit.fileSize) : null,
       sha256: hit.sha256,
+      manifestHash: hit.containerVersion === 2 ? manifestHashForDevice(hit, deviceKey) : hit.manifestHash,
+      containerVersion: hit.containerVersion,
+      generation: hit.generation,
+      manifestSignature: hit.manifestSignature,
+      manifestSignatureAlgorithm: hit.manifestSignatureAlgorithm,
+      manifestPublicKeyId: hit.manifestPublicKeyId,
       minAppCode: hit.minAppCode,
       labels: parseJson<string[]>(hit.labels, []),
       signature: hit.signature,
@@ -633,12 +749,13 @@ export async function registerDeviceKey(input: RegisterDeviceKeyInput, userId?: 
 
 export async function encryptedModel(modelId: string, query: EncryptedModelQuery, credentialId?: string) {
   const [model, deviceKey] = await Promise.all([
-    prisma.mlModel.findUnique({ where: { id: modelId }, select: { id: true, modelVersion: true, framework: true, fileUrl: true, sha256: true, status: true } }),
+    prisma.mlModel.findUnique({ where: { id: modelId } }),
     prisma.modelDeviceKey.findUnique({ where: { deviceId: query.deviceId } }),
   ]);
   if (!model || model.framework !== 'NCNN' || !['ONLINE', 'GRAY'].includes(model.status)) throw AppError.notFound('模型不存在或未发布');
   if (!deviceKey || deviceKey.revokedAt || deviceKey.authorizedUntil <= new Date() || deviceKey.keyId !== query.keyId) throw new AppError(40921, '设备密钥无效、已过期或已轮换', 409);
   await assertCredentialModelKey(credentialId, deviceKey);
+  ensurePublishableModel(model);
   await prisma.modelDeviceKey.update({ where: { id: deviceKey.id }, data: { lastSeenAt: new Date() } });
   return encryptModelForDevice(model, deviceKey);
 }

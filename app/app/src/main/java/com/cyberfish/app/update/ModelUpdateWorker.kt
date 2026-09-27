@@ -14,6 +14,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.cyberfish.app.data.CyberFishRepository
 import com.cyberfish.app.network.ApiResult
+import com.cyberfish.app.network.UserSessionStore
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
@@ -25,6 +26,9 @@ class ModelUpdateWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
+        // Strict device authentication requires an authenticated APP user to bootstrap
+        // a new device credential. Do not spin an anonymous retry loop before login.
+        if (UserSessionStore(applicationContext).get() == null) return Result.success()
         val repository = CyberFishRepository(applicationContext).modelRepository
         return coroutineScope {
             val progressJob = launch {

@@ -42,6 +42,22 @@ class DeviceAuthProtocolTest {
     }
 
     @Test
+    fun `canonical json matches server escaping for base64 slash unicode and decimals`() {
+        val value = canonicalJson(
+            """{"publicKey":"ab/c+d==","nested":{"slash":"/","html":"</script>"},"value":0.000001,"items":[1.5,null]}""",
+        )
+
+        assertEquals(
+            """{"items":[1.5,null],"nested":{"html":"</script>","slash":"/"},"publicKey":"ab/c+d==","value":0.000001}""",
+            value,
+        )
+        assertEquals(
+            "e8ef6d848c6bb1c5110b6b6055094ae34d5483ebedf6d27de56a6ec1dbd627a5",
+            sha256Hex(value.toByteArray()),
+        )
+    }
+
+    @Test
     fun `nonce is url safe and unique`() {
         val first = newDeviceNonce()
         val second = newDeviceNonce()

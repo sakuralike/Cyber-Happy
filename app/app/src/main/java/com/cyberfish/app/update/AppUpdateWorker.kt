@@ -14,6 +14,10 @@ import com.cyberfish.app.network.AppApiClient
 import com.cyberfish.app.network.AppUpdateInfo
 import com.cyberfish.app.network.AppDownloadMode
 import com.cyberfish.app.network.DeviceIdentityStore
+import com.cyberfish.app.network.AndroidDeviceSigningKey
+import com.cyberfish.app.network.DeviceAccessTokenStore
+import com.cyberfish.app.network.DeviceAuthClient
+import com.cyberfish.app.network.UserSessionStore
 import com.cyberfish.app.BuildConfig
 import java.io.FilterOutputStream
 import java.io.File
@@ -97,7 +101,21 @@ class AppUpdateWorker(
         val part = File(directory, "app-$versionCode.apk.part")
         val apk = File(directory, "app-$versionCode.apk")
         part.delete()
-        val client = AppApiClient(ApiConfig.fromBuildConfig(), DeviceIdentityStore(applicationContext))
+        val apiConfig = ApiConfig.fromBuildConfig()
+        val identityStore = DeviceIdentityStore(applicationContext)
+        val sessionStore = UserSessionStore(applicationContext)
+        val client = AppApiClient(
+            config = apiConfig,
+            identityStore = identityStore,
+            userSessionProvider = sessionStore,
+            deviceAuthClient = DeviceAuthClient(
+                config = apiConfig,
+                identityProvider = identityStore,
+                signingKeyProvider = AndroidDeviceSigningKey(),
+                tokenPersistence = DeviceAccessTokenStore(applicationContext),
+                userSessionProvider = sessionStore,
+            ),
+        )
         var boundedOutput: SizeBoundOutputStream? = null
         val result = part.outputStream().use { output ->
             SizeBoundOutputStream(output, expectedSize).also { boundedOutput = it }.use { bounded ->

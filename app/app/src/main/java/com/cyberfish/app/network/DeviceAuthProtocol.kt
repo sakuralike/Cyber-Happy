@@ -84,12 +84,12 @@ internal fun newDeviceNonce(): String = ByteArray(16).also(SecureRandom()::nextB
 private fun canonicalJsonValue(value: Any?): String = when (value) {
     null, JSONObject.NULL -> "null"
     is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { key ->
-        "${JSONObject.quote(key)}:${canonicalJsonValue(value.get(key))}"
+        "${quoteCanonicalString(key)}:${canonicalJsonValue(value.get(key))}"
     }
     is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { index ->
         canonicalJsonValue(value.get(index))
     }
-    is String -> JSONObject.quote(value)
+    is String -> quoteCanonicalString(value)
     is Boolean -> value.toString()
     is Byte, is Short, is Int, is Long -> value.toString()
     is Float -> canonicalDecimal(value.toDouble())
@@ -101,6 +101,25 @@ private fun canonicalJsonValue(value: Any?): String = when (value) {
 private fun canonicalDecimal(value: Double): String {
     require(value.isFinite()) { "JSON 数值必须有限" }
     return BigDecimal(value.toString()).stripTrailingZeros().toPlainString()
+}
+
+/** Matches the server JSON.stringify escaping rules; in particular, '/' is not escaped. */
+private fun quoteCanonicalString(value: String): String = buildString(value.length + 2) {
+    append('"')
+    value.forEach { character ->
+        when (character) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            '\b' -> append("\\b")
+            '\u000c' -> append("\\f")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            in '\u0000'..'\u001f' -> append("\\u%04x".format(character.code))
+            else -> append(character)
+        }
+    }
+    append('"')
 }
 
 private fun rfc3986(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())

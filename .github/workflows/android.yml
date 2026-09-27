@@ -52,7 +52,10 @@ jobs:
       - run: npm run test:check-in --workspace server
       - run: npm run test:user-invite --workspace server
       - run: npm run test:model-encryption --workspace server
+      - run: npm run test:model-container-v2 --workspace server
+      - run: npm run test:model-dispatch-scale --workspace server
+      - run: npm run test:config --workspace server
       - run: npm run test:device-auth --workspace server
       - run: npm run test:app-version --workspace server
-      - run: npx tsx --test server/test/model-actions.test.ts
+      - run: npm run test:model-actions --workspace server
       - run: npm run build

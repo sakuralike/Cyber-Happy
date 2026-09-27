@@ -306,7 +306,7 @@ export async function misreportAnalysis(q: DashboardQuery) {
 export async function health(q: DashboardQuery) {
   const { from, to } = resolveRange(q);
 
-  const [crashAgg, launches, inference] = await Promise.all([
+  const [crashAgg, launches] = await Promise.all([
     prisma.appEvent.aggregate({
       where: eventFilter(EventType.CRASH, from, to, q),
       _sum: { count: true },
@@ -316,28 +316,38 @@ export async function health(q: DashboardQuery) {
       select: { deviceId: true },
       distinct: ['deviceId'],
     }),
-    prisma.appEvent.findMany({
-      where: eventFilter(EventType.MODEL_CALL, from, to, q),
-      select: { payload: true, count: true },
-      take: 5000,
-    }),
   ]);
 
-  // 从模型调用事件的 payload 中提取实际推理耗时，算 P95
-  const latencies: number[] = [];
-  for (const r of inference) {
-    try {
-      const raw = JSON.parse(r.payload) as { inferenceMs?: number; latencyMs?: number };
-      const latency = raw.inferenceMs ?? raw.latencyMs;
-      if (typeof latency === 'number' && latency >= 0) {
-        for (let i = 0; i < Math.max(1, r.count); i += 1) latencies.push(Math.round(latency));
+  // 按主键游标分批读取全部事件，避免固定 take 截断；使用有界 bucket 控制内存。
+  const latencyBuckets = new Map<number, number>();
+  let sampleSize = 0;
+  let cursor: string | undefined;
+  while (true) {
+    const inference = await prisma.appEvent.findMany({
+      where: eventFilter(EventType.MODEL_CALL, from, to, q),
+      select: { id: true, payload: true, count: true },
+      orderBy: { id: 'asc' },
+      take: 1000,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (!inference.length) break;
+    for (const r of inference) {
+      try {
+        const raw = JSON.parse(r.payload) as { inferenceMs?: number; latencyMs?: number };
+        const latency = raw.inferenceMs ?? raw.latencyMs;
+        if (typeof latency === 'number' && Number.isFinite(latency) && latency >= 0) {
+          const bucket = latencyBucket(Math.round(latency));
+          latencyBuckets.set(bucket, (latencyBuckets.get(bucket) ?? 0) + Math.max(1, r.count));
+          sampleSize += Math.max(1, r.count);
+        }
+      } catch {
+        /* 忽略非法 JSON */
       }
-    } catch {
-      /* 忽略非法 JSON */
     }
+    if (inference.length < 1000) break;
+    cursor = inference[inference.length - 1]!.id;
   }
-  latencies.sort((a, b) => a - b);
-  const p95 = latencies.length ? latencies[Math.floor(latencies.length * 0.95)] ?? 0 : 0;
+  const p95 = percentileFromBuckets(latencyBuckets, sampleSize, 0.95);
 
   const active = launches.length;
   const crashes = crashAgg._sum.count ?? 0;
@@ -347,6 +357,29 @@ export async function health(q: DashboardQuery) {
     crashRate: active > 0 ? Number((crashes / active).toFixed(4)) : 0,
     activeDevices: active,
     inferenceP95Ms: p95,
-    sampleSize: latencies.length,
+    sampleSize,
   };
+}
+
+function latencyBucket(value: number): number {
+  if (value < 10) return 10;
+  if (value < 20) return 20;
+  if (value < 50) return 50;
+  if (value < 100) return 100;
+  if (value < 200) return 200;
+  if (value < 500) return 500;
+  if (value < 1000) return 1000;
+  if (value < 2000) return 2000;
+  return 5000;
+}
+
+function percentileFromBuckets(buckets: Map<number, number>, total: number, percentile: number): number {
+  if (total <= 0) return 0;
+  const target = Math.max(1, Math.ceil(total * percentile));
+  let seen = 0;
+  for (const [upperBound, count] of [...buckets.entries()].sort((a, b) => a[0] - b[0])) {
+    seen += count;
+    if (seen >= target) return upperBound;
+  }
+  return 0;
 }

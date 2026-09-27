@@ -22,7 +22,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.io.File
+import java.io.FileInputStream
 import java.io.OutputStream
+import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
@@ -70,6 +72,15 @@ data class SupportContent(
     val loginDisabledMessage: String = "用户登录暂未开放，请稍后再试",
     val registrationDisabledMessage: String = "用户注册暂未开放，请联系管理员",
     val inviteRequiredMessage: String = "当前注册需要邀请码",
+)
+
+data class PrivacyConsentStatus(
+    val privacyRequired: Boolean,
+    val currentVersion: String,
+    val consented: Boolean,
+    val required: Boolean,
+    val acceptedVersion: String? = null,
+    val acceptedAt: String? = null,
 )
 
 data class CheckInRecord(
@@ -203,6 +214,44 @@ class AppApiClient(
             },
     )
 
+    suspend fun fetchPrivacyConsent(): ApiResult<PrivacyConsentStatus> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val url = config.endpoint("api/v1/users/me/consent").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(Request.Builder().url(url).get().appToken(config.appToken).userToken(session.token).build()) { data ->
+            PrivacyConsentStatus(
+                privacyRequired = data.optBoolean("privacyRequired", true),
+                currentVersion = data.optString("currentVersion", "privacy-v1"),
+                consented = data.optBoolean("consented", false),
+                required = data.optBoolean("required", true),
+                acceptedVersion = data.optNullableString("acceptedVersion"),
+                acceptedAt = data.optNullableString("acceptedAt"),
+            )
+        }
+    }
+
+    suspend fun acceptPrivacyConsent(version: String): ApiResult<PrivacyConsentStatus> = withContext(Dispatchers.IO) {
+        val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
+        if (!config.isConfigured) return@withContext ApiResult.NotConfigured
+        val url = config.endpoint("api/v1/users/me/consent").toHttpUrlOrNull()
+            ?: return@withContext ApiResult.ParseError("服务地址无效")
+        executeJson(
+            Request.Builder().url(url).post(
+                JSONObject().put("privacyVersion", version).toString().toRequestBody(JSON_MEDIA_TYPE),
+            ).appToken(config.appToken).userToken(session.token).build(),
+        ) { data ->
+            PrivacyConsentStatus(
+                privacyRequired = data.optBoolean("privacyRequired", true),
+                currentVersion = data.optString("currentVersion", version),
+                consented = data.optBoolean("consented", true),
+                required = data.optBoolean("required", false),
+                acceptedVersion = data.optNullableString("acceptedVersion"),
+                acceptedAt = data.optNullableString("acceptedAt"),
+            )
+        }
+    }
+
     suspend fun updateMe(displayName: String, email: String): ApiResult<UserAccount> = withContext(Dispatchers.IO) {
         val session = userSessionProvider.get() ?: return@withContext ApiResult.HttpError(401, "请先登录")
         if (!config.isConfigured) return@withContext ApiResult.NotConfigured
@@ -293,11 +342,10 @@ class AppApiClient(
         val identity = identityStore.get()
         val requestUrl = config.endpoint("api/v1/check-in").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
-        executeJson(
+        executeDeviceJson(
             Request.Builder()
                 .url(requestUrl)
                 .post(JSONObject().put("deviceId", identity.deviceId).toString().toRequestBody(JSON_MEDIA_TYPE))
-                .appToken(config.appToken)
                 .userToken(session.token)
                 .build(),
         ) { data ->
@@ -327,8 +375,8 @@ class AppApiClient(
             .addQueryParameter("pageSize", pageSize.coerceIn(1, 100).toString())
             .apply { month?.takeIf { it.isNotBlank() }?.let { addQueryParameter("month", it) } }
             .build()
-        executeJson(
-            Request.Builder().url(url).get().appToken(config.appToken).userToken(session.token).build(),
+        executeDeviceJson(
+            Request.Builder().url(url).get().userToken(session.token).build(),
         ) { data -> parseCheckInHistory(data, page, pageSize) }
     }
 
@@ -340,7 +388,7 @@ class AppApiClient(
         if (!config.isConfigured) return ApiResult.NotConfigured
         val requestUrl = config.endpoint(path).toHttpUrlOrNull()
             ?: return ApiResult.ParseError("服务地址无效")
-        return executeJson(Request.Builder().url(requestUrl).get().appToken(config.appToken).userToken(session.token).build(), transform)
+        return executeDeviceJson(Request.Builder().url(requestUrl).get().userToken(session.token).build(), transform)
     }
 
     private fun parseCheckInOverview(data: JSONObject): CheckInOverview {
@@ -482,7 +530,7 @@ class AppApiClient(
             .addQueryParameter("platform", "ANDROID")
             .addQueryParameter("channel", "official")
             .build()
-        executeJson(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()) { data ->
+        executeDeviceJson(Request.Builder().url(requestUrl).get().appToken(config.appToken).build()) { data ->
             val hasUpdate = data.optBoolean("hasUpdate", false)
             val latest = data.optJSONObject("latest")
             val apkSha256 = latest?.optString("sha256")?.takeIf { it.isNotBlank() }
@@ -491,6 +539,12 @@ class AppApiClient(
                 AppDownloadMode.EXTERNAL.name -> AppDownloadMode.EXTERNAL
                 else -> if (apkSha256 != null) AppDownloadMode.SERVER else AppDownloadMode.EXTERNAL
             }
+            val downloadUrl = if (downloadMode == AppDownloadMode.SERVER) {
+                latest?.optString("downloadUrl")?.takeIf { it.isNotBlank() }
+                    ?: latest?.optString("apkUrl")?.takeIf { it.isNotBlank() }
+            } else {
+                latest?.optString("apkUrl")?.takeIf { it.isNotBlank() }
+            }
             AppUpdateInfo(
                 hasUpdate = hasUpdate,
                 updateType = data.optString("updateType").takeIf { it.isNotBlank() },
@@ -498,7 +552,7 @@ class AppApiClient(
                 versionName = latest?.optString("versionName")?.takeIf { it.isNotBlank() },
                 versionCode = latest?.takeIf { it.has("versionCode") }?.optInt("versionCode"),
                 releaseNotes = latest?.optString("releaseNotes")?.takeIf { it.isNotBlank() },
-                apkUrl = latest?.optString("apkUrl")?.takeIf { it.isNotBlank() }?.let(config::resolve),
+                apkUrl = downloadUrl?.let(config::resolve),
                 apkSizeBytes = latest?.optLong("apkSize", Long.MIN_VALUE)?.takeIf { it != Long.MIN_VALUE },
                 apkSha256 = apkSha256,
             )
@@ -556,7 +610,7 @@ class AppApiClient(
             .appToken(config.appToken)
             .userToken(session.token)
             .build()
-        executeJson(request) { data -> data.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("上报响应缺少 id") }
+        executeDeviceJson(request) { data -> data.optString("id").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("上报响应缺少 id") }
     }
 
     suspend fun reportEvent(
@@ -580,7 +634,7 @@ class AppApiClient(
             .put("payload", payload)
         val requestUrl = config.endpoint("api/v1/app-events").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
-        executeJson(
+        executeDeviceJson(
             Request.Builder()
                 .url(requestUrl)
                 .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
@@ -633,6 +687,10 @@ class AppApiClient(
                     inputSize = model.optInt("inputSize", 0),
                     labels = labels,
                     sha256 = model.optString("sha256"),
+                    modelId = model.optNullableString("id"),
+                    deviceId = identity.deviceId,
+                    generation = model.optLong("generation", 0L),
+                    manifestHash = model.optNullableString("manifestHash"),
                     inputName = model.optContractString("inputName", DEFAULT_NCNN_INPUT_NAME),
                     outputName = model.optContractString("outputName", DEFAULT_NCNN_OUTPUT_NAME),
                     outputLayout = model.optContractString("outputLayout", NCNN_OUTPUT_LAYOUT_FIELDS_BY_CANDIDATES),
@@ -706,7 +764,7 @@ class AppApiClient(
         url: String,
         output: OutputStream,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
-    ): ApiResult<Long> = downloadBinary(url, output, onProgress, deviceSigned = false)
+    ): ApiResult<Long> = downloadBinary(url, output, onProgress, deviceSigned = true)
 
     private suspend fun downloadBinary(
         url: String,
@@ -723,33 +781,55 @@ class AppApiClient(
             val baseRequest = Request.Builder().url(requestUrl).get()
                 .apply { if (!deviceSigned) appToken(config.appToken) }
                 .build()
-            val authorized = if (deviceSigned) deviceAuthClient?.authorize(baseRequest) ?: ApiResult.Success(baseRequest) else ApiResult.Success(baseRequest)
-            val request = when (authorized) {
-                is ApiResult.Success -> authorized.value
-                ApiResult.NotConfigured -> return@withContext ApiResult.NotConfigured
-                is ApiResult.HttpError -> return@withContext authorized
-                is ApiResult.NetworkError -> return@withContext authorized
-                is ApiResult.ParseError -> return@withContext authorized
-            }
-            downloadClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext ApiResult.HttpError(response.code, response.message)
-                val body = response.body ?: return@withContext ApiResult.ParseError("下载响应为空")
-                val total = body.contentLength().takeIf { it >= 0L }
-                var downloaded = 0L
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        if (read == 0) continue
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        onProgress(downloaded, total)
+            suspend fun downloadAttempt(retried: Boolean): ApiResult<Long> {
+                val authorized = if (deviceSigned) deviceAuthClient?.authorize(baseRequest) ?: ApiResult.Success(baseRequest) else ApiResult.Success(baseRequest)
+                when (authorized) {
+                    is ApiResult.Success -> {
+                        val result: ApiResult<Long> = downloadClient.newCall(authorized.value).execute().use { response ->
+                            if (!response.isSuccessful) {
+                                ApiResult.HttpError(response.code, response.message)
+                            } else {
+                                val body = response.body
+                                if (body == null) {
+                                    ApiResult.ParseError("下载响应为空")
+                                } else {
+                                    val total = body.contentLength().takeIf { it >= 0L }
+                                    var downloaded = 0L
+                                    body.byteStream().use { input ->
+                                        val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
+                                        while (true) {
+                                            val read = input.read(buffer)
+                                            if (read < 0) break
+                                            if (read == 0) continue
+                                            output.write(buffer, 0, read)
+                                            downloaded += read
+                                            onProgress(downloaded, total)
+                                        }
+                                    }
+                                    output.flush()
+                                    ApiResult.Success(downloaded)
+                                }
+                            }
+                        }
+                        if (deviceSigned && deviceAuthClient != null && result is ApiResult.HttpError && result.isAuthFailure() && !retried) {
+                            deviceAuthClient.clear()
+                            return downloadAttempt(retried = true)
+                        }
+                        return result
                     }
+                    ApiResult.NotConfigured -> return ApiResult.NotConfigured
+                    is ApiResult.HttpError -> {
+                        if (deviceSigned && deviceAuthClient != null && authorized.isAuthFailure() && !retried) {
+                            deviceAuthClient.clear()
+                            return downloadAttempt(retried = true)
+                        }
+                        return authorized
+                    }
+                    is ApiResult.NetworkError -> return authorized
+                    is ApiResult.ParseError -> return authorized
                 }
-                output.flush()
-                ApiResult.Success(downloaded)
             }
+            return@withContext downloadAttempt(retried = false)
         } catch (error: IOException) {
             ApiResult.NetworkError(error.message ?: "模型下载失败")
         } catch (error: Exception) {
@@ -765,47 +845,86 @@ class AppApiClient(
     suspend fun downloadModel(url: String, output: OutputStream): ApiResult<Long> =
         downloadModel(url, output) { _, _ -> }
 
-    private fun <T> executeJson(request: Request, transform: (JSONObject) -> T): ApiResult<T> = try {
-        httpClient.newCall(request).execute().use { response ->
-            val payload = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val errorEnvelope = runCatching { JSONObject(payload) }.getOrNull()
-                val errorCode = errorEnvelope?.optInt("code", 0)?.takeIf { it != 0 }
-                return ApiResult.HttpError(
-                    response.code,
-                    errorEnvelope?.optString("message", response.message).orEmpty().ifBlank { response.message },
-                    errorCode,
-                )
+    private suspend fun <T> executeJson(
+        request: Request,
+        clearUserOnAuthFailure: Boolean = true,
+        transform: (JSONObject) -> T,
+    ): ApiResult<T> {
+        val result: ApiResult<T> = try {
+            httpClient.newCall(request).execute().use { response ->
+                val payload = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val errorEnvelope = runCatching { JSONObject(payload) }.getOrNull()
+                    val errorCode = errorEnvelope?.optInt("code", 0)?.takeIf { it != 0 }
+                    ApiResult.HttpError(
+                        response.code,
+                        errorEnvelope?.optString("message", response.message).orEmpty().ifBlank { response.message },
+                        errorCode,
+                    )
+                } else {
+                    val envelope = JSONObject(payload)
+                    if (envelope.optInt("code", -1) != 0) {
+                        ApiResult.HttpError(
+                            response.code,
+                            envelope.optString("message", "服务端拒绝请求"),
+                            envelope.optInt("code").takeIf { it != 0 },
+                        )
+                    } else {
+                        val data = envelope.optJSONObject("data") ?: JSONObject()
+                        ApiResult.Success(transform(data))
+                    }
+                }
             }
-            val envelope = JSONObject(payload)
-            if (envelope.optInt("code", -1) != 0) {
-                return ApiResult.HttpError(
-                    response.code,
-                    envelope.optString("message", "服务端拒绝请求"),
-                    envelope.optInt("code").takeIf { it != 0 },
-                )
-            }
-            val data = envelope.optJSONObject("data") ?: JSONObject()
-            ApiResult.Success(transform(data))
+        } catch (error: IOException) {
+            ApiResult.NetworkError(error.message ?: "网络不可用")
+        } catch (error: Exception) {
+            ApiResult.ParseError(error.message ?: "响应解析失败")
         }
-    } catch (error: IOException) {
-        ApiResult.NetworkError(error.message ?: "网络不可用")
-    } catch (error: Exception) {
-        ApiResult.ParseError(error.message ?: "响应解析失败")
+        if (clearUserOnAuthFailure && result is ApiResult.HttpError && result.isAuthFailure() && request.header("Authorization") != null) {
+            clearUserSession()
+        }
+        return result
     }
 
     private suspend fun <T> executeDeviceJson(request: Request, transform: (JSONObject) -> T): ApiResult<T> {
-        val authorized = deviceAuthClient?.authorize(request) ?: ApiResult.Success(request)
-        return when (authorized) {
-            is ApiResult.Success -> executeJson(authorized.value, transform)
-            ApiResult.NotConfigured -> ApiResult.NotConfigured
-            is ApiResult.HttpError -> authorized
-            is ApiResult.NetworkError -> authorized
-            is ApiResult.ParseError -> authorized
+        var retried = false
+        while (true) {
+            val authorized = deviceAuthClient?.authorize(request) ?: ApiResult.Success(request)
+            when (authorized) {
+                is ApiResult.Success -> {
+                    val result = executeJson(
+                        authorized.value,
+                        clearUserOnAuthFailure = deviceAuthClient == null,
+                        transform = transform,
+                    )
+                    if (result is ApiResult.HttpError && result.isAuthFailure() && deviceAuthClient != null && !retried) {
+                        deviceAuthClient.clear()
+                        retried = true
+                        continue
+                    }
+                    return result
+                }
+                is ApiResult.HttpError -> {
+                    if (authorized.isAuthFailure() && deviceAuthClient != null && !retried) {
+                        deviceAuthClient.clear()
+                        retried = true
+                        continue
+                    }
+                    return authorized
+                }
+                ApiResult.NotConfigured -> return ApiResult.NotConfigured
+                is ApiResult.NetworkError -> return authorized
+                is ApiResult.ParseError -> return authorized
+            }
         }
     }
 
-    private fun Request.Builder.appToken(token: String) = header("X-App-Token", token)
+    private suspend fun clearUserSession() {
+        runCatching { userSessionProvider.clear() }
+    }
+
+    private fun Request.Builder.appToken(token: String): Request.Builder =
+        token.takeIf { it.isNotBlank() }?.let { header("X-App-Token", it) } ?: this
 
     private fun Request.Builder.userToken(token: String?) = token
         ?.takeIf { it.isNotBlank() }
@@ -819,15 +938,31 @@ class AppApiClient(
             "VIDEO" -> "video/mp4"
             else -> "image/jpeg"
         }.toMediaType()
+        val contentSha256 = sha256(file)
         val multipart = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("file", file.name, file.asRequestBody(mediaType))
             .build()
         val requestUrl = config.endpoint("api/v1/files/upload?bizType=$bizType").toHttpUrlOrNull()
             ?: return@withContext ApiResult.ParseError("服务地址无效")
-        executeJson(
-            Request.Builder().url(requestUrl).post(multipart).appToken(config.appToken).userToken(userToken).build(),
+        executeDeviceJson(
+            Request.Builder().url(requestUrl).post(multipart).appToken(config.appToken).userToken(userToken)
+                .header("X-Device-Content-SHA256", contentSha256)
+                .build(),
         ) { data -> data.optString("url").takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("媒体上传响应缺少 url") }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(32 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
 
@@ -851,6 +986,8 @@ private fun ApiResult<*>.asModelCheckFailure(): ApiResult<ModelCheckInfo> = when
     is ApiResult.ParseError -> ApiResult.ParseError(message)
     is ApiResult.Success<*> -> ApiResult.ParseError("设备密钥注册响应无效")
 }
+
+private fun ApiResult.HttpError.isAuthFailure(): Boolean = statusCode == 401 || statusCode == 403
 
 private fun String.toEpochMillisOrNull(): Long? = takeIf { it.isNotBlank() }?.let {
     try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null }

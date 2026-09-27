@@ -41,12 +41,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.cyberfish.app.alert.AlertPreferences
 import com.cyberfish.app.capture.FrameMetrics
+import com.cyberfish.app.capture.VideoClipResult
 import com.cyberfish.app.trigger.TriggerConfig
 import com.cyberfish.app.ui.components.MetricCard
 import com.cyberfish.app.ui.components.ScreenTitle
 import com.cyberfish.app.ui.components.SectionCard
 import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.inference.Detector
+import com.cyberfish.app.inference.NcnnRuntimeOptions
 import com.cyberfish.app.inference.UnavailableDetector
 
 @Composable
@@ -60,7 +62,9 @@ fun MonitorScreen(
     isLoggedIn: Boolean = true,
     onRequireLogin: () -> Unit = {},
     onFrameMetrics: (FrameMetrics) -> Unit = {},
+    onVideoClipReady: (VideoClipResult) -> Unit = {},
     onConfidenceThresholdChange: (Float) -> Unit = {},
+    runtimeOptions: NcnnRuntimeOptions = NcnnRuntimeOptions.forPerformanceMode(NcnnRuntimeOptions.MODE_STANDARD),
     detector: Detector = UnavailableDetector(),
 ) {
     val context = LocalContext.current
@@ -95,6 +99,8 @@ fun MonitorScreen(
                 detector = detector,
                 onFrameMetrics = onFrameMetrics,
                 onLiveFrameMetrics = { liveFrameMetrics = it },
+                onVideoClipReady = onVideoClipReady,
+                runtimeOptions = runtimeOptions,
                 onTrigger = {
                     triggerEvent = it
                     falsePositiveMarked = false

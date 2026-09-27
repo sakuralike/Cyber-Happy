@@ -195,6 +195,8 @@ model AppVersion {
   apkSize      BigInt?
   apkSha256    String?
   apkFileId    String?
+  applicationId String?
+  certificateSha256 String?
 
   minSupportedCode Int? // 低于此版本强制升级
 
@@ -262,6 +264,12 @@ model MlModel {
   signatureAlgorithm String?
   publicKeyId String?
   signatureExpiresAt String?
+  manifestSignature String?
+  manifestSignatureAlgorithm String?
+  manifestPublicKeyId String?
+  manifestHash String?
+  containerVersion Int @default(1)
+  generation Int @default(1)
   runtimeSignatureName String?
   inputName String?
   inputLayout String @default("NCHW")
@@ -623,6 +631,11 @@ model FileAsset {
 
   uploadedById String?
   uploadedBy   AdminUser? @relation(fields: [uploadedById], references: [id])
+  ownerUserId String?
+  deviceId String?
+  idempotencyKey String? @unique
+  status String @default("READY")
+  retentionUntil DateTime?
   createdAt    DateTime   @default(now())
 
   downloadLinks   DownloadLink[] @relation("DownloadLinkFile")
@@ -631,6 +644,8 @@ model FileAsset {
 
   @@index([bizType])
   @@index([sha256])
+  @@index([ownerUserId, createdAt])
+  @@index([deviceId, createdAt])
 }
 
 // ============================================================

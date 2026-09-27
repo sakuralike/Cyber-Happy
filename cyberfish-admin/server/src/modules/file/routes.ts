@@ -5,6 +5,7 @@ import { sendOk, sendCreated } from '../../lib/response';
 import { AppError } from '../../lib/errors';
 import { uploadQuerySchema, fileIdParamSchema } from './schema';
 import * as service from './service';
+import { requireDeviceAuth } from '../device-auth/guard';
 
 const routes: FastifyPluginAsync = async (app) => {
   const uploadPermission = app.requirePermission('file:upload');
@@ -12,7 +13,7 @@ const routes: FastifyPluginAsync = async (app) => {
   const uploadGuard = async (request: FastifyRequest, reply: FastifyReply) => {
     const isAppClient = (request as FastifyRequest & { isAppClient?: boolean }).isAppClient;
     const bizType = String((request.query as Record<string, unknown> | undefined)?.bizType ?? '');
-    if (isAppClient && ['IMAGE', 'VIDEO'].includes(bizType)) return;
+    if ((isAppClient || typeof request.headers['x-device-authorization'] === 'string') && ['IMAGE', 'VIDEO'].includes(bizType)) return;
     if (isAppClient) throw AppError.forbidden('APP 端仅允许上传误报媒体');
     return uploadPermission(request, reply);
   };
@@ -22,8 +23,20 @@ const routes: FastifyPluginAsync = async (app) => {
   };
 
   /** 统一文件上传：multipart/form-data，字段 bizType + file */
-  app.post('/upload', { onRequest: [uploadGuard] }, async (request, reply) => {
+  app.post('/upload', { onRequest: [uploadGuard], preValidation: [requireDeviceAuth(app, 'media:write')] }, async (request, reply) => {
     const { bizType } = parseOrThrow(uploadQuerySchema, request.query);
+    const appUser = await app.resolveAppUser(request);
+    if (!appUser) throw AppError.unauthorized('媒体上传需要用户登录');
+    const deviceContentHash = typeof request.headers['x-device-content-sha256'] === 'string'
+      ? request.headers['x-device-content-sha256'].trim()
+      : '';
+    if (request.currentDevice && !/^[a-f0-9]{64}$/i.test(deviceContentHash)) {
+      throw AppError.badRequest('设备媒体摘要缺失或格式无效');
+    }
+    const deviceId = request.currentDevice?.deviceId;
+    const idempotencyKey = deviceId && deviceContentHash
+      ? `${deviceId}:${bizType}:${deviceContentHash.toLowerCase()}`
+      : undefined;
 
     const parts = request.parts();
     let handled = false;
@@ -41,7 +54,11 @@ const routes: FastifyPluginAsync = async (app) => {
         bizType,
         part.filename || 'unknown',
         part.mimetype,
-        request.currentUser?.id,
+        undefined,
+        deviceContentHash || undefined,
+        appUser.id,
+        deviceId,
+        idempotencyKey,
       );
     }
 

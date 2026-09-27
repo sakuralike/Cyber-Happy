@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from 'antd';
-import { CopyOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Button, Card, Drawer, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from 'antd';
+import { CopyOutlined, EyeOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as inviteApi from '../api/invite';
 import { notifyError } from '../api/client';
@@ -11,6 +11,7 @@ export function InviteCodePage() {
   const [form] = Form.useForm();
   const [open, setOpen] = useState(false);
   const [generated, setGenerated] = useState<string[]>([]);
+  const [redemptionInvite, setRedemptionInvite] = useState<inviteApi.InviteCode | null>(null);
   const query = useQuery({ queryKey: ['invite-codes'], queryFn: () => inviteApi.listInviteCodes({ page: 1, pageSize: 100 }) });
   const create = useMutation({
     mutationFn: (values: { mode: inviteApi.InviteMode; quantity: number; maxUses: number; expiresAt?: string; note?: string }) =>
@@ -24,6 +25,11 @@ export function InviteCodePage() {
     onError: notifyError,
   });
   const copy = async () => { await navigator.clipboard.writeText(generated.join('\n')); message.success('已复制邀请码'); };
+  const redemptions = useQuery({
+    queryKey: ['invite-redemptions', redemptionInvite?.id],
+    queryFn: () => inviteApi.listInviteRedemptions(redemptionInvite!.id, { page: 1, pageSize: 100 }),
+    enabled: redemptionInvite !== null,
+  });
   return <div>
     <div className="page-heading"><div><h1>邀请码管理</h1><p>生成、查看和撤销普通用户注册邀请码</p></div><Space><Button icon={<ReloadOutlined />} onClick={() => void query.refetch()} /><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ mode: 'SINGLE', quantity: 1, maxUses: 1 }); setOpen(true); }}>生成邀请码</Button></Space></div>
     <Card>
@@ -34,7 +40,7 @@ export function InviteCodePage() {
         { title: '状态', dataIndex: 'status', render: (value: inviteApi.InviteStatus) => <Tag color={value === 'ACTIVE' ? 'green' : value === 'REVOKED' ? 'default' : 'orange'}>{value}</Tag> },
         { title: '失效时间', dataIndex: 'expiresAt', render: (value: string | null) => value ? formatDateTime(value) : '永不失效' },
         { title: '创建时间', dataIndex: 'createdAt', render: (value: string) => formatDateTime(value) },
-        { title: '操作', render: (_: unknown, row: inviteApi.InviteCode) => <Button size="small" disabled={row.status !== 'ACTIVE'} onClick={() => revoke.mutate(row.id)}>撤销</Button> },
+        { title: '操作', render: (_: unknown, row: inviteApi.InviteCode) => <Space><Button size="small" icon={<EyeOutlined />} onClick={() => setRedemptionInvite(row)}>核销记录</Button><Button size="small" disabled={row.status !== 'ACTIVE'} onClick={() => revoke.mutate(row.id)}>撤销</Button></Space> },
       ]} />
     </Card>
     <Modal title="生成邀请码" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} confirmLoading={create.isPending} destroyOnClose>
@@ -49,5 +55,20 @@ export function InviteCodePage() {
     <Modal title="本批邀请码仅显示一次" open={generated.length > 0} onCancel={() => setGenerated([])} footer={<Button icon={<CopyOutlined />} onClick={copy}>复制全部</Button>}>
       <Input.TextArea value={generated.join('\n')} readOnly rows={Math.min(12, generated.length + 1)} />
     </Modal>
+    <Drawer title={`${redemptionInvite?.codePrefix ?? ''} · 核销记录`} open={redemptionInvite !== null} onClose={() => setRedemptionInvite(null)} width={620}>
+      <Table
+        rowKey="id"
+        loading={redemptions.isLoading}
+        dataSource={redemptions.data?.list ?? []}
+        pagination={false}
+        columns={[
+          { title: '用户', render: (_: unknown, row: inviteApi.InviteRedemption) => `${row.user.displayName}（${row.user.username}）` },
+          { title: '渠道', dataIndex: 'channel' },
+          { title: '设备', dataIndex: 'deviceId', render: (value: string | null) => value ?? '-' },
+          { title: 'IP', dataIndex: 'ip', render: (value: string | null) => value ?? '-' },
+          { title: '注册时间', dataIndex: 'registeredAt', render: (value: string) => formatDateTime(value) },
+        ]}
+      />
+    </Drawer>
   </div>;
 }

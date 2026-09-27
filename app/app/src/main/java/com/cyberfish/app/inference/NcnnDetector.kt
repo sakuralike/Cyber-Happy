@@ -12,7 +12,7 @@ import java.util.zip.ZipOutputStream
 class NcnnDetector private constructor(
     private val descriptor: NcnnModelDescriptor,
     private val nativeHandle: Long,
-) : CloseableDetector {
+) : CloseableDetector, RuntimeOptionsDetector {
     private val lock = Any()
 
     init {
@@ -29,6 +29,9 @@ class NcnnDetector private constructor(
     override val requiresPixelData: Boolean
         get() = true
 
+    @Volatile
+    private var runtimeOptions = NcnnRuntimeOptions.forPerformanceMode(NcnnRuntimeOptions.MODE_STANDARD)
+
     override fun detect(frame: CameraFrame): Detection? {
         val pixels = frame.normalizedRgb ?: return null
         if (pixels.size != inputSize * inputSize * 3) return null
@@ -44,6 +47,14 @@ class NcnnDetector private constructor(
             if (handleClosed) return
             NcnnNative.destroy(nativeHandle)
             handleClosed = true
+        }
+    }
+
+    override fun setRuntimeOptions(options: NcnnRuntimeOptions) {
+        synchronized(lock) {
+            if (handleClosed || runtimeOptions == options) return
+            NcnnNative.setNumThreads(nativeHandle, options.numThreads)
+            runtimeOptions = options
         }
     }
 
@@ -131,6 +142,7 @@ class NcnnDetector private constructor(
                 descriptor.outputName,
                 descriptor.outputLayout,
                 descriptor.valuesPerDetection,
+                NcnnRuntimeOptions.forPerformanceMode(NcnnRuntimeOptions.MODE_STANDARD).numThreads,
             )
             require(handle != 0L) { "NCNN 模型加载失败" }
             return NcnnDetector(descriptor, handle)

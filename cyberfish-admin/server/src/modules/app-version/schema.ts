@@ -4,6 +4,7 @@ import { listQuerySchema, dateStr } from '../../lib/zod';
 
 const downloadUrlSchema = z.string().trim().url().max(500).refine((value) => /^https?:\/\//i.test(value), '仅支持 HTTP 或 HTTPS 下载地址');
 const sha256Schema = z.string().trim().regex(/^[a-f0-9]{64}$/i, 'SHA-256 必须是 64 位十六进制字符串');
+const applicationIdSchema = z.string().trim().regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/, 'applicationId 格式无效');
 
 export const appVersionDownloadSchema = z.object({
   downloadMode: z.nativeEnum(AppDownloadMode).optional(),
@@ -11,6 +12,8 @@ export const appVersionDownloadSchema = z.object({
   apkSize: z.number().int().positive().optional().nullable(),
   apkSha256: sha256Schema.optional().nullable(),
   apkFileId: z.string().min(1).optional().nullable(),
+  applicationId: applicationIdSchema.optional().nullable(),
+  certificateSha256: sha256Schema.optional().nullable(),
 }).superRefine((value, ctx) => {
   const downloadMode = value.downloadMode ?? (value.apkFileId ? AppDownloadMode.SERVER : AppDownloadMode.EXTERNAL);
   if (downloadMode === AppDownloadMode.EXTERNAL && !value.apkUrl) {
@@ -49,6 +52,8 @@ const appVersionBaseFields = {
   apkSize: z.number().int().positive().optional().nullable(),
   apkSha256: sha256Schema.optional().nullable(),
   apkFileId: z.string().min(1).optional().nullable(),
+  applicationId: applicationIdSchema.optional().nullable(),
+  certificateSha256: sha256Schema.optional().nullable(),
 };
 
 const appVersionBaseSchema = z.object(appVersionBaseFields);
