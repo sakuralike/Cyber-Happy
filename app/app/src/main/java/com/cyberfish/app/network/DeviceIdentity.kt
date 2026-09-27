@@ -44,16 +44,27 @@ class DeviceIdentityStore(private val context: Context) : DeviceIdentityProvider
         val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
             ?.trim()
             ?.takeIf { it.isNotEmpty() && !it.equals("9774d56d682e549c", ignoreCase = true) }
-        if (androidId != null) return "android-${sha256(androidId).take(32)}"
+        if (androidId != null) return deviceIdForApplication(context.packageName, androidId)
         return fallback ?: "install-${UUID.randomUUID()}"
     }
-
-    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
-        .digest(value.toByteArray(Charsets.UTF_8))
-        .joinToString("") { "%02x".format(it) }
 
     private companion object {
         val INITIALIZATION_LOCK = Mutex()
         val DEVICE_ID = stringPreferencesKey("device_id")
     }
 }
+
+internal fun deviceIdForApplication(applicationId: String, androidId: String): String {
+    val identityMaterial = if (applicationId == RELEASE_APPLICATION_ID) {
+        androidId
+    } else {
+        "$androidId|$applicationId"
+    }
+    return "android-${sha256(identityMaterial).take(32)}"
+}
+
+private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+    .digest(value.toByteArray(Charsets.UTF_8))
+    .joinToString("") { "%02x".format(it) }
+
+private const val RELEASE_APPLICATION_ID = "com.cyberfish.app"
