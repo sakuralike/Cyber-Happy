@@ -1,5 +1,6 @@
 package com.cyberfish.app.capture
 
+import android.annotation.SuppressLint
 import android.graphics.RectF
 import androidx.annotation.OptIn
 import androidx.camera.core.ImageProxy
@@ -40,6 +41,7 @@ internal data class CameraXFrameTransform(
 }
 
 @OptIn(markerClass = [TransformExperimental::class])
+@SuppressLint("RestrictedApi")
 internal class CameraXDetectionCoordinateMapper {
     private val transformFactory = ImageProxyTransformFactory().apply {
         setUsingCropRect(true)
@@ -234,6 +236,8 @@ private val VALID_ROTATIONS = setOf(0, 90, 180, 270)
 private fun PreviewRect.isFinite(): Boolean =
     left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite()
 
+@OptIn(markerClass = [TransformExperimental::class])
+@SuppressLint("RestrictedApi")
 private fun OutputTransform.hasOrientedOutput(source: CameraXFrameTransform): Boolean {
     val transformed = RectF(-1f, -1f, 1f, 1f)
     matrix.mapRect(transformed)
@@ -243,6 +247,8 @@ private fun OutputTransform.hasOrientedOutput(source: CameraXFrameTransform): Bo
         nearlyEqual(transformed.height(), expectedHeight)
 }
 
+@OptIn(markerClass = [TransformExperimental::class])
+@SuppressLint("RestrictedApi")
 private fun OutputTransform.usesPixelCoordinates(widthPx: Float, heightPx: Float): Boolean {
     val transformed = RectF(-1f, -1f, 1f, 1f)
     matrix.mapRect(transformed)
