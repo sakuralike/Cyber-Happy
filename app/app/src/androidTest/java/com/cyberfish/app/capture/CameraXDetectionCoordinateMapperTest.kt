@@ -197,29 +197,30 @@ class CameraXDetectionCoordinateMapperTest {
 
         val mapper = CameraXDetectionCoordinateMapper()
         val source = mapper.capture(image)
+        val target = outputTransform(width = 400, height = 200)
         val mapped = mapper.map(
             detection = Detection(
                 bounds = DetectionBounds(left = 0.1f, top = 0.2f, right = 0.3f, bottom = 0.6f),
                 confidence = 0.9f,
             ),
             source = source,
-            target = source.outputTransform,
-            previewWidthPx = 200f,
-            previewHeightPx = 100f,
+            target = target,
+            previewWidthPx = 400f,
+            previewHeightPx = 200f,
         )
 
         requireNotNull(mapped)
-        assertEquals(20f, mapped.boundsInPreview.left, EPSILON)
-        assertEquals(20f, mapped.boundsInPreview.top, EPSILON)
-        assertEquals(60f, mapped.boundsInPreview.right, EPSILON)
-        assertEquals(60f, mapped.boundsInPreview.bottom, EPSILON)
+        assertEquals(40f, mapped.boundsInPreview.left, EPSILON)
+        assertEquals(40f, mapped.boundsInPreview.top, EPSILON)
+        assertEquals(120f, mapped.boundsInPreview.right, EPSILON)
+        assertEquals(120f, mapped.boundsInPreview.bottom, EPSILON)
 
         val roundTripped = mapper.mapPreviewToSource(
             boundsInPreview = mapped.boundsInPreview,
             source = source,
-            target = source.outputTransform,
-            previewWidthPx = 200f,
-            previewHeightPx = 100f,
+            target = target,
+            previewWidthPx = 400f,
+            previewHeightPx = 200f,
         )
         requireNotNull(roundTripped)
         assertEquals(0.1f, roundTripped.left, ROUND_TRIP_EPSILON)

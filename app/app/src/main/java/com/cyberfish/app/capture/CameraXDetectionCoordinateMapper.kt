@@ -1,13 +1,14 @@
 package com.cyberfish.app.capture
 
 import android.annotation.SuppressLint
+import android.graphics.Matrix
 import android.graphics.RectF
+import android.util.Size
 import androidx.annotation.OptIn
 import androidx.camera.core.ImageProxy
 import androidx.camera.view.PreviewView
 import androidx.camera.view.TransformExperimental
 import androidx.camera.view.transform.CoordinateTransform
-import androidx.camera.view.transform.ImageProxyTransformFactory
 import androidx.camera.view.transform.OutputTransform
 import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.DetectionBounds
@@ -43,16 +44,30 @@ internal data class CameraXFrameTransform(
 @OptIn(markerClass = [TransformExperimental::class])
 @SuppressLint("RestrictedApi")
 internal class CameraXDetectionCoordinateMapper {
-    private val transformFactory = ImageProxyTransformFactory().apply {
-        setUsingCropRect(true)
-        setUsingRotationDegrees(true)
-    }
-
     fun capture(image: ImageProxy): CameraXFrameTransform {
         val rotationDegrees = Math.floorMod(image.imageInfo.rotationDegrees, 360)
         val cropRect = image.cropRect
+        val orientedWidthPx = if (rotationDegrees == 90 || rotationDegrees == 270) {
+            cropRect.height()
+        } else {
+            cropRect.width()
+        }
+        val orientedHeightPx = if (rotationDegrees == 90 || rotationDegrees == 270) {
+            cropRect.width()
+        } else {
+            cropRect.height()
+        }
         return CameraXFrameTransform(
-            outputTransform = transformFactory.getOutputTransform(image),
+            outputTransform = OutputTransform(
+                Matrix().apply {
+                    setRectToRect(
+                        RectF(-1f, -1f, 1f, 1f),
+                        RectF(0f, 0f, orientedWidthPx.toFloat(), orientedHeightPx.toFloat()),
+                        Matrix.ScaleToFit.FILL,
+                    )
+                },
+                Size(orientedWidthPx, orientedHeightPx),
+            ),
             cropWidthPx = cropRect.width(),
             cropHeightPx = cropRect.height(),
             rotationDegrees = rotationDegrees,
