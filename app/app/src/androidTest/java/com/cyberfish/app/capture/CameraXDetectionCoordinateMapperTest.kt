@@ -1,9 +1,12 @@
 package com.cyberfish.app.capture
 
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.RectF
 import android.util.Size
 import androidx.annotation.OptIn
+import androidx.camera.core.ImageInfo
+import androidx.camera.core.ImageProxy
 import androidx.camera.view.TransformExperimental
 import androidx.camera.view.transform.OutputTransform
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -13,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.lang.reflect.Proxy
 
 @RunWith(AndroidJUnit4::class)
 @OptIn(markerClass = [TransformExperimental::class])
@@ -168,6 +172,63 @@ class CameraXDetectionCoordinateMapperTest {
     }
 
     @Test
+    fun captureUsesRotationOrientedCoordinatesWithoutSecondRotation() {
+        val imageInfo = Proxy.newProxyInstance(
+            ImageInfo::class.java.classLoader,
+            arrayOf(ImageInfo::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getRotationDegrees" -> 90
+                else -> defaultValue(method.returnType)
+            }
+        } as ImageInfo
+        val image = Proxy.newProxyInstance(
+            ImageProxy::class.java.classLoader,
+            arrayOf(ImageProxy::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getCropRect" -> Rect(0, 0, 100, 200)
+                "getWidth" -> 100
+                "getHeight" -> 200
+                "getImageInfo" -> imageInfo
+                else -> defaultValue(method.returnType)
+            }
+        } as ImageProxy
+
+        val mapper = CameraXDetectionCoordinateMapper()
+        val source = mapper.capture(image)
+        val mapped = mapper.map(
+            detection = Detection(
+                bounds = DetectionBounds(left = 0.1f, top = 0.2f, right = 0.3f, bottom = 0.6f),
+                confidence = 0.9f,
+            ),
+            source = source,
+            target = source.outputTransform,
+            previewWidthPx = 200f,
+            previewHeightPx = 100f,
+        )
+
+        requireNotNull(mapped)
+        assertEquals(20f, mapped.boundsInPreview.left, EPSILON)
+        assertEquals(20f, mapped.boundsInPreview.top, EPSILON)
+        assertEquals(60f, mapped.boundsInPreview.right, EPSILON)
+        assertEquals(60f, mapped.boundsInPreview.bottom, EPSILON)
+
+        val roundTripped = mapper.mapPreviewToSource(
+            boundsInPreview = mapped.boundsInPreview,
+            source = source,
+            target = source.outputTransform,
+            previewWidthPx = 200f,
+            previewHeightPx = 100f,
+        )
+        requireNotNull(roundTripped)
+        assertEquals(0.1f, roundTripped.left, ROUND_TRIP_EPSILON)
+        assertEquals(0.2f, roundTripped.top, ROUND_TRIP_EPSILON)
+        assertEquals(0.3f, roundTripped.right, ROUND_TRIP_EPSILON)
+        assertEquals(0.6f, roundTripped.bottom, ROUND_TRIP_EPSILON)
+    }
+
+    @Test
     fun previewMappingRoundTripsForAllRotations() {
         val mapper = CameraXDetectionCoordinateMapper()
         val expected = DetectionBounds(left = 0.1f, top = 0.2f, right = 0.3f, bottom = 0.6f)
@@ -316,6 +377,18 @@ class CameraXDetectionCoordinateMapperTest {
             )
         }
         return OutputTransform(matrix, Size(width, height))
+    }
+
+    private fun defaultValue(type: Class<*>): Any? = when (type) {
+        Boolean::class.javaPrimitiveType -> false
+        Byte::class.javaPrimitiveType -> 0.toByte()
+        Short::class.javaPrimitiveType -> 0.toShort()
+        Int::class.javaPrimitiveType -> 0
+        Long::class.javaPrimitiveType -> 0L
+        Float::class.javaPrimitiveType -> 0f
+        Double::class.javaPrimitiveType -> 0.0
+        Char::class.javaPrimitiveType -> '\u0000'
+        else -> null
     }
 
     private companion object {

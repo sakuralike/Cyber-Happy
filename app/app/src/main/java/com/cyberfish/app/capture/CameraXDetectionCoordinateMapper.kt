@@ -56,7 +56,7 @@ internal class CameraXDetectionCoordinateMapper {
             cropWidthPx = cropRect.width(),
             cropHeightPx = cropRect.height(),
             rotationDegrees = rotationDegrees,
-            outputTransformUsesRawCoordinates = true,
+            outputTransformUsesRawCoordinates = false,
         )
     }
 
