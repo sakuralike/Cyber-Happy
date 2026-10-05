@@ -60,6 +60,7 @@ class CameraFrameSource(
     private val onVideoClipReady: (VideoClipResult) -> Unit = {},
 ) : FrameSource {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val videoIoExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainExecutor = ContextCompat.getMainExecutor(context)
     private val coordinateMapper = CameraXDetectionCoordinateMapper()
     private var cameraProvider: ProcessCameraProvider? = null
@@ -69,6 +70,8 @@ class CameraFrameSource(
     private var maxZoomRatio = 1f
     @Volatile
     private var generation = 0
+    @Volatile
+    private var sessionActive = false
     private var framesInWindow = 0
     private var framesPerSecond = 0
     private var inferenceFramesInWindow = 0
@@ -126,9 +129,18 @@ class CameraFrameSource(
     }
 
     override fun start(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
+        if (sessionActive) stop()
+        sessionActive = true
         val currentGeneration = ++generation
+        lastVideoTriggerState = com.cyberfish.app.trigger.TriggerState.Idle
         videoClipCoordinator?.start()
         onStatusChanged(CaptureStatus.Starting)
+        framesInWindow = 0
+        framesPerSecond = 0
+        inferenceFramesInWindow = 0
+        inferenceFramesPerSecond = 0
+        windowStartedAt = 0L
+        lastReportedAt = 0L
         lastSnapshotAt = 0L
         lastAnalysisAt = 0L
         val providerFuture = ProcessCameraProvider.getInstance(context)
@@ -207,10 +219,14 @@ class CameraFrameSource(
     }
 
     override fun stop() {
+        if (!sessionActive) return
+        sessionActive = false
+        onStatusChanged(CaptureStatus.Stopping)
         generation += 1
         videoSegmentGeneration = generation
+        lastVideoTriggerState = com.cyberfish.app.trigger.TriggerState.Idle
         videoHandler.removeCallbacksAndMessages(null)
-        activeVideoRecording?.stop()
+        runCatching { activeVideoRecording?.stop() }
         activeVideoRecording = null
         videoSegmentFile = null
         videoCapture = null
@@ -221,7 +237,7 @@ class CameraFrameSource(
         lastAnalysisAt = 0L
         lastDetectionScopeRevision = Long.MIN_VALUE
         onZoomCapabilitiesChanged(1f)
-        cameraProvider?.unbindAll()
+        runCatching { cameraProvider?.unbindAll() }
         onStatusChanged(CaptureStatus.Idle)
     }
 
@@ -247,6 +263,7 @@ class CameraFrameSource(
     override fun close() {
         stop()
         analysisExecutor.shutdown()
+        videoIoExecutor.shutdown()
     }
 
     private fun startVideoSegment(expectedGeneration: Int) {
@@ -259,11 +276,15 @@ class CameraFrameSource(
         val recording = runCatching {
             capture.output.prepareRecording(context, output).start(mainExecutor) { event ->
                 if (event !is VideoRecordEvent.Finalize) return@start
-                val recordedFile = videoSegmentFile
-                val recordedStartedAt = videoSegmentStartedAtMillis
+                val recordedFile = file
+                val recordedStartedAt = startedAt
                 activeVideoRecording = null
                 videoSegmentFile = null
-                if (event.error == VideoRecordEvent.Finalize.ERROR_NONE && recordedFile != null) {
+                if (event.error == VideoRecordEvent.Finalize.ERROR_NONE) {
+                    if (expectedGeneration != generation || !sessionActive) {
+                        recordedFile.delete()
+                        return@start
+                    }
                     val clip = coordinator.onSegmentFinalized(
                         VideoClipSegment(
                             file = recordedFile,
@@ -271,24 +292,9 @@ class CameraFrameSource(
                             endedAtMillis = SystemClock.elapsedRealtime(),
                         ),
                     )
-                    clip?.let { ready ->
-                        val merged = if (ready.videoPath == null) {
-                            VideoSegmentMerger.merge(
-                                ready.segments,
-                                File(file.parentFile, "${ready.clipId}.mp4"),
-                            )
-                        } else ready.segments.singleOrNull()
-                        onVideoClipReady(ready.copy(videoPath = merged?.absolutePath))
-                        coordinator.releaseSegments(ready.segments)
-                        if (merged != null && ready.segments.size > 1) {
-                            ready.segments.filter { it != merged }.forEach(File::delete)
-                        } else if (merged == null) {
-                            ready.segments.forEach(File::delete)
-                        }
-                        coordinator.clearResult()
-                    }
+                    clip?.let { ready -> finalizeVideoClip(expectedGeneration, coordinator, ready, file.parentFile) }
                 } else {
-                    recordedFile?.delete()
+                    recordedFile.delete()
                 }
                 if (expectedGeneration == generation && videoSegmentGeneration == expectedGeneration) {
                     startVideoSegment(expectedGeneration)
@@ -305,6 +311,44 @@ class CameraFrameSource(
         videoHandler.postDelayed({
             if (expectedGeneration == generation && activeVideoRecording === recording) recording.stop()
         }, VIDEO_SEGMENT_MILLIS)
+    }
+
+    private fun finalizeVideoClip(
+        expectedGeneration: Int,
+        coordinator: RollingVideoClipCoordinator,
+        ready: VideoClipResult,
+        directory: File?,
+    ) {
+        runCatching {
+            videoIoExecutor.execute {
+                if (expectedGeneration != generation) {
+                    ready.segments.forEach(File::delete)
+                    return@execute
+                }
+                val merged = if (ready.videoPath == null) {
+                    directory?.let { VideoSegmentMerger.merge(ready.segments, File(it, "${ready.clipId}.mp4")) }
+                } else {
+                    ready.segments.singleOrNull()
+                }
+                mainExecutor.execute {
+                    if (expectedGeneration == generation && sessionActive) {
+                        val result = ready.copy(videoPath = merged?.absolutePath)
+                        coordinator.releaseSegments(ready.segments)
+                        if (merged != null && ready.segments.size > 1) {
+                            ready.segments.filter { it != merged }.forEach(File::delete)
+                        } else if (merged == null) {
+                            ready.segments.forEach(File::delete)
+                        }
+                        coordinator.clearResult()
+                        onVideoClipReady(result)
+                    } else {
+                        merged?.takeIf { it != ready.segments.singleOrNull() }?.delete()
+                    }
+                }
+            }
+        }.onFailure {
+            ready.segments.forEach(File::delete)
+        }
     }
 
     private fun analyzeImage(

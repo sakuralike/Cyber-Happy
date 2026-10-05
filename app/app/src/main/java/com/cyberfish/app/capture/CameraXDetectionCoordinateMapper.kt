@@ -47,16 +47,8 @@ internal class CameraXDetectionCoordinateMapper {
     fun capture(image: ImageProxy): CameraXFrameTransform {
         val rotationDegrees = Math.floorMod(image.imageInfo.rotationDegrees, 360)
         val cropRect = image.cropRect
-        val orientedWidthPx = if (rotationDegrees == 90 || rotationDegrees == 270) {
-            cropRect.height()
-        } else {
-            cropRect.width()
-        }
-        val orientedHeightPx = if (rotationDegrees == 90 || rotationDegrees == 270) {
-            cropRect.width()
-        } else {
-            cropRect.height()
-        }
+        val orientedWidthPx = if (rotationDegrees == 90 || rotationDegrees == 270) cropRect.height() else cropRect.width()
+        val orientedHeightPx = if (rotationDegrees == 90 || rotationDegrees == 270) cropRect.width() else cropRect.height()
         return CameraXFrameTransform(
             outputTransform = OutputTransform(
                 Matrix().apply {
@@ -116,8 +108,7 @@ internal class CameraXDetectionCoordinateMapper {
         val bottom = bounds.bottom.coerceIn(0f, 1f)
         if (right <= left || bottom <= top) return null
 
-        val transformAlreadyOriented = !source.outputTransformUsesRawCoordinates &&
-            source.outputTransform.hasOrientedOutput(source)
+        val transformAlreadyOriented = !source.outputTransformUsesRawCoordinates
         val sourceBounds = if (transformAlreadyOriented) {
             PreviewRect(left, top, right, bottom)
         } else {
@@ -140,11 +131,7 @@ internal class CameraXDetectionCoordinateMapper {
             sourceBounds.bottom * sourceHeightPx,
         )
         runCatching {
-            if (transformAlreadyOriented && target.usesPixelCoordinates(previewWidthPx, previewHeightPx)) {
-                target.matrix.mapRect(mapped)
-            } else {
-                CoordinateTransform(source.outputTransform, target).mapRect(mapped)
-            }
+            CoordinateTransform(source.outputTransform, target).mapRect(mapped)
         }.getOrElse { return null }
         if (!mapped.left.isFinite() || !mapped.top.isFinite() ||
             !mapped.right.isFinite() || !mapped.bottom.isFinite()
@@ -216,8 +203,7 @@ internal class CameraXDetectionCoordinateMapper {
             right = maxOf(mapped.left, mapped.right),
             bottom = maxOf(mapped.top, mapped.bottom),
         )
-        val transformAlreadyOriented = !source.outputTransformUsesRawCoordinates &&
-            source.outputTransform.hasOrientedOutput(source)
+        val transformAlreadyOriented = !source.outputTransformUsesRawCoordinates
         if (transformAlreadyOriented) {
             val oriented = sourceBounds.clipTo(
                 source.orientedWidthPx.toFloat(),
@@ -250,28 +236,6 @@ private val VALID_ROTATIONS = setOf(0, 90, 180, 270)
 
 private fun PreviewRect.isFinite(): Boolean =
     left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite()
-
-@OptIn(markerClass = [TransformExperimental::class])
-@SuppressLint("RestrictedApi")
-private fun OutputTransform.hasOrientedOutput(source: CameraXFrameTransform): Boolean {
-    val transformed = RectF(-1f, -1f, 1f, 1f)
-    matrix.mapRect(transformed)
-    val expectedWidth = source.orientedWidthPx.toFloat()
-    val expectedHeight = source.orientedHeightPx.toFloat()
-    return nearlyEqual(transformed.width(), expectedWidth) &&
-        nearlyEqual(transformed.height(), expectedHeight)
-}
-
-@OptIn(markerClass = [TransformExperimental::class])
-@SuppressLint("RestrictedApi")
-private fun OutputTransform.usesPixelCoordinates(widthPx: Float, heightPx: Float): Boolean {
-    val transformed = RectF(-1f, -1f, 1f, 1f)
-    matrix.mapRect(transformed)
-    return transformed.width() < widthPx * 0.5f && transformed.height() < heightPx * 0.5f
-}
-
-private fun nearlyEqual(left: Float, right: Float): Boolean =
-    kotlin.math.abs(left - right) <= 0.5f
 
 internal fun orientedBoundsToRawCrop(
     left: Float,

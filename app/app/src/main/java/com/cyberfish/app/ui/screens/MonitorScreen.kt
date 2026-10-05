@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -39,7 +40,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import android.os.SystemClock
 import com.cyberfish.app.alert.AlertPreferences
+import com.cyberfish.app.capture.CaptureStatus
 import com.cyberfish.app.capture.FrameMetrics
 import com.cyberfish.app.capture.VideoClipResult
 import com.cyberfish.app.trigger.TriggerConfig
@@ -50,6 +53,7 @@ import com.cyberfish.app.trigger.TriggerEvent
 import com.cyberfish.app.inference.Detector
 import com.cyberfish.app.inference.NcnnRuntimeOptions
 import com.cyberfish.app.inference.UnavailableDetector
+import kotlinx.coroutines.isActive
 
 @Composable
 fun MonitorScreen(
@@ -71,6 +75,10 @@ fun MonitorScreen(
     var permissionGranted by rememberSaveable { mutableStateOf(hasCameraPermission(context)) }
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
     var monitoring by rememberSaveable { mutableStateOf(permissionGranted) }
+    var captureStatus by remember { mutableStateOf(CaptureStatus.Idle) }
+    var monitorSessionId by rememberSaveable { mutableStateOf(0L) }
+    var monitorStartedAtElapsed by rememberSaveable { mutableStateOf(0L) }
+    var elapsedSeconds by rememberSaveable { mutableStateOf(0L) }
     var liveFrameMetrics by remember { mutableStateOf<FrameMetrics?>(null) }
     var triggerEvent by remember { mutableStateOf<TriggerEvent?>(null) }
     var pendingMisreportEvent by remember { mutableStateOf<TriggerEvent?>(null) }
@@ -87,8 +95,30 @@ fun MonitorScreen(
         permissionDenied = !granted
         if (granted) monitoring = true
     }
+    LaunchedEffect(monitorSessionId, captureStatus, monitorStartedAtElapsed) {
+        if (captureStatus != CaptureStatus.Running || monitorStartedAtElapsed == 0L) return@LaunchedEffect
+        while (isActive) {
+            elapsedSeconds = ((SystemClock.elapsedRealtime() - monitorStartedAtElapsed) / 1_000L).coerceAtLeast(0L)
+            kotlinx.coroutines.delay(1_000L)
+        }
+    }
+    val monitorSubtitle by remember {
+        derivedStateOf {
+            if (captureStatus == CaptureStatus.Running) {
+                "漂浮稳定  ·  已运行 ${formatElapsedDuration(elapsedSeconds)}"
+            } else if (captureStatus == CaptureStatus.Starting) {
+                "监控启动中  ·  尚未开始计时"
+            } else if (captureStatus == CaptureStatus.Stopping) {
+                "正在停止监控  ·  ${formatElapsedDuration(elapsedSeconds)}"
+            } else if (monitorStartedAtElapsed != 0L) {
+                "监控已停止  ·  本次运行 ${formatElapsedDuration(elapsedSeconds)}"
+            } else {
+                "监控待机  ·  尚未开始"
+            }
+        }
+    }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { ScreenTitle("实时监控", "漂浮稳定  ·  已运行 12:04", actionIcon = Icons.Filled.Settings, actionDescription = "打开设置", onAction = onOpenSettings) }
+        item { ScreenTitle("实时监控", monitorSubtitle, actionIcon = Icons.Filled.Settings, actionDescription = "打开设置", onAction = onOpenSettings) }
         item {
             CameraPreviewCard(
                 monitoring = monitoring,
@@ -99,6 +129,27 @@ fun MonitorScreen(
                 detector = detector,
                 onFrameMetrics = onFrameMetrics,
                 onLiveFrameMetrics = { liveFrameMetrics = it },
+                onCaptureStatusChanged = { status ->
+                    captureStatus = status
+                    when (status) {
+                        CaptureStatus.Starting -> {
+                            monitorSessionId += 1L
+                            monitorStartedAtElapsed = 0L
+                            elapsedSeconds = 0L
+                        }
+                        CaptureStatus.Running -> {
+                            if (monitorStartedAtElapsed == 0L) {
+                                monitorStartedAtElapsed = SystemClock.elapsedRealtime()
+                            }
+                        }
+                        CaptureStatus.Stopping -> Unit
+                        CaptureStatus.Idle, CaptureStatus.Failed -> {
+                            if (monitorStartedAtElapsed != 0L) {
+                                elapsedSeconds = ((SystemClock.elapsedRealtime() - monitorStartedAtElapsed) / 1_000L).coerceAtLeast(0L)
+                            }
+                        }
+                    }
+                },
                 onVideoClipReady = onVideoClipReady,
                 runtimeOptions = runtimeOptions,
                 onTrigger = {
@@ -114,6 +165,9 @@ fun MonitorScreen(
                     if (permissionGranted) {
                         if (monitoring) triggerEvent = null
                         monitoring = !monitoring
+                        if (!monitoring) {
+                            liveFrameMetrics = null
+                        }
                     }
                     else permissionLauncher.launch(Manifest.permission.CAMERA)
                 },
@@ -203,4 +257,11 @@ private fun monitorActionLabel(monitoring: Boolean, permissionGranted: Boolean, 
     permissionDenied -> "重新请求相机权限"
     !permissionGranted -> "授权并开始监控"
     else -> "开始监控"
+}
+
+internal fun formatElapsedDuration(totalSeconds: Long): String {
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return "%02d:%02d:%02d".format(hours, minutes, seconds)
 }

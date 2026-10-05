@@ -14,6 +14,7 @@ import com.cyberfish.app.inference.Detection
 import com.cyberfish.app.inference.DetectionBounds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.lang.reflect.Proxy
@@ -57,6 +58,7 @@ class CameraXDetectionCoordinateMapperTest {
             cropWidthPx = 100,
             cropHeightPx = 200,
             rotationDegrees = 90,
+            outputTransformUsesRawCoordinates = true,
         )
         val mapped = CameraXDetectionCoordinateMapper().map(
             detection = Detection(
@@ -84,6 +86,7 @@ class CameraXDetectionCoordinateMapperTest {
             cropWidthPx = 100,
             cropHeightPx = 200,
             rotationDegrees = 90,
+            outputTransformUsesRawCoordinates = true,
         )
         val mapped = CameraXDetectionCoordinateMapper().map(
             detection = Detection(
@@ -111,6 +114,7 @@ class CameraXDetectionCoordinateMapperTest {
             cropWidthPx = 100,
             cropHeightPx = 200,
             rotationDegrees = 270,
+            outputTransformUsesRawCoordinates = true,
         )
         val mapped = CameraXDetectionCoordinateMapper().map(
             detection = Detection(
@@ -143,10 +147,12 @@ class CameraXDetectionCoordinateMapperTest {
             )
         }
         val targetMatrix = Matrix().apply {
-            setRectToRect(
-                RectF(0f, 0f, 480f, 336f),
-                RectF(0f, 0f, 1224f, 858f),
-                Matrix.ScaleToFit.FILL,
+            setValues(
+                floatArrayOf(
+                    0f, -612f, 612f,
+                    429f, 0f, 429f,
+                    0f, 0f, 1f,
+                ),
             )
         }
         val source = CameraXFrameTransform(
@@ -161,14 +167,14 @@ class CameraXDetectionCoordinateMapperTest {
                 confidence = 0.9f,
             ),
             source = source,
-            target = OutputTransform(targetMatrix, Size(1224, 858)),
+            target = OutputTransform(targetMatrix, Size(480, 336)),
             previewWidthPx = 1224f,
             previewHeightPx = 858f,
         )
 
-        requireNotNull(mapped)
-        assertEquals(24f, mapped.widthPx, 2f)
-        assertEquals(333f, mapped.heightPx, 4f)
+        requireNotNull(mapped) { "mapped detection is null" }
+        assertEquals("mapped=$mapped", 24f, mapped.widthPx, 2f)
+        assertEquals("mapped=$mapped", 333f, mapped.heightPx, 4f)
     }
 
     @Test
@@ -210,10 +216,10 @@ class CameraXDetectionCoordinateMapperTest {
         )
 
         requireNotNull(mapped)
-        assertEquals(40f, mapped.boundsInPreview.left, EPSILON)
-        assertEquals(40f, mapped.boundsInPreview.top, EPSILON)
-        assertEquals(120f, mapped.boundsInPreview.right, EPSILON)
-        assertEquals(120f, mapped.boundsInPreview.bottom, EPSILON)
+        assertEquals("mapped=$mapped", 40f, mapped.boundsInPreview.left, EPSILON)
+        assertEquals("mapped=$mapped", 40f, mapped.boundsInPreview.top, EPSILON)
+        assertEquals("mapped=$mapped", 120f, mapped.boundsInPreview.right, EPSILON)
+        assertEquals("mapped=$mapped", 120f, mapped.boundsInPreview.bottom, EPSILON)
 
         val roundTripped = mapper.mapPreviewToSource(
             boundsInPreview = mapped.boundsInPreview,
@@ -230,6 +236,50 @@ class CameraXDetectionCoordinateMapperTest {
     }
 
     @Test
+    fun captureKeepsAHeavyVerticalBoxVerticalWithCropAndRotation() {
+        val imageInfo = Proxy.newProxyInstance(
+            ImageInfo::class.java.classLoader,
+            arrayOf(ImageInfo::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getRotationDegrees" -> 90
+                else -> defaultValue(method.returnType)
+            }
+        } as ImageInfo
+        val image = Proxy.newProxyInstance(
+            ImageProxy::class.java.classLoader,
+            arrayOf(ImageProxy::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getCropRect" -> Rect(10, 20, 110, 310)
+                "getWidth" -> 400
+                "getHeight" -> 400
+                "getImageInfo" -> imageInfo
+                else -> defaultValue(method.returnType)
+            }
+        } as ImageProxy
+
+        val mapper = CameraXDetectionCoordinateMapper()
+        val source = mapper.capture(image)
+        assertEquals(290, source.orientedWidthPx)
+        assertEquals(100, source.orientedHeightPx)
+
+        val mapped = mapper.map(
+            detection = Detection(
+                bounds = DetectionBounds(left = 0.45f, top = 0.1f, right = 0.55f, bottom = 0.9f),
+                confidence = 0.9f,
+            ),
+            source = source,
+            target = outputTransform(width = 580, height = 200),
+            previewWidthPx = 580f,
+            previewHeightPx = 200f,
+        )
+
+        requireNotNull(mapped)
+        assertTrue("vertical detection must remain taller than wide: mapped=$mapped", mapped.heightPx > mapped.widthPx)
+    }
+
+    @Test
     fun previewMappingRoundTripsForAllRotations() {
         val mapper = CameraXDetectionCoordinateMapper()
         val expected = DetectionBounds(left = 0.1f, top = 0.2f, right = 0.3f, bottom = 0.6f)
@@ -240,6 +290,7 @@ class CameraXDetectionCoordinateMapperTest {
                 cropWidthPx = 100,
                 cropHeightPx = 200,
                 rotationDegrees = rotation,
+                outputTransformUsesRawCoordinates = rotation == 90 || rotation == 270,
             )
             val mapped = mapper.map(
                 detection = Detection(bounds = expected, confidence = 0.9f),
@@ -379,6 +430,7 @@ class CameraXDetectionCoordinateMapperTest {
         }
         return OutputTransform(matrix, Size(width, height))
     }
+
 
     private fun defaultValue(type: Class<*>): Any? = when (type) {
         Boolean::class.javaPrimitiveType -> false

@@ -98,6 +98,7 @@ fun CameraPreviewCard(
     onTrigger: (TriggerEvent) -> Unit,
     onFrameMetrics: (FrameMetrics) -> Unit = {},
     onLiveFrameMetrics: (FrameMetrics?) -> Unit = {},
+    onCaptureStatusChanged: (CaptureStatus) -> Unit = {},
     onVideoClipReady: (VideoClipResult) -> Unit = {},
     runtimeOptions: NcnnRuntimeOptions = NcnnRuntimeOptions.forPerformanceMode(NcnnRuntimeOptions.MODE_STANDARD),
     detector: Detector = UnavailableDetector(),
@@ -153,7 +154,10 @@ fun CameraPreviewCard(
                     onFrameMetrics(it)
                 }
             },
-            onStatusChanged = { captureStatus = it },
+            onStatusChanged = {
+                captureStatus = it
+                onCaptureStatusChanged(it)
+            },
             onDetection = { detection, timestampMillis ->
                 val snapshot = triggerPipeline.accept(detection, timestampMillis)
                 FrameTriggerMetrics(
@@ -681,6 +685,7 @@ private fun monitorStatus(
 ) = when {
     !permissionGranted && permissionDenied -> "相机权限已拒绝"
     !permissionGranted -> "需要相机权限"
+    captureStatus == CaptureStatus.Stopping -> "正在停止监控"
     !monitoring -> "待机"
     captureStatus == CaptureStatus.Failed -> "相机不可用"
     captureStatus == CaptureStatus.Starting -> "连接后置相机"

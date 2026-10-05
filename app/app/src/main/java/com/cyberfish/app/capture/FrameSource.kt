@@ -41,6 +41,7 @@ enum class CaptureStatus {
     Idle,
     Starting,
     Running,
+    Stopping,
     Failed,
 }
 

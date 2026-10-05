@@ -78,6 +78,22 @@ class RollingVideoClipCoordinatorTest {
         }
     }
 
+    @Test
+    fun `stopping rejects late recorder segments and leaves the coordinator expired`() {
+        val directory = Files.createTempDirectory("cyberfish-video-stop").toFile()
+        try {
+            val coordinator = RollingVideoClipCoordinator(directory)
+            coordinator.onSegmentFinalized(segment(directory, "before-stop.mp4", 0L, 1_000L))
+            coordinator.stop()
+
+            assertEquals(VideoClipState.EXPIRED, coordinator.state())
+            assertNull(coordinator.onSegmentFinalized(segment(directory, "late.mp4", 1_000L, 2_000L)))
+            assertEquals(VideoClipState.EXPIRED, coordinator.state())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
     private fun segment(directory: java.io.File, name: String, startedAtMillis: Long, endedAtMillis: Long) =
         VideoClipSegment(directory.resolve(name).also { it.writeText("fixture") }, startedAtMillis, endedAtMillis)
 }
